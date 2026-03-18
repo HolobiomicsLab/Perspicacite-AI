@@ -1,0 +1,126 @@
+# Perspicacité v2 Configuration
+# Copy this file to config.yml and customize as needed
+
+version: "2.0.0"
+config_name: "default"
+
+# Server settings
+server:
+  host: "0.0.0.0"
+  port: 5468
+  reload: false  # Enable for development
+
+# MCP server (for Mimosa-AI integration)
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 5500
+  transport: "stdio"  # or "sse"
+
+# Database paths
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "~/.local/share/perspicacite/chroma"
+
+# Knowledge base defaults
+knowledge_base:
+  embedding_model: "text-embedding-3-small"
+  chunk_size: 1000
+  chunk_overlap: 200
+  preserve_sections: true
+  default_top_k: 10
+  similarity_threshold: 0.7
+
+# LLM configuration
+llm:
+  default_provider: "anthropic"
+  default_model: "claude-3-5-sonnet-20241022"
+  
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+    summarize_threshold: 20
+
+# RAG mode settings
+rag_modes:
+  quick:
+    max_iterations: 1
+    tools: ["kb_search"]
+    
+  standard:
+    max_iterations: 1
+    tools: ["kb_search"]
+    rerank: true
+    
+  advanced:
+    max_iterations: 2
+    tools: ["kb_search", "web_search"]
+    rerank: true
+    query_expansion: true
+    
+  deep:
+    max_iterations: 5
+    tools: ["kb_search", "web_search", "fetch_pdf", "citation_network"]
+    rerank: true
+    enable_planning: true
+    enable_reflection: true
+    
+  citation:
+    max_iterations: 3
+    tools: ["kb_search", "web_search", "citation_network"]
+    rerank: true
+    build_citation_graph: true
+
+# SciLEx integration
+scilex:
+  enabled: true
+  
+  apis:
+    semantic_scholar:
+      enabled: true
+      rate_limit: 100
+    openalex:
+      enabled: true
+      rate_limit: 100
+    pubmed:
+      enabled: true
+      rate_limit: 10
+    arxiv:
+      enabled: true
+      rate_limit: 100
+    hal:
+      enabled: true
+      rate_limit: 100
+    dblp:
+      enabled: true
+      rate_limit: 100
+    istex:
+      enabled: true
+      rate_limit: 100
+    # APIs requiring keys (disabled by default)
+    ieee:
+      enabled: false
+    springer:
+      enabled: false
+    elsevier:
+      enabled: false
+
+# Web search
+web_search:
+  providers: ["google_scholar", "semantic_scholar"]
+  cache_ttl: 3600
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "json"  # json or text
+
+# Authentication
+auth:
+  enabled: true
+  # Token is set via PERSPICACITE_AUTH_TOKEN env var
+
+# UI preferences
+ui:
+  theme: "system"  # light, dark, system
+  citation_format: "nature"  # nature, apa, mla, ieee
