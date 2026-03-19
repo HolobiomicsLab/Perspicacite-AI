@@ -260,6 +260,28 @@ class ChromaVectorStore:
         except Exception:
             return {"name": collection, "count": 0}
 
+    async def paper_exists(self, collection: str, paper_id: str) -> bool:
+        """Check if a paper already exists in the collection by paper_id."""
+        try:
+            coll = self.client.get_collection(name=collection)
+            # Query for any document with matching paper_id
+            results = coll.query(
+                query_texts=[""],  # Empty query
+                n_results=1,
+                where={"paper_id": paper_id},
+                include=[],
+            )
+            # If any IDs returned, the paper exists
+            return bool(results["ids"] and len(results["ids"][0]) > 0)
+        except Exception as e:
+            logger.error(
+                "paper_exists_check_failed",
+                collection=collection,
+                paper_id=paper_id,
+                error=str(e),
+            )
+            return False
+
     async def delete_documents(self, collection: str, ids: list[str]) -> int:
         """Delete documents by ID."""
         try:

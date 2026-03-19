@@ -211,7 +211,8 @@ class AgenticOrchestrator:
                 "type": "tool_call",
                 "step": next_step.id,
                 "tool": next_step.tool or next_step.type.value,
-                "description": next_step.description
+                "description": next_step.description,
+                "query": next_step.tool_input.get("query", ""),
             }
             
             logger.info(f"Executing step {next_step.id}...")
@@ -533,8 +534,59 @@ Generate your answer:"""
         answer = await self.llm.complete(prompt, temperature=0.4)
         logger.info(f"Answer generated, length: {len(answer)} chars")
         logger.info(f"Answer content:\n{answer}")
+
+        # Append references section if we have papers
+        papers = self._extract_papers_from_results(step_results)
+        if papers:
+            references_section = self._format_references_section(papers)
+            if references_section:
+                answer = answer.rstrip() + "\n\n" + references_section
+                logger.info(f"References section added, total length: {len(answer)} chars")
+
         return answer
-    
+
+    def _format_references_section(self, papers: List[Dict[str, Any]]) -> str:
+        """Format a references section in academic citation style.
+
+        Uses markdown link format: [Author et al., Year](url "full citation")
+        Based on the style from Perspicacite Profonde.
+        """
+        if not papers:
+            return ""
+
+        ref_lines = ["## References\n"]
+
+        for i, paper in enumerate(papers, 1):
+            title = paper.get("title", "Unknown Title")
+            authors = paper.get("authors", [])
+            year = paper.get("year", "n.d.")
+            doi = paper.get("doi", "")
+            url = f"https://doi.org/{doi}" if doi else ""
+
+            # Format authors: "FirstAuthor et al." if >2 authors, else "FirstAuthor & SecondAuthor"
+            if len(authors) == 0:
+                author_str = "Unknown"
+            elif len(authors) == 1:
+                author_str = authors[0]
+            elif len(authors) == 2:
+                author_str = f"{authors[0]} & {authors[1]}"
+            else:
+                author_str = f"{authors[0]} et al."
+
+            # Format full citation (for title attribute of the link)
+            if authors:
+                full_citation = f"{', '.join(authors)}. {year}. {title}."
+            else:
+                full_citation = f"{title}. {year}."
+
+            # Use markdown link format: [Author et al., Year](url "full citation")
+            if url:
+                ref_lines.append(f"{i}. [{author_str}, {year}]({url} \"{full_citation}\")")
+            else:
+                ref_lines.append(f"{i}. {author_str}, {year}. {title}.")
+
+        return "\n".join(ref_lines)
+
     def _summarize_result(self, result: Any) -> str:
         """Create a brief summary of a result for UI display."""
         result_str = str(result)

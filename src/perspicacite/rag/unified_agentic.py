@@ -879,7 +879,7 @@ class UnifiedAgenticRAG:
                 logger.info("kb_search", original_query=raw_query, cleaned_query=query)
                 query_emb = await self.embeddings.embed([query])
                 docs = await self.vector_store.search(
-                    collection=kb_name,
+                    collection=f"kb_{kb_name}",
                     query_embedding=query_emb[0],
                     top_k=10,
                 )

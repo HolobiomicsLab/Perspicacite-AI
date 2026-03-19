@@ -65,7 +65,7 @@ class ChatRequest(BaseModel):
 
 class KBCreateRequest(BaseModel):
     """Request to create a knowledge base."""
-    name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    name: str = Field(..., pattern=r"^[a-zA-Z0-9 _-]+$", min_length=1, max_length=100)
     description: Optional[str] = None
 
 
@@ -303,7 +303,8 @@ async def create_knowledge_base(request: KBCreateRequest):
     if not app_state.session_store:
         return {"error": "System not initialized"}
     
-    collection_name = f"kb_{request.name}"
+    safe_name = request.name.replace(" ", "_")
+    collection_name = f"kb_{safe_name}"
     
     existing = await app_state.session_store.get_kb_metadata(request.name)
     if existing:
@@ -378,24 +379,37 @@ async def delete_knowledge_base(name: str):
 
 @app.post("/api/kb/{name}/papers")
 async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
-    """Add papers to a knowledge base."""
+    """Add papers to a knowledge base with deduplication."""
     if not app_state.session_store:
         return {"error": "System not initialized"}
-    
+
     kb = await app_state.session_store.get_kb_metadata(name)
     if not kb:
         return {"error": f"Knowledge base '{name}' not found"}
-    
+
     from perspicacite.models.papers import Paper, Author, PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-    
-    # Convert PaperData dicts to Paper models
-    papers = []
+
+    # Convert PaperData dicts to Paper models with deduplication check
+    papers_to_add = []
+    skipped_duplicates = []
+
     for pd in request.papers:
         import hashlib
         paper_id = pd.doi if pd.doi else f"generated:{hashlib.md5(pd.title.encode()).hexdigest()[:12]}"
+
+        # Check if paper already exists in this KB
+        exists = await app_state.vector_store.paper_exists(kb.collection_name, paper_id)
+        if exists:
+            skipped_duplicates.append({
+                "title": pd.title,
+                "paper_id": paper_id,
+                "doi": pd.doi,
+            })
+            continue
+
         authors = [Author(name=a) for a in pd.authors]
-        papers.append(Paper(
+        papers_to_add.append(Paper(
             id=paper_id,
             title=pd.title,
             authors=authors,
@@ -405,7 +419,16 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
             citation_count=pd.citations,
             source=PaperSource.WEB_SEARCH,
         ))
-    
+
+    if not papers_to_add:
+        logger.info(f"All {len(skipped_duplicates)} papers already exist in KB '{name}'")
+        return {
+            "added_papers": 0,
+            "added_chunks": 0,
+            "skipped_duplicates": len(skipped_duplicates),
+            "kb": name,
+        }
+
     # Use DynamicKnowledgeBase to add papers to the collection
     dkb = DynamicKnowledgeBase(
         vector_store=app_state.vector_store,
@@ -414,16 +437,22 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     # Override with the real KB collection
     dkb.collection_name = kb.collection_name
     dkb._initialized = True
-    
-    added = await dkb.add_papers(papers, include_full_text=False)
-    
-    # Update metadata counts
-    kb.paper_count += len(papers)
+
+    added = await dkb.add_papers(papers_to_add, include_full_text=False)
+
+    # Update metadata counts only for new papers
+    kb.paper_count += len(papers_to_add)
     kb.chunk_count += added
     await app_state.session_store.save_kb_metadata(kb)
-    
-    logger.info(f"Added {len(papers)} papers ({added} chunks) to KB '{name}'")
-    return {"added_papers": len(papers), "added_chunks": added, "kb": name}
+
+    logger.info(f"Added {len(papers_to_add)} papers ({added} chunks) to KB '{name}', skipped {len(skipped_duplicates)} duplicates")
+    return {
+        "added_papers": len(papers_to_add),
+        "added_chunks": added,
+        "skipped_duplicates": len(skipped_duplicates),
+        "duplicates": skipped_duplicates,
+        "kb": name,
+    }
 
 
 # HTML Template for the web interface
@@ -770,7 +799,95 @@ HTML_TEMPLATE = """
             cursor: pointer;
         }
         .kb-create-form button:hover { background: #5a6fd6; }
-        
+
+        .kb-delete-btn {
+            font-size: 11px;
+            color: #ef4444;
+            cursor: pointer;
+            border: none;
+            background: none;
+            padding: 4px 0;
+            text-decoration: underline;
+            margin-left: 8px;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.visible { display: flex; }
+        .modal {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            max-width: 400px;
+            width: 90%;
+        }
+        .modal h3 { margin-bottom: 12px; color: #1e293b; }
+        .modal p { margin-bottom: 12px; color: #64748b; font-size: 14px; }
+        .modal input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .modal-buttons {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .modal-buttons button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .modal-cancel { background: #e2e8f0; border: none; }
+        .modal-confirm { background: #ef4444; color: white; border: none; }
+        .modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Thinking panel collapse */
+        .thinking-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .thinking-collapse-btn {
+            font-size: 11px;
+            color: #667eea;
+            cursor: pointer;
+            border: none;
+            background: none;
+            padding: 2px 6px;
+        }
+        .thinking-step.collapsed .step-details { display: none; }
+        .thinking-step .step-summary {
+            display: none;
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 4px;
+        }
+        .thinking-step.collapsed .step-summary { display: block; }
+        .thinking-step .chevron {
+            cursor: pointer;
+            font-size: 10px;
+            margin-right: 4px;
+            transition: transform 0.2s;
+        }
+        .thinking-step.collapsed .chevron { transform: rotate(-90deg); }
+
         /* Papers found section */
         .papers-found {
             margin-top: 12px;
@@ -883,9 +1000,12 @@ HTML_TEMPLATE = """
                     <option value="">No KB (web search only)</option>
                 </select>
                 <div id="kb-info" class="kb-info" style="display:none;"></div>
-                <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
+                    <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
+                </div>
                 <div id="kb-create-form" class="kb-create-form">
-                    <input id="kb-name-input" type="text" placeholder="Name (letters, numbers, -, _)" pattern="^[a-zA-Z0-9_-]+$">
+                    <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
                     <input id="kb-desc-input" type="text" placeholder="Description (optional)">
                     <button onclick="createKB()">Create</button>
                 </div>
@@ -901,7 +1021,10 @@ HTML_TEMPLATE = """
             </div>
             
             <div class="panel">
-                <h3>🧠 Agent Thinking</h3>
+                <div class="thinking-header">
+                    <h3 style="margin:0;">🧠 Agent Thinking</h3>
+                    <button id="thinking-collapse-btn" class="thinking-collapse-btn" onclick="toggleThinkingCollapse()">Collapse all</button>
+                </div>
                 <div id="thinking-panel">
                     <div style="color: #94a3b8; font-size: 13px;">
                         Agent thinking will appear here...
@@ -976,10 +1099,12 @@ HTML_TEMPLATE = """
         function selectKB(name) {
             selectedKb = name || null;
             const infoDiv = document.getElementById('kb-info');
+            const deleteBtn = document.getElementById('kb-delete-btn');
             if (selectedKb) {
                 fetch(`/api/kb/${selectedKb}`).then(r => r.json()).then(data => {
                     if (data.error) {
                         infoDiv.style.display = 'none';
+                        deleteBtn.style.display = 'none';
                         return;
                     }
                     infoDiv.style.display = 'block';
@@ -987,8 +1112,10 @@ HTML_TEMPLATE = """
                         (data.description ? data.description + '<br>' : '') +
                         `${data.paper_count} papers, ${data.chunk_count} chunks`;
                 });
+                deleteBtn.style.display = 'inline';
             } else {
                 infoDiv.style.display = 'none';
+                deleteBtn.style.display = 'none';
             }
         }
         
@@ -1008,6 +1135,13 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({ name, description: desc || null })
                 });
                 const data = await resp.json();
+                if (!resp.ok) {
+                    const msg = data.detail
+                        ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
+                        : (data.error || 'Unknown error');
+                    showToast('Error: ' + msg);
+                    return;
+                }
                 if (data.error) {
                     showToast('Error: ' + data.error);
                     return;
@@ -1080,7 +1214,8 @@ HTML_TEMPLATE = """
                                 addThinkingStep(
                                     `Using tool: ${data.tool}`,
                                     'tool',
-                                    data.description
+                                    data.description,
+                                    data.query || ''
                                 );
                             } else if (data.type === 'tool_result') {
                                 addThinkingStep(
@@ -1148,15 +1283,17 @@ HTML_TEMPLATE = """
                 .replace(/\\*(.*?)\\*/g, '<em>$1</em>')
                 .replace(/`(.*?)`/g, '<code style="background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">$1</code>');
         }
-        
-        function addThinkingStep(message, type, details) {
+
+        let thinkingCollapsed = false;
+
+        function addThinkingStep(message, type, details, query) {
             const panel = document.getElementById('thinking-panel');
-            
+
             // Remove "waiting" message if present
             if (panel.children.length === 1 && panel.children[0].style.color === 'rgb(148, 163, 184)') {
                 panel.innerHTML = '';
             }
-            
+
             const icons = {
                 analyzing: '🧠',
                 planning: '📋',
@@ -1164,17 +1301,35 @@ HTML_TEMPLATE = """
                 result: '📄',
                 complete: '✅'
             };
-            
+
             const div = document.createElement('div');
-            div.className = `thinking-step ${type}`;
+            div.className = `thinking-step ${type}${thinkingCollapsed ? ' collapsed' : ''}`;
+
+            let queryInfo = '';
+            if (query) {
+                queryInfo = `<div class="query-info" style="font-size:11px;color:#667eea;margin-top:4px;">Query: <code style="background:#eef2ff;padding:1px 4px;border-radius:3px;">${query}</code></div>`;
+            }
+
+            let stepDetails = '';
+            if (details || queryInfo) {
+                stepDetails = `
+                    <div class="step-details">
+                        ${queryInfo}
+                        ${details ? `<div class="details">${details}</div>` : ''}
+                    </div>
+                    <div class="step-summary">${message}${query ? ` — Query: ${query}` : ''}</div>
+                `;
+            }
+
             div.innerHTML = `
+                <span class="chevron" onclick="toggleStepCollapse(this.parentElement)">▼</span>
                 <span class="icon">${icons[type] || '•'}</span>
                 <div class="content">
                     <div>${message}</div>
-                    ${details ? `<div class="details">${details}</div>` : ''}
+                    ${stepDetails}
                 </div>
             `;
-            
+
             panel.appendChild(div);
             panel.scrollTop = panel.scrollHeight;
         }
@@ -1294,7 +1449,78 @@ HTML_TEMPLATE = """
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
         }
+
+        // Delete KB modal
+        let kbToDelete = '';
+
+        // Thinking panel collapse
+
+        function toggleThinkingCollapse() {
+            thinkingCollapsed = !thinkingCollapsed;
+            document.querySelectorAll('.thinking-step').forEach(el => {
+                el.classList.toggle('collapsed', thinkingCollapsed);
+            });
+            document.getElementById('thinking-collapse-btn').textContent = thinkingCollapsed ? 'Expand all' : 'Collapse all';
+        }
+
+        function toggleStepCollapse(el) {
+            el.classList.toggle('collapsed');
+        }
+
+        function showDeleteKBDialog(kbName) {
+            kbToDelete = kbName;
+            document.getElementById('delete-kb-name').textContent = kbName;
+            document.getElementById('delete-kb-name2').textContent = kbName;
+            document.getElementById('delete-kb-input').value = '';
+            document.getElementById('delete-kb-confirm').disabled = true;
+            document.getElementById('delete-modal').classList.add('visible');
+        }
+
+        function hideDeleteKBDialog() {
+            document.getElementById('delete-modal').classList.remove('visible');
+            kbToDelete = '';
+        }
+
+        function checkDeleteKBInput() {
+            const input = document.getElementById('delete-kb-input').value;
+            document.getElementById('delete-kb-confirm').disabled = input !== kbToDelete;
+        }
+
+        async function confirmDeleteKB() {
+            if (kbToDelete && document.getElementById('delete-kb-input').value === kbToDelete) {
+                try {
+                    const resp = await fetch(`/api/kb/${kbToDelete}`, { method: 'DELETE' });
+                    const data = await resp.json();
+                    if (data.error) {
+                        showToast('Error: ' + data.error);
+                        return;
+                    }
+                    showToast('KB "' + kbToDelete + '" deleted');
+                    hideDeleteKBDialog();
+                    selectedKb = null;
+                    document.getElementById('kb-select').value = '';
+                    document.getElementById('kb-info').style.display = 'none';
+                    await loadKBs();
+                } catch (e) {
+                    showToast('Error deleting KB: ' + e.message);
+                }
+            }
+        }
     </script>
+
+    <!-- Delete KB Confirmation Modal -->
+    <div id="delete-modal" class="modal-overlay">
+        <div class="modal">
+            <h3>Delete Knowledge Base</h3>
+            <p>This will permanently delete <strong id="delete-kb-name"></strong> and all its papers. This cannot be undone.</p>
+            <p>Type <strong id="delete-kb-name2"></strong> to confirm:</p>
+            <input type="text" id="delete-kb-input" placeholder="Type KB name to confirm" oninput="checkDeleteKBInput()">
+            <div class="modal-buttons">
+                <button class="modal-cancel" onclick="hideDeleteKBDialog()">Cancel</button>
+                <button class="modal-confirm" id="delete-kb-confirm" onclick="confirmDeleteKB()" disabled>Delete</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 """
