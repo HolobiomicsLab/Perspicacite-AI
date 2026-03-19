@@ -98,7 +98,12 @@ class SciLExAdapter:
         This runs in a thread pool to not block the event loop.
         """
         from scilex.crawlers.collector_collection import CollectCollection
-        from scilex.crawlers.aggregate import deduplicate, convertToZoteroFormat
+        try:
+            from scilex.crawlers.aggregate import deduplicate, convertToZoteroFormat
+        except ImportError:
+            # Fallback if functions not available
+            from scilex.crawlers.aggregate import deduplicate
+            convertToZoteroFormat = None  # Will handle below
 
         # Default APIs if not specified
         if apis is None:
@@ -143,8 +148,11 @@ class SciLExAdapter:
                 # Deduplicate
                 df_deduped = deduplicate(df)
 
-                # Convert to Zotero format for consistent output
-                df_zotero = convertToZoteroFormat(df_deduped)
+                # Convert to Zotero format for consistent output (if available)
+                if convertToZoteroFormat:
+                    df_zotero = convertToZoteroFormat(df_deduped)
+                else:
+                    df_zotero = df_deduped
 
                 # Convert to Paper models
                 papers = self._map_scilex_to_papers(df_zotero)
@@ -159,7 +167,8 @@ class SciLExAdapter:
 
             except Exception as e:
                 logger.error("scilex_collection_error", error=str(e))
-                return []
+                # Re-raise so caller can handle fallback
+                raise
 
     def _build_api_config(self, apis: list[str]) -> dict[str, Any]:
         """Build API configuration dict for SciLEx."""

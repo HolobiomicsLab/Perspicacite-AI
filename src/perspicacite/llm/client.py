@@ -75,6 +75,7 @@ class AsyncLLMClient:
     def _build_model_string(self, provider: str, model: str) -> str:
         """Build the model string for LiteLLM (e.g., 'anthropic/claude-3-5-sonnet')."""
         # LiteLLM format: provider/model
+        # For Minimax, the actual API call uses minimax/{model} format directly
         return f"{provider}/{model}"
 
     @retry(
@@ -129,14 +130,55 @@ class AsyncLLMClient:
 
         try:
             litellm = self._get_litellm()
-            response = await litellm.acompletion(
-                model=model_str,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=provider_config.timeout,
-                **kwargs,
-            )
+            
+            # Prepare API call parameters
+            completion_kwargs = {
+                "model": model_str,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "timeout": provider_config.timeout,
+            }
+            
+            # TODO: Minimax implementation needs fixes
+            # There are response parsing issues with the Anthropic-compatible API
+            # Consider using DeepSeek or other providers as alternative
+            # Special handling for Minimax (Anthropic-compatible API via LiteLLM)
+            if provider == "minimax":
+                import os
+                # For Minimax, use standard acompletion with api_base
+                # Model format: minimax/MiniMax-M2.7 (or just MiniMax-M2.7 with custom api_base)
+                minimax_api_key = os.environ.get("MINIMAX_API_KEY")
+                if not minimax_api_key:
+                    raise ValueError("MINIMAX_API_KEY environment variable not set")
+                
+                response = await litellm.acompletion(
+                    model=f"minimax/{model}",  # Use minimax/MiniMax-M2.7 format
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=provider_config.timeout,
+                    api_key=minimax_api_key,
+                    api_base=provider_config.base_url,
+                    **kwargs,
+                )
+                # Standard OpenAI-compatible response format
+                content = response.choices[0].message.content
+                usage = response.get("usage", {})
+                
+                logger.info(
+                    "llm_completion_success",
+                    provider=provider,
+                    model=model,
+                    input_tokens=usage.get("prompt_tokens", 0),
+                    output_tokens=usage.get("completion_tokens", 0),
+                    content_length=len(content),
+                )
+                return content
+            
+            completion_kwargs.update(kwargs)
+            
+            response = await litellm.acompletion(**completion_kwargs)
 
             content = response.choices[0].message.content
             usage = response.get("usage", {})
@@ -200,15 +242,47 @@ class AsyncLLMClient:
 
         try:
             litellm = self._get_litellm()
-            response = await litellm.acompletion(
-                model=model_str,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=provider_config.timeout,
-                stream=True,
-                **kwargs,
-            )
+            
+            # TODO: Minimax implementation needs fixes
+            # Special handling for Minimax
+            if provider == "minimax":
+                import os
+                # Use standard acompletion with api_base for streaming
+                minimax_api_key = os.environ.get("MINIMAX_API_KEY")
+                if not minimax_api_key:
+                    raise ValueError("MINIMAX_API_KEY environment variable not set")
+                
+                stream = await litellm.acompletion(
+                    model=f"minimax/{model}",
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=provider_config.timeout,
+                    api_key=minimax_api_key,
+                    api_base=provider_config.base_url,
+                    stream=True,
+                    **kwargs,
+                )
+                
+                async for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                
+                logger.info("llm_stream_complete", provider=provider, model=model)
+                return
+            
+            # Standard OpenAI-compatible streaming
+            completion_kwargs = {
+                "model": model_str,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "timeout": provider_config.timeout,
+                "stream": True,
+            }
+            completion_kwargs.update(kwargs)
+            
+            response = await litellm.acompletion(**completion_kwargs)
 
             async for chunk in response:
                 if chunk.choices[0].delta.content:

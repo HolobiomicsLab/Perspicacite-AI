@@ -64,8 +64,8 @@ class LLMProviderConfig(BaseModel):
 class LLMConfig(BaseModel):
     """LLM configuration."""
 
-    default_provider: str = "anthropic"
-    default_model: str = "claude-3-5-sonnet-20241022"
+    default_provider: str = "deepseek"
+    default_model: str = "deepseek-chat"  # DeepSeek V3
 
     providers: dict[str, LLMProviderConfig] = Field(default_factory=lambda: {
         "anthropic": LLMProviderConfig(
@@ -81,6 +81,11 @@ class LLMConfig(BaseModel):
         "deepseek": LLMProviderConfig(
             base_url="https://api.deepseek.com",
             timeout=60,
+            max_retries=3,
+        ),
+        "minimax": LLMProviderConfig(
+            base_url="https://api.minimaxi.com/anthropic",  # Anthropic-compatible API for Chinese users
+            timeout=120,
             max_retries=3,
         ),
     })

@@ -46,6 +46,7 @@ chroma_db/
 # Logs
 *.log
 logs/
+logs/*
 
 # OS
 .DS_Store
@@ -70,3 +71,4 @@ packages_to_use/
 *.md
 !Perspicacite_v2_Planning.md
 !IMPLEMENTATION_GUIDE.md
+!PROBLEMS.md

@@ -36,6 +36,13 @@ llm:
   default_provider: "anthropic"
   default_model: "claude-3-5-sonnet-20241022"
   
+  # Available providers: anthropic, openai, deepseek, minimax
+  # API keys are set via environment variables:
+  #   - ANTHROPIC_API_KEY
+  #   - OPENAI_API_KEY
+  #   - DEEPSEEK_API_KEY
+  #   - MINIMAX_API_KEY
+  
   context:
     max_tokens: 8000
     chat_history_turns: 10
