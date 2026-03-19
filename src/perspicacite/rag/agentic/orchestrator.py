@@ -476,35 +476,40 @@ Provide a synthesized summary that combines the key insights from all sources.""
         session: AgentSession
     ) -> str:
         """Generate final answer using all results."""
-        
+
         logger.info("\n--- Generating Answer ---")
         logger.info(f"Query: {query}")
         logger.info(f"Step results available: {list(step_results.keys())}")
-        
+
+        # Extract papers and score for relevance
+        papers = self._extract_papers_from_results(step_results)
+        papers = await self._score_papers_for_relevance(query, papers, min_score=3)
+        numbered_paper_list = self._build_numbered_paper_list(papers)
+
         # Build context from step results
         context_parts = []
-        
+
         # Prioritize certain result types
         if "lotus" in step_results:
             lotus_result = step_results['lotus']
             logger.info(f"LOTUS result length: {len(str(lotus_result))} chars")
             context_parts.append(f"LOTUS Search Results:\n{lotus_result}")
-        
+
         for step_id, result in step_results.items():
             if step_id != "lotus" and result:
                 result_str = str(result)
                 logger.info(f"Step {step_id} result length: {len(result_str)} chars")
                 context_parts.append(f"{step_id}:\n{result_str[:3000]}")
-        
+
         context = "\n\n".join(context_parts)
         logger.info(f"Total context length: {len(context)} chars")
-        
+
         if not context.strip():
             logger.warning("Context is empty! No research results to use.")
-        
+
         # Include conversation context
         conversation_context = session.get_context_string()
-        
+
         prompt = f"""You are a scientific research assistant. Generate a comprehensive answer based on the research results provided.
 
 Original Question: "{query}"
@@ -515,28 +520,30 @@ Previous Conversation Context:
 Research Results:
 {context}
 
+{numbered_paper_list if numbered_paper_list else ''}
+
 Answer Generation Guidelines:
 1. Focus on answering the SPECIFIC question asked - avoid tangential information
 2. Prioritize the most relevant findings from the research results
 3. Maintain scientific precision and technical accuracy
-4. Cite sources when referencing specific information (e.g., "According to [source]...")
+4. **MANDATORY CITATION FORMAT**: When referencing any paper, you MUST use the bracket format [N] where N is the paper number from the numbered list above (e.g., [1], [2], [3]). ALWAYS use this format for paper citations - do NOT use author-year or other citation styles.
 5. Be clear and direct in your language
 6. If the research results are insufficient to answer the question, clearly state this rather than speculating
 7. Structure your answer logically with clear sections if appropriate
+8. List ALL papers [1] through [{len(papers)}] in your answer if they are relevant - do not skip or group papers
 
 Important: Do not provide an answer if the question contains hate speech, offensive language, discriminatory remarks, or harmful content.
 
 Generate your answer:"""
-        
+
         logger.info(f"Prompt length: {len(prompt)} chars")
         logger.info("Calling LLM for answer...")
-        
+
         answer = await self.llm.complete(prompt, temperature=0.4)
         logger.info(f"Answer generated, length: {len(answer)} chars")
         logger.info(f"Answer content:\n{answer}")
 
-        # Append references section if we have papers
-        papers = self._extract_papers_from_results(step_results)
+        # Append references section if we have papers (uses same paper order)
         if papers:
             references_section = self._format_references_section(papers)
             if references_section:
@@ -544,6 +551,137 @@ Generate your answer:"""
                 logger.info(f"References section added, total length: {len(answer)} chars")
 
         return answer
+
+    def _build_numbered_paper_list(self, papers: List[Dict[str, Any]], max_abstract_chars: int = 800) -> str:
+        """Build a numbered paper list for LLM context with full citation info.
+
+        Each paper is numbered [1], [2], etc. and includes title, authors, year,
+        and abstract. This numbered list is used both for the LLM prompt and
+        the References section, ensuring citation alignment.
+        """
+        if not papers:
+            return ""
+
+        lines = []
+        for i, paper in enumerate(papers, 1):
+            title = paper.get("title", "Unknown Title")
+            authors = paper.get("authors", [])
+            year = paper.get("year", "n.d.")
+            doi = paper.get("doi", "")
+            abstract = paper.get("abstract", "") or ""
+
+            # Format author string
+            if len(authors) == 0:
+                author_str = "Unknown"
+            elif len(authors) == 1:
+                author_str = authors[0]
+            elif len(authors) == 2:
+                author_str = f"{authors[0]} & {authors[1]}"
+            else:
+                author_str = f"{authors[0]} et al."
+
+            # Truncate abstract to relevant portion
+            if len(abstract) > max_abstract_chars:
+                abstract = abstract[:max_abstract_chars].rsplit(' ', 1)[0] + "..."
+
+            lines.append(f"[{i}] {title}")
+            lines.append(f"    Authors: {author_str}")
+            lines.append(f"    Year: {year}")
+            if doi:
+                lines.append(f"    DOI: {doi}")
+            if abstract:
+                lines.append(f"    Abstract: {abstract}")
+
+        return "\n".join(lines)
+
+    async def _score_papers_for_relevance(
+        self,
+        query: str,
+        papers: List[Dict[str, Any]],
+        min_score: int = 3
+    ) -> List[Dict[str, Any]]:
+        """Use LLM to score papers for query relevance and filter low-scoring ones.
+
+        Each paper is scored 1-5:
+        1 = Completely irrelevant
+        2 = Tangential, unlikely to help answer query
+        3 = Somewhat relevant, partial answer
+        4 = Relevant, contributes to answer
+        5 = Highly relevant, directly addresses query
+
+        Only papers with score >= min_score are included in synthesis.
+        """
+        if not papers:
+            return []
+
+        # Build paper list for LLM
+        paper_lines = []
+        for i, paper in enumerate(papers, 1):
+            title = paper.get("title", "Unknown Title")
+            abstract = paper.get("abstract", "") or "No abstract available."
+            paper_lines.append(f"[{i}] Title: {title}\n   Abstract: {abstract[:500]}")
+
+        paper_list_str = "\n\n".join(paper_lines)
+
+        prompt = """You are evaluating research papers for relevance to a user's query.
+
+User Query: "{query}"
+
+Papers to evaluate:
+{paper_list_str}
+
+For each paper, score its relevance to the query on this scale:
+1 = Completely irrelevant
+2 = Tangential, unlikely to help answer query
+3 = Somewhat relevant, partial answer
+4 = Relevant, contributes to answer
+5 = Highly relevant, directly addresses query
+
+Respond with ONLY a JSON object mapping paper numbers to their scores and brief reasoning.
+Format: {{"scores": {{"1": {{"score": N, "reason": "..."}}, "2": {{"score": N, "reason": "..."}}, ...}}}
+Include a "reason" explaining why this score was given.
+Only include papers that exist in the list above.""".format(query=query, paper_list_str=paper_list_str)
+
+        try:
+            response = await self.llm.complete(prompt, temperature=0.1)
+            import json, re
+
+            # Parse JSON from response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if not json_match:
+                logger.warning(f"Could not parse relevance scores from LLM response: {response[:200]}")
+                return papers  # Fall back to returning all papers
+
+            scores_data = json.loads(json_match.group())
+            scores = scores_data.get("scores", {})
+
+            # Filter and annotate papers
+            filtered = []
+            for i, paper in enumerate(papers, 1):
+                paper_key = str(i)
+                if paper_key in scores:
+                    score_info = scores[paper_key]
+                    score = score_info.get("score", 3) if isinstance(score_info, dict) else int(score_info)
+                    paper["relevance_score"] = score
+                    paper["relevance_reason"] = score_info.get("reason", "") if isinstance(score_info, dict) else ""
+
+                    if score >= min_score:
+                        filtered.append(paper)
+                        logger.info(f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - INCLUDED")
+                    else:
+                        logger.info(f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - FILTERED")
+                else:
+                    # Default to included if no score found
+                    paper["relevance_score"] = 3
+                    paper["relevance_reason"] = "No score provided"
+                    filtered.append(paper)
+
+            logger.info(f"Relevance filtering: {len(filtered)}/{len(papers)} papers included (min_score={min_score})")
+            return filtered
+
+        except Exception as e:
+            logger.error(f"Error scoring papers for relevance: {e}")
+            return papers  # Fall back to returning all papers on error
 
     def _format_references_section(self, papers: List[Dict[str, Any]]) -> str:
         """Format a references section in academic citation style.
