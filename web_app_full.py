@@ -107,6 +107,8 @@ class AppState:
         self.vector_store = None
         self.orchestrator = None
         self.session_store: Optional[SessionStore] = None
+        self.pdf_downloader = None
+        self.pdf_parser = None
         self.initialized = False
     
     async def initialize(self):
@@ -172,7 +174,14 @@ class AppState:
         self.session_store = SessionStore(db_path)
         await self.session_store.init_db()
         logger.info("Session store initialized")
-        
+
+        # Initialize PDF downloader and parser
+        from perspicacite.pipeline.download import PDFDownloader
+        from perspicacite.pipeline.parsers.pdf import PDFParser
+        self.pdf_downloader = PDFDownloader()
+        self.pdf_parser = PDFParser()
+        logger.info("PDF downloader and parser initialized")
+
         self.initialized = True
         logger.info("System initialization complete!")
 
@@ -379,7 +388,7 @@ async def delete_knowledge_base(name: str):
 
 @app.post("/api/kb/{name}/papers")
 async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
-    """Add papers to a knowledge base with deduplication."""
+    """Add papers to a knowledge base with deduplication and optional PDF download."""
     if not app_state.session_store:
         return {"error": "System not initialized"}
 
@@ -389,10 +398,12 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
 
     from perspicacite.models.papers import Paper, Author, PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+    from perspicacite.pipeline.download import get_open_access_url
 
     # Convert PaperData dicts to Paper models with deduplication check
     papers_to_add = []
     skipped_duplicates = []
+    download_stats = {"attempted": 0, "success": 0, "failed": 0}
 
     for pd in request.papers:
         import hashlib
@@ -409,7 +420,7 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
             continue
 
         authors = [Author(name=a) for a in pd.authors]
-        papers_to_add.append(Paper(
+        paper = Paper(
             id=paper_id,
             title=pd.title,
             authors=authors,
@@ -418,7 +429,36 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
             abstract=pd.abstract,
             citation_count=pd.citations,
             source=PaperSource.WEB_SEARCH,
-        ))
+        )
+
+        # Try to download full text if DOI available
+        full_text = None
+        if pd.doi and app_state.pdf_downloader and app_state.pdf_parser:
+            download_stats["attempted"] += 1
+            try:
+                # Try Unpaywall for OA PDF URL
+                pdf_url = await get_open_access_url(pd.doi)
+                if pdf_url:
+                    # Download and parse PDF
+                    pdf_bytes = await app_state.pdf_downloader.download(pdf_url)
+                    if pdf_bytes and len(pdf_bytes) > 1000:
+                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
+                        if parsed and parsed.text:
+                            full_text = parsed.text
+                            download_stats["success"] += 1
+                            logger.info(f"Downloaded full text for: {pd.title[:50]}...")
+                        else:
+                            download_stats["failed"] += 1
+                    else:
+                        download_stats["failed"] += 1
+                else:
+                    download_stats["failed"] += 1
+            except Exception as e:
+                logger.warning(f"PDF download failed for {pd.title[:50]}: {e}")
+                download_stats["failed"] += 1
+
+        paper.full_text = full_text
+        papers_to_add.append(paper)
 
     if not papers_to_add:
         logger.info(f"All {len(skipped_duplicates)} papers already exist in KB '{name}'")
@@ -438,19 +478,181 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     dkb.collection_name = kb.collection_name
     dkb._initialized = True
 
-    added = await dkb.add_papers(papers_to_add, include_full_text=False)
+    # Add papers with full text if available
+    added = await dkb.add_papers(papers_to_add, include_full_text=True)
 
     # Update metadata counts only for new papers
     kb.paper_count += len(papers_to_add)
     kb.chunk_count += added
     await app_state.session_store.save_kb_metadata(kb)
 
-    logger.info(f"Added {len(papers_to_add)} papers ({added} chunks) to KB '{name}', skipped {len(skipped_duplicates)} duplicates")
+    logger.info(f"Added {len(papers_to_add)} papers ({added} chunks) to KB '{name}', skipped {len(skipped_duplicates)} duplicates. PDF stats: {download_stats}")
     return {
         "added_papers": len(papers_to_add),
         "added_chunks": added,
         "skipped_duplicates": len(skipped_duplicates),
         "duplicates": skipped_duplicates,
+        "pdf_download": download_stats,
+        "kb": name,
+    }
+
+
+@app.post("/api/kb/{name}/bibtex")
+async def add_bibtex_to_kb(name: str, request: Request):
+    """Upload a BibTeX file and add papers to a knowledge base."""
+    if not app_state.session_store:
+        return {"error": "System not initialized"}
+
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if not kb:
+        return {"error": f"Knowledge base '{name}' not found"}
+
+    try:
+        body = await request.json()
+        bibtex_content = body.get("bibtex", "")
+    except Exception:
+        return {"error": "Invalid request body"}
+
+    if not bibtex_content.strip():
+        return {"error": "BibTeX content is empty"}
+
+    # Parse BibTeX entries
+    from perspicacite.models.papers import Paper, Author, PaperSource
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+    from perspicacite.pipeline.download import get_open_access_url
+    import re
+
+    def parse_bibtex_entry(entry: str) -> dict | None:
+        """Parse a single BibTeX entry."""
+        # Extract entry type and key
+        type_key_match = re.match(r'@(\w+)\s*\{\s*([^,]+),', entry)
+        if not type_key_match:
+            return None
+
+        entry_type = type_key_match.group(1).lower()
+        if entry_type != "article" and entry_type != "inproceedings" and entry_type != "book":
+            return None
+
+        parsed = {
+            "title": "",
+            "authors": [],
+            "year": None,
+            "doi": "",
+            "abstract": "",
+        }
+
+        # Extract fields
+        fields = {
+            "title": r'title\s*=\s*\{([^}]+)\}',
+            "author": r'author\s*=\s*\{([^}]+)\}',
+            "year": r'year\s*=\s*\{([^}]+)\}',
+            "doi": r'doi\s*=\s*\{([^}]+)\}',
+            "abstract": r'abstract\s*=\s*\{([^}]+)\}',
+        }
+
+        for field, pattern in fields.items():
+            match = re.search(pattern, entry, re.DOTALL)
+            if match:
+                value = match.group(1).strip()
+                if field == "author":
+                    # Parse authors - BibTeX uses "and" to separate authors
+                    parsed["authors"] = [a.strip() for a in value.split(" and ")]
+                elif field == "year":
+                    try:
+                        parsed["year"] = int(value)
+                    except ValueError:
+                        pass
+                else:
+                    parsed[field] = value
+
+        # Clean title of LaTeX braces
+        parsed["title"] = parsed["title"].replace("{", "").replace("}", "")
+
+        return parsed if parsed["title"] else None
+
+    # Split BibTeX into entries and parse each
+    entries = re.split(r'\n(?=@)', bibtex_content)
+    parsed_entries = []
+    for entry in entries:
+        if entry.strip():
+            parsed = parse_bibtex_entry(entry)
+            if parsed:
+                parsed_entries.append(parsed)
+
+    if not parsed_entries:
+        return {"error": "No valid paper entries found in BibTeX file"}
+
+    # Convert to Paper models with PDF download
+    papers_to_add = []
+    download_stats = {"attempted": 0, "success": 0, "failed": 0}
+
+    for entry in parsed_entries:
+        import hashlib
+        paper_id = entry["doi"] if entry["doi"] else f"generated:{hashlib.md5(entry['title'].encode()).hexdigest()[:12]}"
+
+        # Check if paper already exists
+        exists = await app_state.vector_store.paper_exists(kb.collection_name, paper_id)
+        if exists:
+            continue
+
+        authors = [Author(name=a) for a in entry["authors"]]
+        paper = Paper(
+            id=paper_id,
+            title=entry["title"],
+            authors=authors,
+            year=entry["year"],
+            doi=entry["doi"],
+            abstract=entry["abstract"],
+            source=PaperSource.BIBTEX,
+        )
+
+        # Try to download full text if DOI available
+        full_text = None
+        if entry["doi"] and app_state.pdf_downloader and app_state.pdf_parser:
+            download_stats["attempted"] += 1
+            try:
+                pdf_url = await get_open_access_url(entry["doi"])
+                if pdf_url:
+                    pdf_bytes = await app_state.pdf_downloader.download(pdf_url)
+                    if pdf_bytes and len(pdf_bytes) > 1000:
+                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
+                        if parsed and parsed.text:
+                            full_text = parsed.text
+                            download_stats["success"] += 1
+            except Exception as e:
+                logger.warning(f"PDF download failed for {entry['title'][:50]}: {e}")
+                download_stats["failed"] += 1
+
+        paper.full_text = full_text
+        papers_to_add.append(paper)
+
+    if not papers_to_add:
+        return {
+            "message": "All papers already exist in KB",
+            "added_papers": 0,
+            "kb": name,
+        }
+
+    # Add papers to KB
+    dkb = DynamicKnowledgeBase(
+        vector_store=app_state.vector_store,
+        embedding_service=app_state.embedding_provider,
+    )
+    dkb.collection_name = kb.collection_name
+    dkb._initialized = True
+
+    added = await dkb.add_papers(papers_to_add, include_full_text=True)
+
+    # Update metadata
+    kb.paper_count += len(papers_to_add)
+    kb.chunk_count += added
+    await app_state.session_store.save_kb_metadata(kb)
+
+    logger.info(f"Added {len(papers_to_add)} papers from BibTeX ({added} chunks) to KB '{name}'. PDF stats: {download_stats}")
+    return {
+        "added_papers": len(papers_to_add),
+        "added_chunks": added,
+        "pdf_download": download_stats,
         "kb": name,
     }
 
