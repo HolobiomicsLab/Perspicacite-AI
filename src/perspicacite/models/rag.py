@@ -52,7 +52,7 @@ class RAGRequest(BaseModel):
 
     query: str
     kb_name: str = "default"
-    mode: RAGMode = RAGMode.STANDARD
+    mode: RAGMode = RAGMode.BASIC
     provider: str = "anthropic"
     model: str = "claude-3-5-sonnet-20241022"
     max_iterations: Optional[int] = None
