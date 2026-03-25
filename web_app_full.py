@@ -791,46 +791,100 @@ HTML_TEMPLATE = """
             border-bottom-left-radius: 4px;
         }
 
-        .input-controls {
-            padding: 12px 24px 0;
+        .input-area {
+            padding: 16px 24px 20px;
             background: #fafbfc;
             border-top: 1px solid #e2e8f0;
         }
 
-        .mode-selector {
-            display: flex;
-            gap: 8px;
+        .mode-dropdown-container {
             margin-bottom: 12px;
         }
 
-        .mode-btn {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 14px;
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            background: white;
-            color: var(--text-muted);
-            font-size: 13px;
+        .mode-dropdown {
+            padding: 6px 12px;
+            border: 1px solid transparent;
+            border-radius: var(--radius);
+            background: transparent;
+            color: var(--primary);
+            font-size: 14px;
             font-weight: 500;
             cursor: pointer;
+            outline: none;
             transition: all 0.2s;
         }
 
-        .mode-btn:hover {
+        .mode-dropdown:hover {
+            background: rgba(27, 68, 121, 0.08);
+        }
+
+        .chat-input-container {
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+            background: white;
+            border: 2px solid var(--input-border);
+            border-radius: 12px;
+            padding: 12px 48px 12px 16px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .chat-input-container:focus-within {
             border-color: var(--primary-light);
-            color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(27, 68, 121, 0.1);
         }
 
-        .mode-btn.active {
+        .chat-input {
+            flex: 1;
+            width: 100%;
+            min-height: 60px;
+            max-height: 200px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            font-size: 15px;
+            font-family: inherit;
+            line-height: 1.5;
+            resize: vertical;
+            outline: none;
+        }
+
+        .chat-input::placeholder {
+            color: #94a3b8;
+        }
+
+        .send-btn {
+            position: absolute;
+            right: 8px;
+            bottom: 8px;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: none;
+            border-radius: 8px;
             background: var(--primary);
-            border-color: var(--primary);
             color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            opacity: 1;
         }
 
-        .mode-icon {
-            font-size: 14px;
+        .send-btn:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+
+        .send-btn:not(:disabled):hover {
+            background: var(--primary-light);
+            transform: scale(1.05);
+        }
+
+        .send-btn svg {
+            width: 16px;
+            height: 16px;
         }
 
         .input-container {
@@ -1333,35 +1387,31 @@ HTML_TEMPLATE = """
                 </div>
             </div>
             
-            <div class="input-controls">
-                <div class="mode-selector">
-                    <button class="mode-btn active" data-mode="agentic" onclick="setMode('agentic')">
-                        <span class="mode-icon">🤖</span>
-                        <span class="mode-label">Agentic</span>
-                    </button>
-                    <button class="mode-btn" data-mode="profound" onclick="setMode('profound')">
-                        <span class="mode-icon">🔬</span>
-                        <span class="mode-label">Deep</span>
-                    </button>
-                    <button class="mode-btn" data-mode="advanced" onclick="setMode('advanced')">
-                        <span class="mode-icon">⚡</span>
-                        <span class="mode-label">Advanced</span>
-                    </button>
-                    <button class="mode-btn" data-mode="basic" onclick="setMode('basic')">
-                        <span class="mode-icon">📚</span>
-                        <span class="mode-label">Fast</span>
+            <div class="input-area">
+                <div class="mode-dropdown-container">
+                    <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)">
+                        <option value="agentic">🤖 Perspicacité Agentic</option>
+                        <option value="profound">🔬 Deep Research</option>
+                        <option value="advanced">⚡ Advanced (Hybrid)</option>
+                        <option value="basic">📚 Quick Search</option>
+                    </select>
+                </div>
+                <div class="chat-input-container">
+                    <textarea 
+                        id="query-input" 
+                        class="chat-input"
+                        placeholder="Ask your research question..."
+                        rows="3"
+                        onkeydown="handleInputKeydown(event)"
+                        oninput="handleInputChange()"
+                    ></textarea>
+                    <button id="send-btn" class="send-btn" onclick="sendQuery()" disabled>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                        </svg>
                     </button>
                 </div>
-            </div>
-            
-            <div class="input-container">
-                <input 
-                    type="text" 
-                    id="query-input" 
-                    placeholder="Ask your research question..."
-                    onkeypress="if(event.key==='Enter') sendQuery()"
-                >
-                <button id="send-btn" onclick="sendQuery()">Send</button>
             </div>
         </div>
         
@@ -1432,16 +1482,25 @@ HTML_TEMPLATE = """
         
         function setMode(mode) {
             currentMode = mode;
-            
-            // Update button states
-            document.querySelectorAll('.mode-btn').forEach(btn => {
-                btn.classList.remove('active');
-                if (btn.dataset.mode === mode) {
-                    btn.classList.add('active');
-                }
-            });
-            
             console.log('RAG Mode set to:', mode);
+        }
+        
+        function handleInputKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendQuery();
+            }
+        }
+        
+        function handleInputChange() {
+            const input = document.getElementById('query-input');
+            const sendBtn = document.getElementById('send-btn');
+            const hasContent = input.value.trim().length > 0;
+            sendBtn.disabled = !hasContent;
+            
+            // Auto-resize textarea
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 200) + 'px';
         }
         
         // Check system status on load
@@ -1574,6 +1633,7 @@ HTML_TEMPLATE = """
             
             isProcessing = true;
             input.value = '';
+            input.style.height = 'auto';
             input.disabled = true;
             document.getElementById('send-btn').disabled = true;
             
@@ -1680,7 +1740,7 @@ HTML_TEMPLATE = """
             
             isProcessing = false;
             input.disabled = false;
-            document.getElementById('send-btn').disabled = false;
+            handleInputChange();  // Update button state based on content
             input.focus();
         }
         
