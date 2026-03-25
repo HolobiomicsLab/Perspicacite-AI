@@ -238,3 +238,66 @@ async def hybrid_retrieval(
     )
     
     return results
+
+
+class HybridRetriever:
+    """
+    Hybrid retriever class that combines vector and BM25 retrieval.
+    
+    This is a wrapper class that provides a consistent interface for hybrid retrieval,
+    matching the expected API from web_app_full.py.
+    """
+    
+    def __init__(
+        self,
+        vector_weight: float = 0.5,
+        bm25_weight: float = 0.5,
+        use_llm_weights: bool = False,
+    ):
+        """
+        Initialize hybrid retriever.
+        
+        Args:
+            vector_weight: Weight for vector scores (0-1)
+            bm25_weight: Weight for BM25 scores (0-1)
+            use_llm_weights: Whether to use LLM to determine optimal weights
+        """
+        self.vector_weight = vector_weight
+        self.bm25_weight = bm25_weight
+        self.use_llm_weights = use_llm_weights
+        
+        logger.info(
+            "hybrid_retriever_initialized",
+            vector_weight=vector_weight,
+            bm25_weight=bm25_weight,
+            use_llm_weights=use_llm_weights,
+        )
+    
+    async def retrieve(
+        self,
+        query: str,
+        documents: List[Any],
+        vector_scores: List[float],
+        llm: Any = None,
+    ) -> List[Tuple[Any, float]]:
+        """
+        Retrieve documents using hybrid scoring.
+        
+        Args:
+            query: Search query
+            documents: List of documents
+            vector_scores: Vector similarity scores
+            llm: LLM client (required if use_llm_weights is True)
+            
+        Returns:
+            List of (document, combined_score) tuples sorted by score
+        """
+        return await hybrid_retrieval(
+            query=query,
+            documents=documents,
+            vector_scores=vector_scores,
+            vector_weight=self.vector_weight,
+            bm25_weight=self.bm25_weight,
+            use_llm_weights=self.use_llm_weights,
+            llm=llm,
+        )
