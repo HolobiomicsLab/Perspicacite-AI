@@ -60,6 +60,7 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage] = Field(default_factory=list, description="Conversation history")
     session_id: Optional[str] = Field(default=None, description="Session ID for persistence")
     kb_name: Optional[str] = Field(default=None, description="Knowledge base to search first")
+    mode: str = Field(default="agentic", description="RAG mode: agentic, profound, advanced, basic")
     stream: bool = Field(default=True, description="Stream the response")
     max_papers: int = Field(default=3, ge=1, le=10)
 
@@ -235,7 +236,7 @@ async def agentic_chat_stream(request: ChatRequest):
     Yields SSE events with thinking steps, tool calls, and final answer.
     """
     try:
-        logger.info(f"Chat request: {request.query[:50]}...")
+        logger.info(f"Chat request: {request.query[:50]}... | Mode: {request.mode}")
         
         # Convert messages to dict format for orchestrator
         conversation_history = [
@@ -790,9 +791,50 @@ HTML_TEMPLATE = """
             border-bottom-left-radius: 4px;
         }
 
-        .input-container {
-            padding: 20px 24px;
+        .input-controls {
+            padding: 12px 24px 0;
+            background: #fafbfc;
             border-top: 1px solid #e2e8f0;
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .mode-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            background: white;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .mode-btn:hover {
+            border-color: var(--primary-light);
+            color: var(--primary);
+        }
+
+        .mode-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        .mode-icon {
+            font-size: 14px;
+        }
+
+        .input-container {
+            padding: 12px 24px 20px;
             display: flex;
             gap: 12px;
             background: #fafbfc;
@@ -1291,6 +1333,27 @@ HTML_TEMPLATE = """
                 </div>
             </div>
             
+            <div class="input-controls">
+                <div class="mode-selector">
+                    <button class="mode-btn active" data-mode="agentic" onclick="setMode('agentic')">
+                        <span class="mode-icon">🤖</span>
+                        <span class="mode-label">Agentic</span>
+                    </button>
+                    <button class="mode-btn" data-mode="profound" onclick="setMode('profound')">
+                        <span class="mode-icon">🔬</span>
+                        <span class="mode-label">Deep</span>
+                    </button>
+                    <button class="mode-btn" data-mode="advanced" onclick="setMode('advanced')">
+                        <span class="mode-icon">⚡</span>
+                        <span class="mode-label">Advanced</span>
+                    </button>
+                    <button class="mode-btn" data-mode="basic" onclick="setMode('basic')">
+                        <span class="mode-icon">📚</span>
+                        <span class="mode-label">Fast</span>
+                    </button>
+                </div>
+            </div>
+            
             <div class="input-container">
                 <input 
                     type="text" 
@@ -1358,6 +1421,28 @@ HTML_TEMPLATE = """
         let isProcessing = false;
         let selectedKb = null;
         let lastFoundPapers = [];
+        let currentMode = 'agentic';
+        
+        const modeDescriptions = {
+            'agentic': '🤖 KB-first with intent detection and tool use',
+            'profound': '🔬 Multi-cycle deep research with planning',
+            'advanced': '⚡ Query rephrasing + WRRF + Hybrid retrieval',
+            'basic': '📚 Fast single-query retrieval'
+        };
+        
+        function setMode(mode) {
+            currentMode = mode;
+            
+            // Update button states
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.mode === mode) {
+                    btn.classList.add('active');
+                }
+            });
+            
+            console.log('RAG Mode set to:', mode);
+        }
         
         // Check system status on load
         async function checkStatus() {
@@ -1509,6 +1594,7 @@ HTML_TEMPLATE = """
                         messages: messages.slice(0, -1),
                         session_id: sessionId,
                         kb_name: selectedKb,
+                        mode: currentMode,
                         stream: true
                     })
                 });

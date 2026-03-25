@@ -107,6 +107,7 @@ class RAGModeSettings(BaseModel):
     enable_planning: bool = False
     enable_reflection: bool = False
     build_citation_graph: bool = False
+    use_hybrid: bool = False  # Use hybrid retrieval (vector + BM25)
 
 
 class RAGModesConfig(BaseModel):
@@ -130,6 +131,7 @@ class RAGModesConfig(BaseModel):
         query_expansion=True,  # Generate similar queries
         enable_planning=False,
         enable_reflection=True,  # Optional refinement
+        use_hybrid=True,  # Enable hybrid retrieval by default
     ))
 
     # Profound: Multi-cycle research with planning (from v1)

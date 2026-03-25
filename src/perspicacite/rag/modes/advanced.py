@@ -51,7 +51,7 @@ class AdvancedRAGMode(BaseRAGMode):
         self.max_docs_per_source = 1
         self.rephrases = 3  # Number of additional queries to generate
         self.use_refinement = rag_settings.get('enable_reflection', False)
-        self.use_hybrid = rag_settings.get('use_hybrid', False)  # Enable hybrid retrieval
+        self.use_hybrid = rag_settings.get('use_hybrid', True)  # Enable hybrid retrieval by default
         
         # WRRF constants from release package
         self.wrrf_k = 60
