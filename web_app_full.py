@@ -797,49 +797,24 @@ HTML_TEMPLATE = """
             border-top: 1px solid #e2e8f0;
         }
 
-        .mode-dropdown-container {
-            margin-bottom: 12px;
-        }
-
-        .mode-dropdown {
-            padding: 6px 12px;
-            border: 1px solid transparent;
-            border-radius: var(--radius);
-            background: transparent;
-            color: var(--primary);
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            outline: none;
-            transition: all 0.2s;
-        }
-
-        .mode-dropdown:hover {
-            background: rgba(27, 68, 121, 0.08);
-        }
-
-        .chat-input-container {
-            position: relative;
-            display: flex;
-            align-items: flex-end;
+        .chat-input-wrapper {
             background: white;
             border: 2px solid var(--input-border);
             border-radius: 12px;
-            padding: 12px 48px 12px 16px;
+            padding: 12px 16px;
             transition: border-color 0.2s, box-shadow 0.2s;
         }
 
-        .chat-input-container:focus-within {
+        .chat-input-wrapper:focus-within {
             border-color: var(--primary-light);
             box-shadow: 0 0 0 3px rgba(27, 68, 121, 0.1);
         }
 
         .chat-input {
-            flex: 1;
             width: 100%;
             min-height: 60px;
             max-height: 200px;
-            padding: 0;
+            padding: 0 0 8px 0;
             border: none;
             background: transparent;
             font-size: 15px;
@@ -853,10 +828,33 @@ HTML_TEMPLATE = """
             color: #94a3b8;
         }
 
+        .input-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding-top: 8px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .mode-dropdown {
+            padding: 6px 10px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--primary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .mode-dropdown:hover {
+            background: rgba(27, 68, 121, 0.08);
+        }
+
         .send-btn {
-            position: absolute;
-            right: 8px;
-            bottom: 8px;
             width: 32px;
             height: 32px;
             padding: 0;
@@ -869,7 +867,7 @@ HTML_TEMPLATE = """
             align-items: center;
             justify-content: center;
             transition: all 0.2s;
-            opacity: 1;
+            flex-shrink: 0;
         }
 
         .send-btn:disabled {
@@ -1388,15 +1386,7 @@ HTML_TEMPLATE = """
             </div>
             
             <div class="input-area">
-                <div class="mode-dropdown-container">
-                    <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)">
-                        <option value="agentic">🤖 Perspicacité Agentic</option>
-                        <option value="profound">🔬 Deep Research</option>
-                        <option value="advanced">⚡ Advanced (Hybrid)</option>
-                        <option value="basic">📚 Quick Search</option>
-                    </select>
-                </div>
-                <div class="chat-input-container">
+                <div class="chat-input-wrapper">
                     <textarea 
                         id="query-input" 
                         class="chat-input"
@@ -1405,12 +1395,20 @@ HTML_TEMPLATE = """
                         onkeydown="handleInputKeydown(event)"
                         oninput="handleInputChange()"
                     ></textarea>
-                    <button id="send-btn" class="send-btn" onclick="sendQuery()" disabled>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22,2 15,22 11,13 2,9"></polygon>
-                        </svg>
-                    </button>
+                    <div class="input-actions">
+                        <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)">
+                            <option value="agentic">🤖 Perspicacité Agentic</option>
+                            <option value="profound">🔬 Deep Research</option>
+                            <option value="advanced">⚡ Advanced (Hybrid)</option>
+                            <option value="basic">📚 Quick Search</option>
+                        </select>
+                        <button id="send-btn" class="send-btn" onclick="sendQuery()" disabled>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
