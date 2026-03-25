@@ -50,6 +50,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     query: str = Field(..., description="Current user query")
+    mode: str = Field(default="agentic", description="RAG mode: basic, advanced, profound, agentic")
     max_papers: int = Field(default=3, ge=1, le=10, description="Max papers to search")
     stream: bool = Field(default=True, description="Stream response")
     conversation_id: str | None = None
@@ -305,6 +306,16 @@ HTML_TEMPLATE = """
             <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
             
             <div class="settings-group">
+                <label class="settings-label">Research Mode</label>
+                <select id="mode">
+                    <option value="agentic" selected>🤖 Agentic (Smart)</option>
+                    <option value="profound">🔬 Profound (Deep)</option>
+                    <option value="advanced">⚡ Advanced (WRRF)</option>
+                    <option value="basic">📚 Basic (Fast)</option>
+                </select>
+            </div>
+            
+            <div class="settings-group">
                 <label class="settings-label">Max Papers</label>
                 <input type="number" id="maxPapers" value="3" min="1" max="10">
             </div>
@@ -415,6 +426,7 @@ HTML_TEMPLATE = """
             const query = input.value.trim();
             if (!query) return;
             
+            const mode = document.getElementById('mode').value;
             const maxPapers = parseInt(document.getElementById('maxPapers').value);
             
             isProcessing = true;
@@ -450,6 +462,7 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({
                         query: query,
                         messages: [{ role: 'user', content: query }],
+                        mode: mode,
                         max_papers: maxPapers,
                         stream: true,
                         conversation_id: conversationId
