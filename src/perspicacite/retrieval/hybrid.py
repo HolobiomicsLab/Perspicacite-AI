@@ -1,216 +1,240 @@
-"""Hybrid retrieval combining vector similarity and BM25."""
+"""Hybrid retrieval combining vector similarity and BM25.
 
-from perspicacite.llm.embeddings import EmbeddingProvider
+This module implements hybrid retrieval as described in the release package:
+- Vector similarity for semantic matching
+- BM25 for lexical/keyword matching
+- Optional LLM-based weight determination
+- Score normalization and combination
+"""
+
+from typing import Any, List, Tuple
+
+import numpy as np
+from rank_bm25 import BM25Okapi
+
 from perspicacite.logging import get_logger
-from perspicacite.models.search import RetrievedChunk, SearchFilters
-from perspicacite.retrieval.bm25 import BM25Index
-from perspicacite.retrieval.chroma_store import ChromaVectorStore
 
 logger = get_logger("perspicacite.retrieval.hybrid")
 
 
-class HybridRetriever:
+def normalize_scores(scores: np.ndarray) -> np.ndarray:
+    """Normalize scores to 0-1 range using min-max normalization."""
+    min_score = scores.min()
+    max_score = scores.max()
+    
+    if max_score == min_score:
+        return np.ones_like(scores) * 0.5  # All equal, return middle value
+    
+    return (scores - min_score) / (max_score - min_score)
+
+
+def combine_scores(
+    vector_scores: np.ndarray,
+    bm25_scores: np.ndarray,
+    vector_weight: float = 0.5,
+    bm25_weight: float = 0.5,
+) -> np.ndarray:
     """
-    Combines vector similarity and BM25 for better recall.
-
-    Uses Reciprocal Rank Fusion (RRF) to merge results:
-    score = sum(1 / (k + rank_i)) for each retriever i
-
-    Where k is a constant (typically 60) that dampens the impact of high rankings.
+    Combine vector and BM25 scores with given weights.
+    
+    Args:
+        vector_scores: Vector similarity scores
+        bm25_scores: BM25 scores
+        vector_weight: Weight for vector scores (0-1)
+        bm25_weight: Weight for BM25 scores (0-1)
+        
+    Returns:
+        Combined scores array
     """
+    # Normalize both score arrays
+    norm_vector = normalize_scores(vector_scores)
+    norm_bm25 = normalize_scores(bm25_scores)
+    
+    # Combine with weights
+    combined = vector_weight * norm_vector + bm25_weight * norm_bm25
+    
+    return combined
 
-    def __init__(
-        self,
-        vector_store: ChromaVectorStore,
-        bm25_index: BM25Index,
-        embedding_provider: EmbeddingProvider,
-        vector_weight: float = 0.6,
-        bm25_weight: float = 0.4,
-        rrf_k: int = 60,
-    ):
-        """
-        Initialize hybrid retriever.
 
-        Args:
-            vector_store: Chroma vector store
-            bm25_index: BM25 keyword index
-            embedding_provider: For generating query embeddings
-            vector_weight: Weight for vector scores (not used in RRF)
-            bm25_weight: Weight for BM25 scores (not used in RRF)
-            rrf_k: RRF constant (higher = less emphasis on top ranks)
-        """
-        self.vector_store = vector_store
-        self.bm25_index = bm25_index
-        self.embedding_provider = embedding_provider
-        self.vector_weight = vector_weight
-        self.bm25_weight = bm25_weight
-        self.rrf_k = rrf_k
+async def determine_weights_with_llm(
+    query: str,
+    llm: Any,
+) -> Tuple[float, float]:
+    """
+    Use LLM to determine optimal weights for vector and BM25 retrieval.
+    
+    Ported from: core/hybrid_retrieval.py::determine_weights_with_llm()
+    
+    Args:
+        query: The search query
+        llm: LLM client
+        
+    Returns:
+        Tuple of (vector_weight, bm25_weight)
+    """
+    system_prompt = """You are a weight determination system for hybrid document retrieval.
+Your task is to analyze a query and output ONLY two numbers separated by a comma, representing the optimal weights for vector and BM25 retrieval.
+The numbers must sum to 1.0.
 
-    async def search(
-        self,
-        query: str,
-        collection: str,
-        top_k: int = 10,
-        filters: SearchFilters | None = None,
-    ) -> list[RetrievedChunk]:
-        """
-        Search using hybrid retrieval.
+Consider these factors in your analysis:
+1. Higher vector weight (e.g., 0.7) if the query requires semantic understanding
+2. Higher BM25 weight (e.g., 0.7) if the query contains specific named entities or exact terms
+3. Balanced weights (0.5,0.5) if both aspects are equally important
 
-        Args:
-            query: Search query
-            collection: Collection name
-            top_k: Number of results
-            filters: Optional metadata filters
+IMPORTANT: Your response must be EXACTLY in this format: number,number
+Example responses:
+0.7,0.3
+0.3,0.7
+0.5,0.5
 
-        Returns:
-            Fused and ranked results
-        """
-        logger.debug(
-            "hybrid_search_start",
-            query=query[:50],
-            collection=collection,
+DO NOT include any explanation or additional text in your response.
+"""
+    
+    try:
+        response = await llm.complete(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Query to analyze: {query}"},
+            ],
+            temperature=0.3,
+            max_tokens=20,
         )
-
-        # 1. Vector search
-        query_embedding = await self.embedding_provider.embed([query])
-        vector_results = await self.vector_store.search(
-            collection=collection,
-            query_embedding=query_embedding[0],
-            top_k=top_k * 3,  # Over-fetch for fusion
-            filters=filters,
-        )
-
-        # 2. BM25 search
-        bm25_results = await self.bm25_index.search(
-            query=query,
-            top_k=top_k * 3,
-        )
-
-        # 3. RRF fusion
-        fused_results = self._rrf_fusion(
-            vector_results,
-            bm25_results,
-            top_k=top_k,
-        )
-
-        logger.debug(
-            "hybrid_search_complete",
-            vector_hits=len(vector_results),
-            bm25_hits=len(bm25_results),
-            fused=len(fused_results),
-        )
-
-        return fused_results
-
-    def _rrf_fusion(
-        self,
-        vector_results: list[RetrievedChunk],
-        bm25_results: list[RetrievedChunk],
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        """
-        Fuse results using Reciprocal Rank Fusion.
-
-        Args:
-            vector_results: Results from vector search
-            bm25_results: Results from BM25 search
-            top_k: Number of results to return
-
-        Returns:
-            Fused and ranked results
-        """
-        # Build score map by chunk ID
-        scores: dict[str, float] = {}
-        chunks: dict[str, RetrievedChunk] = {}
-
-        # Add vector scores
-        for rank, result in enumerate(vector_results, start=1):
-            chunk_id = result.chunk.id
-            scores[chunk_id] = scores.get(chunk_id, 0) + 1.0 / (self.rrf_k + rank)
-            chunks[chunk_id] = result
-
-        # Add BM25 scores
-        for rank, result in enumerate(bm25_results, start=1):
-            chunk_id = result.chunk.id
-            scores[chunk_id] = scores.get(chunk_id, 0) + 1.0 / (self.rrf_k + rank)
-            if chunk_id not in chunks:
-                chunks[chunk_id] = result
-
-        # Sort by fused score
-        sorted_ids = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
-
-        # Build results
-        fused = []
-        for chunk_id in sorted_ids[:top_k]:
-            chunk = chunks[chunk_id]
-            fused.append(
-                RetrievedChunk(
-                    chunk=chunk.chunk,
-                    score=scores[chunk_id],
-                    retrieval_method="hybrid",
-                )
+        
+        # Clean the response to ensure it only contains numbers and comma
+        cleaned = ''.join(c for c in response.strip() if c.isdigit() or c == ',' or c == '.')
+        parts = cleaned.split(',')
+        
+        if len(parts) >= 2:
+            vector_weight = float(parts[0])
+            bm25_weight = float(parts[1])
+            
+            # Ensure weights sum to 1.0
+            total = vector_weight + bm25_weight
+            if total == 0:
+                logger.warning("LLM returned zero weights, using defaults")
+                return 0.5, 0.5
+            
+            vector_weight /= total
+            bm25_weight /= total
+            
+            logger.info(
+                "hybrid_weights_determined",
+                vector_weight=vector_weight,
+                bm25_weight=bm25_weight,
             )
+            return vector_weight, bm25_weight
+        else:
+            logger.warning("Could not parse LLM weights, using defaults")
+            return 0.5, 0.5
+            
+    except Exception as e:
+        logger.warning("hybrid_weight_determination_error", error=str(e))
+        return 0.5, 0.5
 
-        return fused
 
-    def _weighted_fusion(
-        self,
-        vector_results: list[RetrievedChunk],
-        bm25_results: list[RetrievedChunk],
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        """
-        Alternative: Fuse using weighted scores.
+def compute_bm25_scores(
+    documents: List[str],
+    query: str,
+) -> np.ndarray:
+    """
+    Compute BM25 scores for documents given a query.
+    
+    Args:
+        documents: List of document texts
+        query: Search query
+        
+    Returns:
+        Array of BM25 scores
+    """
+    # Tokenize documents
+    tokenized_docs = [doc.lower().split() for doc in documents]
+    
+    # Create BM25 index
+    bm25 = BM25Okapi(tokenized_docs)
+    
+    # Tokenize query
+    tokenized_query = query.lower().split()
+    
+    # Get scores
+    scores = bm25.get_scores(tokenized_query)
+    
+    return np.array(scores)
 
-        Normalizes scores from each retriever and weights them.
-        Less effective than RRF but simpler.
 
-        Args:
-            vector_results: Results from vector search
-            bm25_results: Results from BM25 search
-            top_k: Number of results
-
-        Returns:
-            Fused and ranked results
-        """
-        # Normalize scores for each result set
-        if vector_results:
-            max_vector = max(r.score for r in vector_results)
-            if max_vector > 0:
-                for r in vector_results:
-                    r.score = r.score / max_vector
-
-        if bm25_results:
-            max_bm25 = max(r.score for r in bm25_results)
-            if max_bm25 > 0:
-                for r in bm25_results:
-                    r.score = r.score / max_bm25
-
-        # Build combined scores
-        scores: dict[str, float] = {}
-        chunks: dict[str, RetrievedChunk] = {}
-
-        for r in vector_results:
-            scores[r.chunk.id] = scores.get(r.chunk.id, 0) + r.score * self.vector_weight
-            chunks[r.chunk.id] = r
-
-        for r in bm25_results:
-            scores[r.chunk.id] = scores.get(r.chunk.id, 0) + r.score * self.bm25_weight
-            if r.chunk.id not in chunks:
-                chunks[r.chunk.id] = r
-
-        # Sort and return top-k
-        sorted_ids = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
-
-        fused = []
-        for chunk_id in sorted_ids[:top_k]:
-            chunk = chunks[chunk_id]
-            fused.append(
-                RetrievedChunk(
-                    chunk=chunk.chunk,
-                    score=scores[chunk_id],
-                    retrieval_method="hybrid",
-                )
-            )
-
-        return fused
+async def hybrid_retrieval(
+    query: str,
+    documents: List[Any],
+    vector_scores: List[float],
+    vector_weight: float = 0.5,
+    bm25_weight: float = 0.5,
+    use_llm_weights: bool = False,
+    llm: Any = None,
+) -> List[Tuple[Any, float]]:
+    """
+    Perform hybrid retrieval combining vector similarity and BM25.
+    
+    Ported from: core/hybrid_retrieval.py::hybrid_retrieval()
+    
+    Args:
+        query: Search query
+        documents: List of documents (with page_content attribute)
+        vector_scores: Vector similarity scores for documents
+        vector_weight: Weight for vector scores
+        bm25_weight: Weight for BM25 scores
+        use_llm_weights: Whether to use LLM to determine weights
+        llm: LLM client (required if use_llm_weights is True)
+        
+    Returns:
+        List of (document, combined_score) tuples sorted by score
+    """
+    logger.info("hybrid_retrieval_start", query=query[:100], num_docs=len(documents))
+    
+    # Determine weights using LLM if requested
+    if use_llm_weights and llm is not None:
+        vector_weight, bm25_weight = await determine_weights_with_llm(query, llm)
+    
+    # Extract document texts
+    doc_texts = []
+    for doc in documents:
+        if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'text'):
+            text = doc.chunk.text
+        elif hasattr(doc, 'page_content'):
+            text = doc.page_content
+        elif hasattr(doc, 'content'):
+            text = str(doc.content)
+        else:
+            text = str(doc)
+        doc_texts.append(text)
+    
+    # Compute BM25 scores
+    bm25_scores = compute_bm25_scores(doc_texts, query)
+    vector_scores_arr = np.array(vector_scores)
+    
+    logger.info(
+        "hybrid_scores_computed",
+        vector_scores_range=(vector_scores_arr.min(), vector_scores_arr.max()),
+        bm25_scores_range=(bm25_scores.min(), bm25_scores.max()),
+    )
+    
+    # Combine scores
+    combined_scores = combine_scores(
+        vector_scores_arr,
+        bm25_scores,
+        vector_weight,
+        bm25_weight,
+    )
+    
+    # Create result tuples
+    results = list(zip(documents, combined_scores))
+    
+    # Sort by combined score (descending)
+    results.sort(key=lambda x: x[1], reverse=True)
+    
+    logger.info(
+        "hybrid_retrieval_complete",
+        top_score=results[0][1] if results else 0,
+        vector_weight=vector_weight,
+        bm25_weight=bm25_weight,
+    )
+    
+    return results

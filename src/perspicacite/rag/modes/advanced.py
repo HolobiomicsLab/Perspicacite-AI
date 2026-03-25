@@ -25,6 +25,7 @@ from perspicacite.rag.prompts import (
     REFINE_RESPONSE_HUMAN_PROMPT_SUFFIX,
     FOCUS_INSTRUCTIONS_PROMPT,
 )
+from perspicacite.retrieval.hybrid import hybrid_retrieval
 
 logger = get_logger("perspicacite.rag.modes.advanced")
 
@@ -50,7 +51,7 @@ class AdvancedRAGMode(BaseRAGMode):
         self.max_docs_per_source = 1
         self.rephrases = 3  # Number of additional queries to generate
         self.use_refinement = rag_settings.get('enable_reflection', False)
-        self.use_hybrid = rag_settings.get('tools', []) is not None  # Enable if tools available
+        self.use_hybrid = rag_settings.get('use_hybrid', False)  # Enable hybrid retrieval
         
         # WRRF constants from release package
         self.wrrf_k = 60
@@ -95,6 +96,7 @@ class AdvancedRAGMode(BaseRAGMode):
             vector_store=vector_store,
             embedding_provider=embedding_provider,
             kb_name=request.kb_name,
+            llm=llm,
         )
         
         logger.info("advanced_selected_docs", count=len(selected_documents))
@@ -219,6 +221,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         vector_store: Any,
         embedding_provider: Any,
         kb_name: str,
+        llm: Any = None,
     ) -> list[Any]:
         """
         Retrieve documents using WRRF (Weighted Reciprocal Rank Fusion).
@@ -226,6 +229,8 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         Ported from: core/core.py::retrieve_documents() - the multi-query branch
         
         WRRF formula: score = sum(normalized_score / (k + rank))
+        
+        If use_hybrid is enabled, also applies BM25 scoring to combine with vector scores.
         """
         rankings = {}  # doc_id -> {query_idx: rank}
         scores_per_query = {}  # query_idx -> {doc_id: score}
@@ -244,6 +249,33 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             )
             
             scores_per_query[q_idx] = {}
+            
+            # Apply hybrid retrieval if enabled (first query only to avoid redundancy)
+            if self.use_hybrid and q_idx == 0 and results and llm is not None:
+                try:
+                    logger.info("advanced_applying_hybrid", query=query[:100])
+                    
+                    # Extract vector scores
+                    vector_scores = [getattr(r, 'score', 0.5) for r in results]
+                    
+                    # Apply hybrid retrieval
+                    hybrid_results = await hybrid_retrieval(
+                        query=query,
+                        documents=results,
+                        vector_scores=vector_scores,
+                        use_llm_weights=True,
+                        llm=llm,
+                    )
+                    
+                    # Replace results with hybrid-scored versions
+                    results = [doc for doc, _ in hybrid_results]
+                    for doc, hybrid_score in hybrid_results:
+                        doc.score = hybrid_score
+                    
+                    logger.info("advanced_hybrid_applied", num_results=len(results))
+                    
+                except Exception as e:
+                    logger.warning("advanced_hybrid_error", error=str(e))
             
             # Process results for this query
             for rank, doc in enumerate(results, start=1):
@@ -305,7 +337,8 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         logger.info("advanced_wrrf_selected", 
                    total_docs=len(sorted_docs), 
                    selected=len(selected_documents),
-                   unique_sources=len(source_counter))
+                   unique_sources=len(source_counter),
+                   hybrid_used=self.use_hybrid)
 
         return selected_documents
 
