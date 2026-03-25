@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import httpx
 
 from perspicacite.logging import get_logger
+from perspicacite.models.kb import chroma_collection_name_for_kb
 
 if TYPE_CHECKING:
     from perspicacite.llm.client import AsyncLLMClient
@@ -668,10 +669,13 @@ class UnifiedAgenticRAG:
 
         logger.info("unified_agentic_query", query=query[:100], session_id=session.session_id)
 
+        active_kb = kb_name if kb_name and kb_name != "default" else None
+
         # Step 1: Classify intent
         intent_result = await self.intent_classifier.classify(
             query=query,
             conversation_history=session.get_conversation_history(),
+            active_kb_name=active_kb,
         )
         logger.info("intent_classified", intent=intent_result.intent.name, confidence=intent_result.confidence)
 
@@ -682,6 +686,7 @@ class UnifiedAgenticRAG:
             intent_result=intent_result,
             available_tools=available_tools,
             conversation_history=session.get_conversation_history(),
+            active_kb_name=active_kb,
         )
         logger.info("plan_created", steps=len(plan.steps), reasoning=plan.reasoning)
 
@@ -879,7 +884,7 @@ class UnifiedAgenticRAG:
                 logger.info("kb_search", original_query=raw_query, cleaned_query=query)
                 query_emb = await self.embeddings.embed([query])
                 docs = await self.vector_store.search(
-                    collection=f"kb_{kb_name}",
+                    collection=chroma_collection_name_for_kb(kb_name),
                     query_embedding=query_emb[0],
                     top_k=10,
                 )

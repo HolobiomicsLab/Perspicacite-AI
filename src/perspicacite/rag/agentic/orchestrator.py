@@ -1,5 +1,7 @@
 """Main agentic orchestrator with session management."""
 
+import json
+import re
 import uuid
 import asyncio
 import logging
@@ -8,8 +10,9 @@ from typing import Dict, List, Any, Optional, AsyncGenerator
 from datetime import datetime
 
 from .intent import IntentClassifier, Intent
-from .planner import ResearchPlanner, Step, StepType, Plan
+from .planner import ResearchPlanner, Step, StepType, Plan, _log_steps_detail
 from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+from perspicacite.models.kb import chroma_collection_name_for_kb
 
 logger = logging.getLogger(__name__)
 
@@ -116,10 +119,11 @@ class AgenticOrchestrator:
         logger.info("=" * 80)
         logger.info("NEW CHAT REQUEST")
         logger.info(f"Query: {query}")
-        logger.info(f"Session ID: {session_id}")
+        logger.info(f"Session ID (client): {session_id!r}")
         logger.info(f"KB: {kb_name or 'none'}")
         
         session = self.get_or_create_session(session_id)
+        logger.info(f"Resolved session_id: {session.session_id}")
         session.add_message("user", query)
         session.kb_name = kb_name
         logger.info(f"Session messages count: {len(session.messages)}")
@@ -129,7 +133,8 @@ class AgenticOrchestrator:
         
         intent_result = await self.intent_classifier.classify(
             query=query,
-            conversation_history=session.get_conversation_history()
+            conversation_history=session.get_conversation_history(),
+            active_kb_name=kb_name,
         )
         logger.info(f"Intent classified: {intent_result.intent.name}")
         logger.info(f"Confidence: {intent_result.confidence}")
@@ -145,7 +150,7 @@ class AgenticOrchestrator:
         yield {"type": "thinking", "message": "Creating research plan..."}
         
         # Available tools: registered tools (excluding deactivated ones) + built-in
-        available_tools = [t for t in self.tools.list_tools() if t != "lotus_search"] + ["openalex_search", "kb_search"]
+        available_tools = [t for t in self.tools.list_tools() if t != "lotus_search"] + ["literature_search", "kb_search"]
         logger.info(f"Available tools: {available_tools}")
         previous_findings = self._summarize_findings(session.research_findings)
         
@@ -154,7 +159,8 @@ class AgenticOrchestrator:
             intent_result=intent_result,
             available_tools=available_tools,
             conversation_history=session.get_conversation_history(),
-            previous_findings=previous_findings
+            previous_findings=previous_findings,
+            active_kb_name=kb_name,
         )
         
         # If a KB is selected, always search it first (don't rely on the LLM planner)
@@ -164,7 +170,7 @@ class AgenticOrchestrator:
                 from perspicacite.rag.agentic.planner import ResearchPlanner
                 clean_query = ResearchPlanner._clean_query_for_search(query)
                 kb_step = Step(
-                    id="kb_search",
+                    id="step1",
                     type=StepType.KB_SEARCH,
                     description=f"Search knowledge base '{kb_name}'",
                     tool="kb_search",
@@ -172,11 +178,14 @@ class AgenticOrchestrator:
                 )
                 plan.steps.insert(0, kb_step)
                 plan.estimated_steps = len(plan.steps)
-                logger.info(f"Injected kb_search step for KB '{kb_name}'")
-        
-        logger.info(f"Plan created with {len(plan.steps)} steps")
-        for i, step in enumerate(plan.steps):
-            logger.info(f"  Step {i+1}: {step.id} - {step.type.value} - {step.description}")
+                logger.info(
+                    f"Injected kb_search as step1 for KB {kb_name!r} tool_input.query={clean_query!r}"
+                )
+
+        logger.info(
+            f"Orchestrator plan reasoning ({len(plan.reasoning)} chars): {plan.reasoning}"
+        )
+        _log_steps_detail(plan.steps, "Orchestrator plan (final, after KB inject if any)")
         
         if plan.can_answer_from_history:
             yield {"type": "thinking", "message": "I can answer from our conversation history..."}
@@ -215,6 +224,8 @@ class AgenticOrchestrator:
                 "query": next_step.tool_input.get("query", ""),
             }
             
+            import time
+            step_start_time = time.time()
             logger.info(f"Executing step {next_step.id}...")
             result = await self._execute_step(
                 next_step, 
@@ -222,12 +233,15 @@ class AgenticOrchestrator:
                 step_results,
                 session
             )
+            step_duration = time.time() - step_start_time
             
             # Log the result
             result_str = str(result)
-            logger.info(f"Step {next_step.id} completed")
+            logger.info(f"Step {next_step.id} completed in {step_duration:.2f}s")
             logger.info(f"Result length: {len(result_str)} chars")
-            logger.info(f"Result preview: {result_str[:500]}...")
+            # Show first 2000 chars to see actual content (not just titles)
+            preview_len = min(2000, len(result_str))
+            logger.info(f"Result preview: {result_str[:preview_len]}{'...[truncated]' if len(result_str) > preview_len else ''}")
             
             step_results[next_step.id] = result
             completed_steps.append(next_step)
@@ -239,7 +253,7 @@ class AgenticOrchestrator:
             }
             
             # Evaluate if we need to replan
-            if next_step.type in (StepType.LOTUS_SEARCH, StepType.OPENALEX_SEARCH, StepType.KB_SEARCH):
+            if next_step.type in (StepType.LOTUS_SEARCH, StepType.LITERATURE_SEARCH, StepType.KB_SEARCH):
                 should_continue = await self._evaluate_progress(
                     query, plan, completed_steps, step_results
                 )
@@ -329,9 +343,9 @@ class AgenticOrchestrator:
             logger.info("LOTUS_SEARCH: skipped (deactivated)")
             return "LOTUS search is currently deactivated."
         
-        elif step.type == StepType.OPENALEX_SEARCH:
+        elif step.type == StepType.LITERATURE_SEARCH:
             query = step.tool_input.get("query", original_query)
-            logger.info(f"OPENALEX_SEARCH: query='{query}'")
+            logger.info(f"LITERATURE_SEARCH: query='{query}'")
             return await self._fallback_openalex_search(query)
         
         elif step.type == StepType.DOWNLOAD_PAPERS:
@@ -349,33 +363,115 @@ class AgenticOrchestrator:
         elif step.type == StepType.KB_SEARCH:
             if session.kb_name:
                 try:
-                    collection_name = f"kb_{session.kb_name}"
-                    logger.info(f"KB_SEARCH: Searching collection '{collection_name}'")
-                    query = step.tool_input.get("query", original_query)
-                    
+                    collection_name = chroma_collection_name_for_kb(session.kb_name)
+                    kb_query = step.tool_input.get("query", original_query)
+
+                    logger.info("========== KB_SEARCH ==========")
+                    logger.info(
+                        f"KB_SEARCH: kb_name={session.kb_name!r} collection={collection_name!r} "
+                        f"step_id={step.id!r}"
+                    )
+                    logger.info(
+                        f"KB_SEARCH: search_query ({len(kb_query)} chars)={kb_query!r}"
+                    )
+
                     dkb = DynamicKnowledgeBase(
                         vector_store=self.vector_store,
                         embedding_service=self.embeddings,
                     )
                     dkb.collection_name = collection_name
                     dkb._initialized = True
-                    
-                    results = await dkb.search(query, top_k=5)
-                    logger.info(f"KB_SEARCH: Found {len(results)} results")
-                    
+                    top_k = dkb.config.top_k
+                    logger.info(
+                        f"KB_SEARCH: top_k={top_k} min_relevance_score={dkb.config.min_relevance_score} "
+                        f"embedding_model={getattr(self.embeddings, 'model_name', '?')!r}"
+                    )
+
+                    results = await dkb.search(kb_query, top_k=top_k)
+                    logger.info(
+                        f"KB_SEARCH: vector hits (after dedupe/score filter)={len(results)}"
+                    )
+                    for j, r in enumerate(results, 1):
+                        meta = r.get("metadata")
+                        pid = (
+                            getattr(meta, "paper_id", None)
+                            if meta is not None
+                            else r.get("paper_id")
+                        )
+                        title = (
+                            getattr(meta, "title", None) or "Unknown"
+                            if meta is not None
+                            else "Unknown"
+                        )
+                        txt = r.get("text") or ""
+                        
+                        # Warn if text is empty - this indicates a data quality issue
+                        if not txt.strip():
+                            logger.warning(f"KB_SEARCH hit {j}: EMPTY TEXT CONTENT for paper_id={pid!r} title={title!r}")
+                        
+                        logger.info(
+                            f"KB_SEARCH hit {j}/{len(results)}: paper_id={pid!r} "
+                            f"score={r.get('score', 0):.4f} title={title!r} text_len={len(txt)}"
+                        )
+                        preview = txt[:280].replace("\n", " ")
+                        if preview.strip():
+                            logger.info(f"KB_SEARCH hit {j} text_preview: {preview}{'…' if len(txt) > 280 else ''}")
+
                     if results:
                         formatted_parts = [f"Found {len(results)} relevant documents in knowledge base:"]
                         for i, r in enumerate(results, 1):
-                            title = r.get("metadata", {}).title if hasattr(r.get("metadata", {}), "title") else "Unknown"
+                            meta = r.get("metadata")
+                            title = (
+                                getattr(meta, "title", None) or "Unknown"
+                                if meta is not None
+                                else "Unknown"
+                            )
+                            authors = (
+                                getattr(meta, "authors", None) or ""
+                                if meta is not None
+                                else ""
+                            )
+                            year = (
+                                getattr(meta, "year", None) or ""
+                                if meta is not None
+                                else ""
+                            )
+                            doi = (
+                                getattr(meta, "doi", None) or ""
+                                if meta is not None
+                                else ""
+                            )
                             score = r.get("score", 0)
-                            text_preview = r.get("text", "")[:200]
+                            # Include more text content for better context (up to 1500 chars)
+                            raw_text = r.get("text", "") or ""
+                            text_content = raw_text[:1500]
+                            
+                            # Log warning if text is empty - this is a data quality issue
+                            if not raw_text.strip():
+                                logger.warning(f"KB_SEARCH: Hit {i} has EMPTY text content for '{title}'")
+                            
                             formatted_parts.append(f"\n{i}. {title} (relevance: {score:.2f})")
-                            formatted_parts.append(f"   {text_preview}...")
-                        return "\n".join(formatted_parts)
+                            if authors:
+                                formatted_parts.append(f"   Authors: {authors}")
+                            if year:
+                                formatted_parts.append(f"   Year: {year}")
+                            if doi:
+                                formatted_parts.append(f"   DOI: {doi}")
+                            if text_content:
+                                formatted_parts.append(f"   Content: {text_content}")
+                                if len(raw_text) > 1500:
+                                    formatted_parts.append("   [... content truncated ...]")
+                            else:
+                                formatted_parts.append("   Content: [No text content available]")
+                        out = "\n".join(formatted_parts)
+                        logger.info(f"KB_SEARCH: formatted tool result length={len(out)} chars")
+                        return out
+                    logger.info("KB_SEARCH: no hits — empty result for downstream / judge")
                     return "No relevant documents found in knowledge base."
                 except Exception as e:
                     logger.error(f"KB_SEARCH failed: {e}", exc_info=True)
                     return "Knowledge base search failed."
+            logger.info("KB_SEARCH: skipped — no knowledge base selected on session")
             return "No knowledge base selected."
         
         elif step.type == StepType.ANALYZE:
@@ -393,6 +489,76 @@ class AgenticOrchestrator:
         
         return None
     
+    async def _llm_judge_kb_sufficiency(self, user_query: str, kb_result_text: str) -> bool:
+        """
+        Ask the LLM whether KB retrieval is enough to answer without web/OpenAlex.
+
+        Returns False on empty/failed retrieval, parse errors, or LLM saying insufficient.
+        """
+        excerpt = (kb_result_text or "").strip()
+        low = excerpt.lower()
+        
+        # Log what we're working with
+        logger.info(f"KB_JUDGE: input length={len(kb_result_text or '')} chars, excerpt length={len(excerpt)} chars")
+        
+        if not excerpt:
+            logger.info("KB_JUDGE: empty excerpt -> insufficient")
+            return False
+        if (
+            "no relevant documents" in low
+            or "knowledge base search failed" in low
+            or "no knowledge base selected" in low
+        ):
+            logger.info(f"KB_JUDGE: found failure phrase -> insufficient")
+            return False
+
+        max_judge_chars = 8000
+        if len(excerpt) > max_judge_chars:
+            excerpt = excerpt[:max_judge_chars] + "\n[... truncated for judge ...]"
+        
+        # Log the actual excerpt being sent to judge (first 1000 chars)
+        logger.info(f"KB_JUDGE: excerpt preview (first 1000 chars): {excerpt[:1000]}...")
+
+        prompt = (
+            "You decide if KNOWLEDGE BASE retrieval is enough to answer the user's question "
+            "without any further web or literature search.\n\n"
+            f'User question:\n"{user_query}"\n\n'
+            "Knowledge base retrieval (from curated papers):\n---\n"
+            f"{excerpt}\n"
+            "---\n\n"
+            'Reply with ONLY a single JSON object, no markdown fences: '
+            '{"sufficient": true or false, "reason": "short phrase"}\n\n'
+            "Guidelines:\n"
+            "- sufficient=true if the snippets clearly address the question (definitions, how a method works, "
+            "mechanisms, workflow). Multiple on-topic abstracts or summaries count.\n"
+            "- sufficient=false only if retrieval is off-topic, empty of usable facts, or missing the core "
+            "concept the question asks about.\n"
+            "- Do NOT set sufficient=false just to fetch extra redundant papers on the same topic from the web; "
+            "duplicate OpenAlex hits are not a reason to continue.\n"
+            "- When unsure, prefer sufficient=true if any retrieved chunk is substantively on-topic."
+        )
+
+        try:
+            raw = await self.llm.complete(prompt, temperature=0.0)
+            text = raw.strip()
+            logger.info(f"KB_JUDGE: raw LLM response length={len(text)} chars")
+            logger.debug(f"KB_JUDGE: raw response preview: {text[:500]}...")
+            m_fence = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+            if m_fence:
+                text = m_fence.group(1).strip()
+            start, end = text.find("{"), text.rfind("}")
+            if start < 0 or end <= start:
+                logger.warning(f"KB_JUDGE: no JSON object in response. Text preview: {text[:200]}")
+                return False
+            obj = json.loads(text[start : end + 1])
+            sufficient = bool(obj.get("sufficient"))
+            reason = obj.get("reason", "")
+            logger.info(f"KB_JUDGE: sufficient={sufficient} reason={reason!r}")
+            return sufficient
+        except Exception as e:
+            logger.warning(f"KB_JUDGE: failed with error: {e}")
+            return False
+
     async def _evaluate_progress(
         self,
         query: str,
@@ -401,18 +567,28 @@ class AgenticOrchestrator:
         step_results: Dict[str, Any]
     ) -> str:
         """Evaluate if we should continue, replan, or answer."""
-        
-        # Simple heuristic: if we have good results, answer
+        last_step = completed_steps[-1]
+        last_result = step_results.get(last_step.id)
+        last_str = str(last_result) if last_result is not None else ""
+
+        # KB-first: LLM judges whether retrieved content is enough (not string length).
+        if last_step.type == StepType.KB_SEARCH:
+            if await self._llm_judge_kb_sufficiency(query, last_str):
+                return "answer"
+            return "continue"
+
+        # After other search tools: stop once we have substantial results from 2+ search steps
+        # (legacy behavior so e.g. two OpenAlex refinements can still terminate early).
         has_substantial_results = False
         for result in step_results.values():
             result_str = str(result)
             if len(result_str) > 200 and "error" not in result_str.lower():
                 has_substantial_results = True
                 break
-        
+
         if has_substantial_results and len(completed_steps) >= 2:
             return "answer"
-        
+
         return "continue"
     
     async def _analyze_results(self, query: str, step_results: Dict[str, Any]) -> str:
@@ -530,7 +706,7 @@ Answer Generation Guidelines:
 5. Be clear and direct in your language
 6. If the research results are insufficient to answer the question, clearly state this rather than speculating
 7. Structure your answer logically with clear sections if appropriate
-8. List ALL papers [1] through [{len(papers)}] in your answer if they are relevant - do not skip or group papers
+8. Cite using [N] from the numbered list only for sources you actually use; you do not need to mention every listed paper if some are redundant.
 
 Important: Do not provide an answer if the question contains hate speech, offensive language, discriminatory remarks, or harmful content.
 
@@ -623,24 +799,21 @@ Generate your answer:"""
 
         paper_list_str = "\n\n".join(paper_lines)
 
-        prompt = """You are evaluating research papers for relevance to a user's query.
-
-User Query: "{query}"
-
-Papers to evaluate:
-{paper_list_str}
-
-For each paper, score its relevance to the query on this scale:
-1 = Completely irrelevant
-2 = Tangential, unlikely to help answer query
-3 = Somewhat relevant, partial answer
-4 = Relevant, contributes to answer
-5 = Highly relevant, directly addresses query
-
-Respond with ONLY a JSON object mapping paper numbers to their scores and brief reasoning.
-Format: {{"scores": {{"1": {{"score": N, "reason": "..."}}, "2": {{"score": N, "reason": "..."}}, ...}}}
-Include a "reason" explaining why this score was given.
-Only include papers that exist in the list above.""".format(query=query, paper_list_str=paper_list_str)
+        prompt = (
+            "You are evaluating research papers for relevance to a user's query.\n\n"
+            f"User Query: \"{query}\"\n\n"
+            f"Papers to evaluate:\n{paper_list_str}\n\n"
+            "For each paper, score its relevance to the query on this scale:\n"
+            "1 = Completely irrelevant\n"
+            "2 = Tangential, unlikely to help answer query\n"
+            "3 = Somewhat relevant, partial answer\n"
+            "4 = Relevant, contributes to answer\n"
+            "5 = Highly relevant, directly addresses query\n\n"
+            "Respond with ONLY a JSON object mapping paper numbers to their scores and brief reasoning.\n"
+            'Format: {"scores": {"1": {"score": N, "reason": "..."}, "2": {"score": N, "reason": "..."}, ...}}\n'
+            "Include a \"reason\" explaining why this score was given.\n"
+            "Only include papers that exist in the list above."
+        )
 
         try:
             response = await self.llm.complete(prompt, temperature=0.1)
@@ -767,11 +940,15 @@ Only include papers that exist in the list above.""".format(query=query, paper_l
                         "doi": result.get("doi", "")
                     }
                     papers.append(paper)
-                
-                # Accumulate for papers_found event
+
+                papers = self._dedupe_paper_dicts(papers)
+
+                # Accumulate for papers_found event with source
                 if hasattr(self, "_found_papers"):
+                    for p in papers:
+                        p["source"] = "literature_search"
                     self._found_papers.extend(papers)
-                
+
                 return self._format_paper_list(papers)
         except Exception as e:
             return f"OpenAlex search failed: {e}"
@@ -843,20 +1020,66 @@ Only include papers that exist in the list above.""".format(query=query, paper_l
                     "doi": paper.doi,
                     "abstract": paper.abstract[:300] if paper.abstract else "",
                     "citations": paper.citation_count,
+                    "source": "kb_search",
                 })
         
         return "\n".join(lines)
+
+    @staticmethod
+    def _normalize_doi_for_dedupe(doi: Any) -> str:
+        if not doi:
+            return ""
+        d = str(doi).strip().lower()
+        for prefix in ("https://doi.org/", "http://dx.doi.org/", "doi:"):
+            if d.startswith(prefix):
+                d = d[len(prefix) :].strip()
+        return d
+
+    def _paper_dedupe_key(self, p: Dict[str, Any]) -> str:
+        """Prefer long title fingerprint so journal + bioRxiv (different DOIs) merge."""
+        title = (p.get("title") or "").lower()
+        fp = re.sub(r"[^a-z0-9]+", "", title)[:120]
+        if len(fp) >= 40:
+            return f"title:{fp}"
+        d = self._normalize_doi_for_dedupe(p.get("doi"))
+        if d:
+            return f"doi:{d}"
+        oid = (p.get("id") or "").strip()
+        if oid:
+            return f"oa:{oid}"
+        if fp:
+            return f"title:{fp}"
+        return f"unknown:{id(p)}"
+
+    def _paper_quality_tuple(self, p: Dict[str, Any]) -> tuple:
+        """Higher is better: more abstract, more citations, newer, non-bioRxiv DOI."""
+        doi = self._normalize_doi_for_dedupe(p.get("doi"))
+        is_biorxiv = doi.startswith("10.1101") if doi else False
+        return (
+            len(p.get("abstract") or ""),
+            p.get("cited_by_count") or 0,
+            p.get("year") or 0,
+            0 if is_biorxiv else 1,
+        )
+
+    def _dedupe_paper_dicts(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Merge duplicates (same DOI or same normalized title, e.g. preprint + journal)."""
+        best: Dict[str, Dict[str, Any]] = {}
+        for p in papers:
+            k = self._paper_dedupe_key(p)
+            if k.startswith("unknown:") and not p.get("title"):
+                continue
+            if k not in best or self._paper_quality_tuple(p) > self._paper_quality_tuple(best[k]):
+                best[k] = p
+        out = list(best.values())
+        if len(out) < len(papers):
+            logger.info(
+                f"Paper dedupe: {len(papers)} -> {len(out)} (by DOI / OpenAlex id / title fingerprint)"
+            )
+        return out
 
     def _extract_papers_from_results(self, step_results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract deduplicated paper list from accumulated found papers."""
         if not hasattr(self, "_found_papers") or not self._found_papers:
             return []
-        
-        seen_titles = set()
-        unique = []
-        for p in self._found_papers:
-            key = p.get("title", "").lower().strip()
-            if key and key not in seen_titles:
-                seen_titles.add(key)
-                unique.append(p)
-        return unique
+        return self._dedupe_paper_dicts(list(self._found_papers))

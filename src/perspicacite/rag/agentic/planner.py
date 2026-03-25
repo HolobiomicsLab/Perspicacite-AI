@@ -22,7 +22,7 @@ def _strip_markdown_fences(text: str) -> str:
 class StepType(Enum):
     """Types of research steps."""
     LOTUS_SEARCH = "lotus_search"
-    OPENALEX_SEARCH = "openalex_search"
+    LITERATURE_SEARCH = "literature_search"  # Generic academic literature search (may use OpenAlex, SciLEx, or fallback)
     DOWNLOAD_PAPERS = "download_papers"
     KB_SEARCH = "kb_search"
     WEB_SEARCH = "web_search"
@@ -52,6 +52,24 @@ class Plan:
     can_answer_from_history: bool = False
 
 
+def _log_steps_detail(steps: List[Step], label: str) -> None:
+    """Structured log of every planned step (tool_input, deps, full description)."""
+    logger.info(f"{label}: {len(steps)} step(s)")
+    for i, s in enumerate(steps, 1):
+        logger.info(
+            f"{label} [{i}/{len(steps)}] id={s.id!r} type={s.type.value} tool={s.tool!r} "
+            f"depends_on={s.depends_on!r} condition={s.condition!r}"
+        )
+        logger.info(f"{label} [{i}] description: {s.description}")
+        if s.tool_input:
+            try:
+                logger.info(
+                    f"{label} [{i}] tool_input: {json.dumps(s.tool_input, ensure_ascii=False)}"
+                )
+            except (TypeError, ValueError):
+                logger.info(f"{label} [{i}] tool_input: {s.tool_input!r}")
+
+
 class ResearchPlanner:
     """Generates dynamic research plans using LLM."""
     
@@ -64,7 +82,8 @@ class ResearchPlanner:
         intent_result,
         available_tools: List[str],
         conversation_history: Optional[List[dict]] = None,
-        previous_findings: Optional[str] = None
+        previous_findings: Optional[str] = None,
+        active_kb_name: Optional[str] = None,
     ) -> Plan:
         """
         Create a dynamic research plan.
@@ -75,7 +94,8 @@ class ResearchPlanner:
             available_tools: List of available tool names
             conversation_history: Previous messages
             previous_findings: Summary of previous research
-            
+            active_kb_name: If set, planner must lead with kb_search for that KB
+
         Returns:
             Plan with steps to execute
         """
@@ -93,6 +113,16 @@ class ResearchPlanner:
             context_parts.append(f"\nPrevious findings:\n{previous_findings[:500]}")
         
         context = "\n".join(context_parts)
+
+        kb_rules = ""
+        if active_kb_name:
+            kb_rules = f"""
+
+ACTIVE KNOWLEDGE BASE: The user selected curated KB "{active_kb_name}".
+- Step 1 MUST be type "kb_search", tool "kb_search", with tool_input.query = the cleaned core topic (same phrase you would use for OpenAlex — no invented qualifiers).
+- You SHOULD add step 2 as "literature_search" on that same core topic as a fallback when the KB is sparse (the system may skip step 2 automatically if KB retrieval is already sufficient).
+- Do not emit duplicate kb_search steps.
+"""
         
         prompt = f"""You are a research planner for a scientific research assistant. Create an effective research plan based on the user's query and intent.
 
@@ -101,7 +131,7 @@ Classified Intent: {intent_result.intent.name} (confidence: {intent_result.confi
 Intent Reasoning: {intent_result.reasoning}
 Extracted Entities: {intent_result.entities}
 
-Available Tools: {available_tools}
+Available Tools: {available_tools}{kb_rules}
 
 {context}
 
@@ -130,15 +160,15 @@ SEARCH STRATEGY (follow this like a senior researcher would):
 
 Step Types:
 - lotus_search: Natural products, chemical structures
-- openalex_search: Academic papers via OpenAlex/Semantic Scholar
+- literature_search: Academic literature search (via OpenAlex, SciLEx, Semantic Scholar, or fallback)
 - kb_search: Search existing knowledge base
 - analyze: Process and extract insights
 - answer: Final response
 
 Intent-Specific:
 - NATURAL_PRODUCTS_ONLY: lotus_search → answer
-- PAPERS_ONLY: openalex_search → answer
-- COMBINED_RESEARCH: openalex_search (core topic) → answer (replan adds more if needed)
+- PAPERS_ONLY: If ACTIVE KNOWLEDGE BASE is set: kb_search → literature_search → answer; else literature_search → answer
+- COMBINED_RESEARCH: If ACTIVE KNOWLEDGE BASE is set: kb_search → literature_search (same core topic) → answer; else literature_search (core topic) → answer (replan adds more if needed)
 - FOLLOW_UP: Focus on gaps from previous research
 
 Return JSON only (no markdown):
@@ -148,7 +178,7 @@ Return JSON only (no markdown):
     "steps": [
         {{
             "id": "step1",
-            "type": "lotus_search|openalex_search|kb_search|analyze|synthesize|answer",
+            "type": "lotus_search|literature_search|kb_search|analyze|synthesize|answer",
             "description": "what this step does",
             "tool": "tool_name",
             "tool_input": {{"query": "CLEAN search query using ONLY original query terms"}},
@@ -159,23 +189,45 @@ Return JSON only (no markdown):
 }}"""
 
         try:
-            logger.info(f"Creating plan for query: {query}")
-            logger.info(f"Intent: {intent_result.intent.name}, Tools: {available_tools}")
-            
+            logger.info("========== PLANNER create_plan ==========")
+            q_preview = query if len(query) <= 2000 else query[:2000] + "…"
+            logger.info(f"Query ({len(query)} chars): {q_preview}")
+            logger.info(
+                f"Intent: {intent_result.intent.name} "
+                f"confidence={intent_result.confidence:.3f}"
+            )
+            logger.info(f"Intent reasoning: {intent_result.reasoning}")
+            logger.info(f"Intent entities: {intent_result.entities!r}")
+            logger.info(f"Available tools: {available_tools}")
+            if context.strip():
+                ctx_prev = context if len(context) <= 1200 else context[:1200] + "…"
+                logger.info(f"Planner conversation/previous_findings context:\n{ctx_prev}")
+            logger.info(f"Planner prompt length: {len(prompt)} chars")
+
             response = await self.llm.complete(prompt, temperature=0.2)
-            logger.debug(f"Planner LLM response: {response[:500]}...")
-            
+            logger.info(f"Planner raw LLM response length: {len(response)} chars")
+            head, tail = 1600, 600
+            if len(response) <= head + tail:
+                logger.info(f"Planner raw LLM response (full):\n{response}")
+            else:
+                logger.info(f"Planner raw LLM response (first {head} chars):\n{response[:head]}…")
+                logger.info(f"Planner raw LLM response (last {tail} chars):\n…{response[-tail:]}")
+
             cleaned_response = _strip_markdown_fences(response)
+            logger.info(f"Planner fenced-stripped length: {len(cleaned_response)} chars")
             result = json.loads(cleaned_response)
-            logger.info(f"Plan reasoning: {result.get('reasoning', 'N/A')}")
-            
+
+            reasoning = result.get("reasoning", "N/A")
+            logger.info(f"Plan reasoning ({len(reasoning)} chars): {reasoning}")
+            cfh = result.get("can_answer_from_history", False)
+            logger.info(f"Plan can_answer_from_history: {cfh}")
+
             steps_data = result.get("steps", [])
-            logger.info(f"LLM generated {len(steps_data)} steps")
-            
+            logger.info(f"LLM returned {len(steps_data)} step object(s)")
+
             steps = []
             for step_data in steps_data:
                 step_type = StepType(step_data.get("type", "answer"))
-                logger.info(f"  Step: {step_data.get('id')} - {step_type.value} - {step_data.get('description', '')[:50]}")
                 steps.append(Step(
                     id=step_data["id"],
                     type=step_type,
@@ -185,7 +237,9 @@ Return JSON only (no markdown):
                     depends_on=step_data.get("depends_on", []),
                     condition=step_data.get("condition")
                 ))
-            
+
+            _log_steps_detail(steps, "Planned")
+
             return Plan(
                 steps=steps,
                 reasoning=result.get("reasoning", ""),
@@ -195,7 +249,14 @@ Return JSON only (no markdown):
             
         except Exception as e:
             logger.error(f"Error in planning: {e}", exc_info=True)
-            logger.info(f"LLM response was: {response[:500] if 'response' in locals() else 'N/A'}...")
+            if "response" in locals() and response:
+                rs = response
+                logger.info(
+                    f"Planner LLM response on failure: length={len(rs)} "
+                    f"head={rs[:800]!r}{'…' if len(rs) > 800 else ''}"
+                )
+            else:
+                logger.info("Planner LLM response on failure: (none)")
             
             return self._build_fallback_plan(query, intent_result, available_tools, e)
 
@@ -218,12 +279,12 @@ Return JSON only (no markdown):
                 ))
         
         elif intent == Intent.PAPERS_ONLY:
-            if "openalex_search" in available_tools:
+            if "literature_search" in available_tools:
                 fallback_steps.append(Step(
                     id="step1",
-                    type=StepType.OPENALEX_SEARCH,
+                    type=StepType.LITERATURE_SEARCH,
                     description="Search for papers on core topic",
-                    tool="openalex_search",
+                    tool="literature_search",
                     tool_input={"query": clean_query}
                 ))
         
@@ -239,25 +300,25 @@ Return JSON only (no markdown):
                 ))
                 step_counter += 1
             
-            if "openalex_search" in available_tools:
+            if "literature_search" in available_tools:
                 sub_queries = self._decompose_query(clean_query)
                 for sub_q in sub_queries:
                     fallback_steps.append(Step(
                         id=f"step{step_counter}",
-                        type=StepType.OPENALEX_SEARCH,
+                        type=StepType.LITERATURE_SEARCH,
                         description=f"Search papers: {sub_q}",
-                        tool="openalex_search",
+                        tool="literature_search",
                         tool_input={"query": sub_q}
                     ))
                     step_counter += 1
         
         else:
-            if "openalex_search" in available_tools:
+            if "literature_search" in available_tools:
                 fallback_steps.append(Step(
                     id="step1",
-                    type=StepType.OPENALEX_SEARCH,
+                    type=StepType.LITERATURE_SEARCH,
                     description="Search for papers",
-                    tool="openalex_search",
+                    tool="literature_search",
                     tool_input={"query": clean_query}
                 ))
         
@@ -268,10 +329,12 @@ Return JSON only (no markdown):
             depends_on=[s.id for s in fallback_steps[-1:]] if fallback_steps else []
         ))
         
-        logger.info(f"Using fallback plan with {len(fallback_steps)} steps (intent: {intent.name})")
-        for s in fallback_steps:
-            logger.info(f"  Fallback step: {s.id} - {s.type.value} - {s.description}")
-        
+        logger.warning(
+            f"Using fallback plan with {len(fallback_steps)} steps (intent: {intent.name}); "
+            f"error={error!r}"
+        )
+        _log_steps_detail(fallback_steps, "Fallback plan")
+
         return Plan(
             steps=fallback_steps,
             reasoning=f"LLM planning failed ({error}). Fallback for intent {intent.name}.",
@@ -371,13 +434,42 @@ Return JSON:
 
 Valid JSON only:"""
 
+        logger.info("========== PLANNER replan (pre-LLM) ==========")
+        for step in completed_steps:
+            raw = step_results.get(step.id, "No result")
+            sr = str(raw)
+            prev = sr[:700] + ("…" if len(sr) > 700 else "")
+            logger.info(
+                f"Replan prior result step={step.id!r} type={step.type.value} "
+                f"len={len(sr)} preview={prev!r}"
+            )
+
         try:
+            logger.info("========== PLANNER replan (LLM) ==========")
+            logger.info(f"Replan query ({len(query)} chars): {query[:1500]}{'…' if len(query) > 1500 else ''}")
+            logger.info(f"Replan evaluation: {evaluation}")
+            logger.info(
+                f"Replan: remaining steps in current plan ≈ "
+                f"{len(current_plan.steps) - len(completed_steps)} (by count)"
+            )
+            logger.info(f"Replan prompt length: {len(prompt)} chars")
+
             response = await self.llm.complete(prompt, temperature=0.2)
+            logger.info(f"Replan raw LLM response length: {len(response)} chars")
+            r_head = 1400
+            if len(response) <= r_head:
+                logger.info(f"Replan raw LLM response (full):\n{response}")
+            else:
+                logger.info(f"Replan raw LLM response (first {r_head} chars):\n{response[:r_head]}…")
+
             cleaned_response = _strip_markdown_fences(response)
             result = json.loads(cleaned_response)
-            
+
             action = result.get("action", "continue")
-            
+            logger.info(
+                f"Replan action={action!r} reasoning={result.get('reasoning', '')!r}"
+            )
+
             if action == "add_steps":
                 new_steps = []
                 for step_data in result.get("additional_steps", []):
@@ -394,7 +486,8 @@ Valid JSON only:"""
                 current_plan.steps.extend(new_steps)
                 current_plan.estimated_steps = len(current_plan.steps)
                 current_plan.reasoning += f"\nReplanned: {result.get('reasoning', '')}"
-                
+                _log_steps_detail(new_steps, "Replan added steps")
+
             elif action == "answer":
                 # Remove remaining steps, just add answer step
                 current_plan.steps = completed_steps + [Step(
@@ -403,8 +496,15 @@ Valid JSON only:"""
                     description="Generate final answer",
                     depends_on=[s.id for s in completed_steps]
                 )]
-            
+                logger.info("Replan: action=answer — truncating plan to completed + ANSWER step")
+
+            else:
+                logger.info("Replan: action=continue — plan unchanged except reasoning append if any")
+
+            _log_steps_detail(current_plan.steps, "Replan final plan")
+
             return current_plan
-            
-        except Exception:
+
+        except Exception as e:
+            logger.error(f"Replan failed, returning unchanged plan: {e}", exc_info=True)
             return current_plan

@@ -9,11 +9,7 @@ from perspicacite.llm.embeddings import EmbeddingProvider
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, StreamEvent
 from perspicacite.retrieval.chroma_store import ChromaVectorStore
-from perspicacite.rag.modes.quick import QuickRAGMode
-from perspicacite.rag.modes.standard import StandardRAGMode
-from perspicacite.rag.modes.advanced import AdvancedRAGMode
-from perspicacite.rag.modes.deep import DeepRAGMode
-from perspicacite.rag.modes.citation import CitationRAGMode
+from perspicacite.rag.modes.agentic import AgenticRAGMode
 from perspicacite.rag.tools import ToolRegistry
 
 logger = get_logger("perspicacite.rag.engine")
@@ -50,14 +46,8 @@ class RAGEngine:
         self.tool_registry = tool_registry
         self.config = config
 
-        # Initialize mode handlers
-        self._modes: dict[RAGMode, Any] = {
-            RAGMode.QUICK: QuickRAGMode(config),
-            RAGMode.STANDARD: StandardRAGMode(config),
-            RAGMode.ADVANCED: AdvancedRAGMode(config),
-            RAGMode.DEEP: DeepRAGMode(config),
-            RAGMode.CITATION: CitationRAGMode(config),
-        }
+        # Initialize agentic mode handler (only mode supported)
+        self._handler = AgenticRAGMode(config)
 
     async def query(self, request: RAGRequest) -> RAGResponse:
         """
@@ -75,7 +65,7 @@ class RAGEngine:
             kb=request.kb_name,
         )
 
-        handler = self._get_mode_handler(request.mode)
+        handler = self._get_handler(request.mode)
 
         try:
             response = await handler.execute(
@@ -122,7 +112,7 @@ class RAGEngine:
             kb=request.kb_name,
         )
 
-        handler = self._get_mode_handler(request.mode)
+        handler = self._get_handler(request.mode)
 
         try:
             async for event in handler.execute_stream(
@@ -148,8 +138,6 @@ class RAGEngine:
                 data=f'{{"message": "{str(e)}"}}',
             )
 
-    def _get_mode_handler(self, mode: RAGMode) -> Any:
-        """Get handler for the given mode."""
-        if mode not in self._modes:
-            raise ValueError(f"Unknown RAG mode: {mode}")
-        return self._modes[mode]
+    def _get_handler(self, mode: RAGMode) -> AgenticRAGMode:
+        """Get handler - always returns AgenticRAGMode."""
+        return self._handler

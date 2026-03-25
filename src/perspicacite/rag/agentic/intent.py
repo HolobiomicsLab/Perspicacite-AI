@@ -59,9 +59,10 @@ class IntentClassifier:
         return None
     
     async def classify(
-        self, 
-        query: str, 
-        conversation_history: Optional[List[dict]] = None
+        self,
+        query: str,
+        conversation_history: Optional[List[dict]] = None,
+        active_kb_name: Optional[str] = None,
     ) -> IntentResult:
         """
         Classify user intent from query.
@@ -69,6 +70,7 @@ class IntentClassifier:
         Args:
             query: User's current query
             conversation_history: Previous messages for context
+            active_kb_name: If set, user selected a curated knowledge base to search first
             
         Returns:
             IntentResult with classification and metadata
@@ -81,10 +83,19 @@ class IntentClassifier:
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")[:200]
                 history_context += f"{role}: {content}\n"
+
+        kb_block = ""
+        if active_kb_name:
+            kb_block = f"""
+
+ACTIVE KNOWLEDGE BASE: The user has selected curated KB "{active_kb_name}".
+- Always include "kb_search" in suggested_tools (preferably first) for any question that can be answered from scientific literature, methods, or prior curated papers.
+- You may also suggest openalex_search for external discovery when KB might be incomplete.
+"""
         
         prompt = f"""You are an intent classifier for a scientific research assistant. Analyze the user query and determine the most appropriate research approach.
 
-Query: "{query}"{history_context}
+Query: "{query}"{history_context}{kb_block}
 
 Available tools:
 - lotus_search: Search for natural products, chemical structures, and taxonomy in the LOTUS database
@@ -125,7 +136,7 @@ Return ONLY a JSON object (no markdown, no text before or after):
             if not json_str:
                 logger.warning(f"Could not extract JSON from response: {response[:200]}")
                 # Try simple keyword-based fallback
-                return self._keyword_fallback(query)
+                return self._keyword_fallback(query, active_kb_name=active_kb_name)
             
             result = json.loads(json_str)
             
@@ -139,20 +150,28 @@ Return ONLY a JSON object (no markdown, no text before or after):
                 "unknown": Intent.UNKNOWN,
             }
             
+            tools = list(result.get("suggested_tools", []))
+            if active_kb_name and "kb_search" not in tools:
+                tools.insert(0, "kb_search")
+                logger.info(
+                    "Intent: prepended kb_search because active_kb_name=%r",
+                    active_kb_name,
+                )
+
             return IntentResult(
                 intent=intent_map.get(result["intent"], Intent.UNKNOWN),
                 confidence=result.get("confidence", 0.5),
                 reasoning=result.get("reasoning", ""),
-                suggested_tools=result.get("suggested_tools", []),
+                suggested_tools=tools,
                 entities=result.get("entities", {})
             )
             
         except Exception as e:
             logger.error(f"Intent classification error: {e}")
             # Fallback to keyword-based classification
-            return self._keyword_fallback(query)
+            return self._keyword_fallback(query, active_kb_name=active_kb_name)
     
-    def _keyword_fallback(self, query: str) -> IntentResult:
+    def _keyword_fallback(self, query: str, active_kb_name: Optional[str] = None) -> IntentResult:
         """Simple keyword-based intent classification as fallback."""
         query_lower = query.lower()
         
@@ -165,7 +184,7 @@ Return ONLY a JSON object (no markdown, no text before or after):
                     intent=Intent.NATURAL_PRODUCTS_ONLY,
                     confidence=0.8,
                     reasoning="Keyword-based: Explicit LOTUS request",
-                    suggested_tools=["lotus_search"],
+                    suggested_tools=self._tools_with_kb(["lotus_search"], active_kb_name),
                     entities={}
                 )
             # Otherwise combined
@@ -173,7 +192,9 @@ Return ONLY a JSON object (no markdown, no text before or after):
                 intent=Intent.COMBINED_RESEARCH,
                 confidence=0.7,
                 reasoning="Keyword-based: Natural products mentioned, checking both sources",
-                suggested_tools=["lotus_search", "openalex_search"],
+                suggested_tools=self._tools_with_kb(
+                    ["lotus_search", "openalex_search"], active_kb_name
+                ),
                 entities={}
             )
         
@@ -184,7 +205,7 @@ Return ONLY a JSON object (no markdown, no text before or after):
                 intent=Intent.PAPERS_ONLY,
                 confidence=0.8,
                 reasoning="Keyword-based: Explicit paper search request",
-                suggested_tools=["openalex_search"],
+                suggested_tools=self._tools_with_kb(["openalex_search"], active_kb_name),
                 entities={}
             )
         
@@ -193,6 +214,14 @@ Return ONLY a JSON object (no markdown, no text before or after):
             intent=Intent.COMBINED_RESEARCH,
             confidence=0.6,
             reasoning="Keyword-based: Defaulting to combined research",
-            suggested_tools=["lotus_search", "openalex_search"],
+            suggested_tools=self._tools_with_kb(
+                ["lotus_search", "openalex_search"], active_kb_name
+            ),
             entities={}
         )
+
+    @staticmethod
+    def _tools_with_kb(base: List[str], active_kb_name: Optional[str]) -> List[str]:
+        if not active_kb_name or "kb_search" in base:
+            return base
+        return ["kb_search"] + base

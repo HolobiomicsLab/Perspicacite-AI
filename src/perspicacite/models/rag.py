@@ -9,13 +9,8 @@ from perspicacite.models.search import SearchFilters
 
 
 class RAGMode(str, Enum):
-    """RAG mode for different research depths."""
+    """RAG mode - agentic is the only supported mode."""
 
-    QUICK = "quick"
-    STANDARD = "standard"
-    ADVANCED = "advanced"
-    DEEP = "deep"
-    CITATION = "citation"
     AGENTIC = "agentic"
 
 

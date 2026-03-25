@@ -1,0 +1,192 @@
+# Perspicacité v2 Configuration
+# Using Minimax M2.7 as the default provider
+
+version: "2.0.0"
+config_name: "minimax-default"
+
+# =============================================================================
+# Server Settings
+# =============================================================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+
+# =============================================================================
+# LLM Configuration - DeepSeek V3.2
+# =============================================================================
+
+llm:
+  # Default to DeepSeek V3
+  # NOTE: Minimax implementation needs fixes (marked as TODO)
+  default_provider: "deepseek"
+  default_model: "deepseek-chat"  # DeepSeek V3 (latest)
+  
+  # Provider configurations
+  providers:
+    # DeepSeek - Default provider
+    deepseek:
+      base_url: "https://api.deepseek.com"
+      timeout: 120
+      max_retries: 3
+    
+    # TODO: Minimax implementation needs fixes
+    # Currently has response parsing issues with Anthropic-compatible API
+    # minimax:
+    #   base_url: "https://api.minimaxi.com/anthropic"
+    #   timeout: 120
+    #   max_retries: 3
+    
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      timeout: 120
+      max_retries: 3
+    
+    openai:
+      base_url: "https://api.openai.com/v1"
+      timeout: 60
+      max_retries: 3
+    
+    deepseek:
+      base_url: "https://api.deepseek.com"
+      timeout: 60
+      max_retries: 3
+  
+  # Context settings
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+    summarize_threshold: 20
+
+# =============================================================================
+# Knowledge Base Configuration
+# =============================================================================
+
+knowledge_base:
+  embedding_model: "text-embedding-3-small"
+  chunk_size: 1000
+  chunk_overlap: 200
+  preserve_sections: true
+  default_top_k: 10
+  similarity_threshold: 0.7
+
+# =============================================================================
+# Database Configuration
+# =============================================================================
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+# =============================================================================
+# RAG Mode Settings
+# =============================================================================
+
+rag_modes:
+  quick:
+    max_iterations: 1
+    tools: ["kb_search"]
+    rerank: false
+    
+  standard:
+    max_iterations: 1
+    tools: ["kb_search"]
+    rerank: true
+    
+  advanced:
+    max_iterations: 2
+    tools: ["kb_search", "web_search"]
+    rerank: true
+    query_expansion: true
+    
+  deep:
+    max_iterations: 5
+    tools: ["kb_search", "web_search", "fetch_pdf", "citation_network"]
+    rerank: true
+    enable_planning: true
+    enable_reflection: true
+    
+  citation:
+    max_iterations: 3
+    tools: ["kb_search", "web_search", "citation_network"]
+    rerank: true
+    build_citation_graph: true
+
+# =============================================================================
+# SciLEx Integration
+# =============================================================================
+
+scilex:
+  enabled: true
+  
+  apis:
+    semantic_scholar:
+      enabled: true
+      rate_limit: 100
+    openalex:
+      enabled: true
+      rate_limit: 100
+    pubmed:
+      enabled: true
+      rate_limit: 10
+    arxiv:
+      enabled: true
+      rate_limit: 100
+    hal:
+      enabled: true
+      rate_limit: 100
+    dblp:
+      enabled: true
+      rate_limit: 100
+    istex:
+      enabled: true
+      rate_limit: 100
+    ieee:
+      enabled: false
+    springer:
+      enabled: false
+    elsevier:
+      enabled: false
+
+# =============================================================================
+# Web Search Configuration
+# =============================================================================
+
+web_search:
+  providers: ["google_scholar", "semantic_scholar"]
+  cache_ttl: 3600
+
+# =============================================================================
+# MCP Server Configuration
+# =============================================================================
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 5500
+  transport: "stdio"
+
+# =============================================================================
+# Authentication
+# =============================================================================
+
+auth:
+  enabled: true
+  # Token set via PERSPICACITE_AUTH_TOKEN environment variable
+
+# =============================================================================
+# UI Configuration
+# =============================================================================
+
+ui:
+  theme: "system"
+  citation_format: "nature"
+
+# =============================================================================
+# Logging
+# =============================================================================
+
+logging:
+  level: "INFO"
+  format: "json"

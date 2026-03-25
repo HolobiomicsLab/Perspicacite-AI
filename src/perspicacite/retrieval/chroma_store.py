@@ -61,9 +61,10 @@ class ChromaVectorStore:
         dim = embedding_dim or self.embedding_provider.dimension
 
         try:
+            # Cosine space matches typical embedding APIs; L2 + (1-distance) breaks min_score filters.
             self.client.create_collection(
                 name=name,
-                metadata={"dimension": dim},
+                metadata={"hnsw:space": "cosine", "dimension": dim},
             )
             logger.info(
                 "collection_created",
@@ -140,10 +141,12 @@ class ChromaVectorStore:
             for idx, embedding in zip(indices_to_embed, embeddings):
                 chunks[idx].embedding = embedding
 
-        # Prepare data for Chroma
+        # Prepare data for Chroma (lists must stay aligned — never filter embeddings)
         ids = [chunk.id for chunk in chunks]
         documents = [chunk.text for chunk in chunks]
-        embeddings = [chunk.embedding for chunk in chunks if chunk.embedding]
+        embeddings = [chunk.embedding for chunk in chunks]
+        if any(e is None for e in embeddings):
+            raise ValueError("All chunks must have embeddings before add_documents")
         metadatas = [_chunk_to_metadata(chunk.metadata) for chunk in chunks]
 
         # Add to Chroma
@@ -151,7 +154,7 @@ class ChromaVectorStore:
             coll.add(
                 ids=ids,
                 documents=documents,
-                embeddings=embeddings if embeddings else None,
+                embeddings=embeddings,
                 metadatas=metadatas,
             )
             logger.info(
@@ -213,11 +216,12 @@ class ChromaVectorStore:
             if results["ids"] and results["ids"][0]:
                 for i, doc_id in enumerate(results["ids"][0]):
                     metadata = results["metadatas"][0][i]
-                    distance = results["distances"][0][i]
+                    distance = float(results["distances"][0][i])
                     document = results["documents"][0][i]
 
-                    # Convert distance to similarity score (cosine distance -> similarity)
-                    score = 1.0 - distance
+                    # Chroma returns a distance (lower = more similar). Map to (0,1] so
+                    # downstream min_score filters work for both cosine and legacy L2 collections.
+                    score = 1.0 / (1.0 + max(0.0, distance))
 
                     chunk = DocumentChunk(
                         id=doc_id,

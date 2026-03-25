@@ -6,6 +6,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+def chroma_collection_name_for_kb(display_name: str) -> str:
+    """Chroma collection id for a KB (must match web create + orchestrator search)."""
+    safe = display_name.replace(" ", "_").strip()
+    return f"kb_{safe}"
+
+
 class ChunkConfig(BaseModel):
     """Configuration for text chunking."""
 

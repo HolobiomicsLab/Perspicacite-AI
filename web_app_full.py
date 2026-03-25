@@ -13,6 +13,7 @@ Features:
 import os
 import sys
 import json
+import base64
 import asyncio
 import logging
 from datetime import datetime
@@ -29,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 from perspicacite.memory.session_store import SessionStore
-from perspicacite.models.kb import KnowledgeBase, ChunkConfig
+from perspicacite.models.kb import KnowledgeBase, ChunkConfig, chroma_collection_name_for_kb
 
 # Configure logging with file output
 log_dir = Path("logs")
@@ -249,8 +250,20 @@ async def agentic_chat_stream(request: ChatRequest):
             kb_name=request.kb_name,
             stream=True
         ):
-            # Convert to SSE format
-            data = json.dumps(event)
+            # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
+            # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
+            if event.get("type") == "answer":
+                content = event.get("content") or ""
+                safe = {
+                    "type": "answer",
+                    "session_id": event.get("session_id"),
+                    "content_b64": base64.b64encode(
+                        content.encode("utf-8")
+                    ).decode("ascii"),
+                }
+                data = json.dumps(safe, separators=(",", ":"))
+            else:
+                data = json.dumps(event, separators=(",", ":"))
             yield f"data: {data}\n\n"
         
         # End of stream
@@ -312,8 +325,7 @@ async def create_knowledge_base(request: KBCreateRequest):
     if not app_state.session_store:
         return {"error": "System not initialized"}
     
-    safe_name = request.name.replace(" ", "_")
-    collection_name = f"kb_{safe_name}"
+    collection_name = chroma_collection_name_for_kb(request.name)
     
     existing = await app_state.session_store.get_kb_metadata(request.name)
     if existing:
@@ -1455,6 +1467,18 @@ HTML_TEMPLATE = """
             }
         }
         
+        function decodeUtf8FromBase64(b64) {
+            try {
+                const bin = atob(b64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                return new TextDecoder().decode(bytes);
+            } catch (e) {
+                console.warn('base64 decode failed', e);
+                return '';
+            }
+        }
+        
         async function sendQuery() {
             if (isProcessing) return;
             
@@ -1493,59 +1517,71 @@ HTML_TEMPLATE = """
                 const decoder = new TextDecoder();
                 let assistantMessage = '';
                 let assistantDiv = null;
+                // Buffer SSE lines: fetch chunks can split mid-JSON (causes "Unterminated string").
+                let sseBuffer = '';
                 
                 while (true) {
                     const {done, value} = await reader.read();
-                    if (done) break;
-                    
-                    const text = decoder.decode(value);
-                    const lines = text.split('\\n');
-                    
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = JSON.parse(line.slice(6));
-                            
-                            if (data.type === 'thinking') {
-                                addThinkingStep(data.message, 'analyzing', data.details);
-                            } else if (data.type === 'tool_call') {
-                                addThinkingStep(
-                                    `Using tool: ${data.tool}`,
-                                    'tool',
-                                    data.description,
-                                    data.query || ''
-                                );
-                            } else if (data.type === 'tool_result') {
-                                addThinkingStep(
-                                    `Result from ${data.step}`,
-                                    'result',
-                                    data.result_summary
-                                );
-                            } else if (data.type === 'answer') {
-                                if (!assistantDiv) {
-                                    assistantDiv = addMessage('assistant', '');
-                                }
-                                assistantMessage = data.content;
-                                assistantDiv.innerHTML = formatMessage(assistantMessage);
-                                sessionId = data.session_id;
-                                
-                                document.getElementById('session-info').textContent = 
-                                    `Session: ${sessionId.slice(0, 8)}...`;
-                            } else if (data.type === 'papers_found' && data.papers && data.papers.length > 0) {
-                                lastFoundPapers = data.papers;
-                                if (assistantDiv) {
-                                    showPapersCuration(assistantDiv, data.papers);
-                                }
+                    if (!done && value) {
+                        sseBuffer += decoder.decode(value, { stream: true });
+                    } else if (done) {
+                        sseBuffer += decoder.decode(new Uint8Array(), { stream: false });
+                    }
+                    let nl;
+                    const LF = String.fromCharCode(10);
+                    while ((nl = sseBuffer.indexOf(LF)) >= 0) {
+                        const line = sseBuffer.slice(0, nl).replace(/\\r$/, '');
+                        sseBuffer = sseBuffer.slice(nl + 1);
+                        if (!line.startsWith('data: ')) continue;
+                        const payload = line.slice(6).trim();
+                        if (!payload) continue;
+                        let data;
+                        try {
+                            data = JSON.parse(payload);
+                        } catch (e) {
+                            console.warn('SSE JSON parse skipped:', e.message);
+                            continue;
+                        }
+                        if (data.type === 'thinking') {
+                            addThinkingStep(data.message, 'analyzing', data.details);
+                        } else if (data.type === 'tool_call') {
+                            addThinkingStep(
+                                `Using tool: ${data.tool}`,
+                                'tool',
+                                data.description,
+                                data.query || ''
+                            );
+                        } else if (data.type === 'tool_result') {
+                            addThinkingStep(
+                                `Result from ${data.step}`,
+                                'result',
+                                data.result_summary
+                            );
+                        } else if (data.type === 'answer') {
+                            if (!assistantDiv) {
+                                assistantDiv = addMessage('assistant', '');
                             }
-                            
-                            // Update intent display if available
-                            if (data.details && data.details.includes('Intent:')) {
-                                const intentMatch = data.details.match(/Intent: (\\w+)/);
-                                if (intentMatch) {
-                                    showIntent(intentMatch[1]);
-                                }
+                            assistantMessage = data.content_b64
+                                ? decodeUtf8FromBase64(data.content_b64)
+                                : (data.content || '');
+                            assistantDiv.innerHTML = formatMessage(assistantMessage);
+                            sessionId = data.session_id;
+                            document.getElementById('session-info').textContent =
+                                `Session: ${sessionId.slice(0, 8)}...`;
+                        } else if (data.type === 'papers_found' && data.papers && data.papers.length > 0) {
+                            lastFoundPapers = data.papers;
+                            if (assistantDiv) {
+                                showPapersCuration(assistantDiv, data.papers);
+                            }
+                        }
+                        if (data.details && data.details.includes('Intent:')) {
+                            const intentMatch = data.details.match(/Intent: (\\w+)/);
+                            if (intentMatch) {
+                                showIntent(intentMatch[1]);
                             }
                         }
                     }
+                    if (done) break;
                 }
                 
                 if (assistantMessage) {

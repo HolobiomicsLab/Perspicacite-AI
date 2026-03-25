@@ -30,7 +30,8 @@ class KnowledgeBaseConfig:
 
     # Retrieval settings
     top_k: int = 5
-    min_relevance_score: float = 0.5
+    # Keep low: Chroma distances vary by metric; we rank by score and take top_k.
+    min_relevance_score: float = 0.0
 
 
 class DynamicKnowledgeBase:
