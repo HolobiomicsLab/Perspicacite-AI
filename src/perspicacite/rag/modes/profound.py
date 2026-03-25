@@ -18,6 +18,19 @@ from typing import Any
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.prompts import (
+    PROFOUND_ANALYZE_DOCUMENTS_PROMPT_TEMPLATE,
+    PROFOUND_CREATE_PLAN_PROMPT,
+    PROFOUND_ITERATION_SUMMARY_ORIGINAL_PROMPT,
+    PROFOUND_ITERATION_SUMMARY_IMPROVED_PROMPT,
+    PROFOUND_FINAL_ANSWER_ORIGINAL_PROMPT,
+    PROFOUND_FINAL_ANSWER_IMPROVED_PROMPT,
+    PROFOUND_FORMAT_ANSWER_PROMPT,
+    PROFOUND_IS_QUESTION_ANSWERED_PROMPT,
+    PROFOUND_EVALUATE_PROGRESS_PROMPT,
+    PROFOUND_ADJUST_PLAN_PROMPT,
+    PROFOUND_UNANSWERABLE_QUESTION_PROMPT_TEMPLATE,
+)
 
 logger = get_logger("perspicacite.rag.modes.profound")
 

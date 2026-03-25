@@ -13,6 +13,11 @@ from typing import Any
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.prompts import (
+    DEFAULT_SYSTEM_PROMPT,
+    MANDATORY_PROMPT,
+    FORMAT_PROMPT,
+)
 
 logger = get_logger("perspicacite.rag.modes.basic")
 
@@ -185,28 +190,27 @@ class BasicRAGMode(BaseRAGMode):
         # Format context
         context = self._format_documents_for_prompt(documents)
         
-        # System prompt (simplified from release package)
-        system_prompt = """You are a scientific research assistant. Answer the user's question based on the provided documents.
-
-Guidelines:
-- Base your answer on the provided documents
-- Be concise and direct
-- Include citations like [1], [2], etc.
-- If documents don't contain sufficient information, say so"""
-
-        # Build user message
-        user_message = f"""Documents:
-{context}
-
+        # Use exact prompts from release package
+        # Combine mandatory + default system prompts as done in original
+        combined_prompt = MANDATORY_PROMPT + "\n" + DEFAULT_SYSTEM_PROMPT
+        
+        # Build template as in original get_response()
+        template = f"""System prompt: {combined_prompt}
+Context: {context}
+Format: {FORMAT_PROMPT}
 Question: {query}
 
-Provide a clear answer based on the documents above."""
+Additional information:
+- Total documents used: {len(documents)}
+- Unique sources: {len(set(self._get_doc_citation(d) for d in documents))}
+
+Provide a comprehensive answer based on the documents above."""
 
         try:
             response = await llm.complete(
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "system", "content": combined_prompt},
+                    {"role": "user", "content": template},
                 ],
                 model=request.model,
                 provider=request.provider,

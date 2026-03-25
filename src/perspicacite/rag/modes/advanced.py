@@ -15,6 +15,16 @@ from typing import Any
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.prompts import (
+    DEFAULT_SYSTEM_PROMPT,
+    MANDATORY_PROMPT,
+    FORMAT_PROMPT,
+    GENERATE_SIMILAR_QUERIES_PROMPT,
+    EVALUATE_RESPONSE_PROMPT,
+    REFINE_RESPONSE_SYSTEM_PROMPT,
+    REFINE_RESPONSE_HUMAN_PROMPT_SUFFIX,
+    FOCUS_INSTRUCTIONS_PROMPT,
+)
 
 logger = get_logger("perspicacite.rag.modes.advanced")
 
@@ -354,29 +364,28 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         # Format context
         context = self._format_documents_for_prompt(documents)
         
-        # System prompt (from release package)
-        system_prompt = """You are a scientific research assistant. Answer the user's question based on the provided documents.
-
-Guidelines:
-- Base your answer primarily on the provided documents
-- Use your knowledge to supplement if needed
-- Include citations like [1], [2], etc.
-- If documents conflict with your knowledge, discuss this
-- Be thorough but concise"""
-
-        # Build user message
-        user_message = f"""Documents:
-{context}
-
+        # Use exact prompts from release package
+        combined_prompt = MANDATORY_PROMPT + "\n" + DEFAULT_SYSTEM_PROMPT
+        
+        # Add focus instructions (from relevancy optimization in original)
+        combined_prompt = combined_prompt + "\n" + FOCUS_INSTRUCTIONS_PROMPT
+        
+        template = f"""System prompt: {combined_prompt}
+Context: {context}
+Format: {FORMAT_PROMPT}
 Question: {query}
+
+Additional information:
+- Total documents used: {len(documents)}
+- Unique sources: {len(set(self._get_doc_citation(d) for d in documents))}
 
 Provide a comprehensive answer based on the documents above."""
 
         try:
             response = await llm.complete(
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "system", "content": combined_prompt},
+                    {"role": "user", "content": template},
                 ],
                 model=request.model,
                 provider=request.provider,
@@ -534,6 +543,14 @@ Provide an improved response."""
     def _is_streaming(self, request: RAGRequest) -> bool:
         """Check if request is for streaming (placeholder)."""
         return False
+
+    def _get_doc_excerpt(self, doc: Any, max_len: int = 200) -> str:
+        """Get a short excerpt from a document for the refinement prompt."""
+        if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'text'):
+            return doc.chunk.text[:max_len]
+        elif hasattr(doc, 'content'):
+            return str(doc.content)[:max_len]
+        return str(doc)[:max_len]
 
     def _prepare_sources(self, documents: list[Any]) -> list[SourceReference]:
         """Prepare source references from documents."""
