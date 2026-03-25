@@ -192,6 +192,9 @@ class TestMessage:
 class TestRAGMode:
     """Tests for RAGMode enum."""
 
-    def test_agentic_mode(self):
-        """Test agentic mode exists."""
+    def test_all_modes_exist(self):
+        """Test all benchmark modes exist."""
+        assert RAGMode.BASIC == "basic"
+        assert RAGMode.ADVANCED == "advanced"
+        assert RAGMode.PROFOUND == "profound"
         assert RAGMode.AGENTIC == "agentic"

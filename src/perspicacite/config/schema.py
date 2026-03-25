@@ -110,8 +110,39 @@ class RAGModeSettings(BaseModel):
 
 
 class RAGModesConfig(BaseModel):
-    """RAG mode configuration - only agentic mode is supported."""
+    """RAG mode configurations for benchmark comparison."""
 
+    # Basic: Single query, no refinement, fastest
+    basic: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
+        max_iterations=1,
+        tools=["kb_search"],
+        rerank=False,
+        query_expansion=False,
+        enable_planning=False,
+        enable_reflection=False,
+    ))
+
+    # Advanced: Query rephrasing, WRRF scoring, optional refinement
+    advanced: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
+        max_iterations=1,
+        tools=["kb_search"],
+        rerank=True,
+        query_expansion=True,  # Generate similar queries
+        enable_planning=False,
+        enable_reflection=True,  # Optional refinement
+    ))
+
+    # Profound: Multi-cycle research with planning (from v1)
+    profound: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
+        max_iterations=3,
+        tools=["kb_search", "web_search"],
+        rerank=True,
+        query_expansion=True,
+        enable_planning=True,  # Research planning
+        enable_reflection=True,  # Plan review and adjustment
+    ))
+
+    # Agentic: Intent-based with tool selection
     agentic: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
         max_iterations=5,
         tools=["kb_search", "lotus_search", "literature_search", "fetch_pdf"],

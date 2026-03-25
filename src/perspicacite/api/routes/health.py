@@ -25,5 +25,11 @@ async def api_info():
     return {
         "version": "2.0.0",
         "available_providers": ["anthropic", "openai", "deepseek", "gemini"],
-        "rag_mode": "agentic",
+        "rag_modes": ["basic", "advanced", "profound", "agentic"],
+        "rag_mode_descriptions": {
+            "basic": "Simple retrieval + generation (fastest)",
+            "advanced": "Query rephrasing + WRRF scoring + optional refinement",
+            "profound": "Multi-cycle research with planning (from v1)",
+            "agentic": "Intent-based agentic RAG with tool use",
+        },
     }

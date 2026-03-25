@@ -9,8 +9,17 @@ from perspicacite.models.search import SearchFilters
 
 
 class RAGMode(str, Enum):
-    """RAG mode - agentic is the only supported mode."""
+    """RAG modes for benchmark comparison.
+    
+    BASIC: Simple retrieval + generation (single query, no refinement)
+    ADVANCED: Query rephrasing + hybrid retrieval + WRRF scoring + optional refinement
+    PROFOUND: Multi-cycle research with planning, web search, reflection (from v1)
+    AGENTIC: New intent-based agentic RAG with tool use
+    """
 
+    BASIC = "basic"
+    ADVANCED = "advanced"
+    PROFOUND = "profound"
     AGENTIC = "agentic"
 
 
