@@ -101,13 +101,14 @@ class ChatResponse(BaseModel):
 
 # Global state
 class AppState:
-    """Application state with agentic orchestrator."""
+    """Application state with agentic orchestrator and RAG engine."""
     
     def __init__(self):
         self.llm_client = None
         self.embedding_provider = None
         self.vector_store = None
         self.orchestrator = None
+        self.rag_engine = None  # Multi-mode RAG engine
         self.session_store: Optional[SessionStore] = None
         self.pdf_downloader = None
         self.pdf_parser = None
@@ -170,6 +171,17 @@ class AppState:
         )
         logger.info("Agentic orchestrator initialized")
         
+        # Initialize RAG engine for multi-mode support
+        from perspicacite.rag.engine import RAGEngine
+        self.rag_engine = RAGEngine(
+            llm_client=self.llm_client,
+            vector_store=self.vector_store,
+            embedding_provider=self.embedding_provider,
+            tool_registry=tool_registry,
+            config=config
+        )
+        logger.info("RAG engine initialized (supports all modes)")
+        
         # Initialize session store (SQLite for KB metadata)
         db_path = Path("./data/perspicacite.db")
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,45 +243,27 @@ async def chat_endpoint(request: ChatRequest):
 
 async def agentic_chat_stream(request: ChatRequest):
     """
-    Stream chat responses using true agentic orchestration.
+    Stream chat responses using selected RAG mode.
+    
+    Routes to appropriate handler based on request.mode:
+    - agentic: Uses AgenticOrchestrator (intent-based, tool use)
+    - basic/advanced/profound: Uses RAGEngine with respective mode
     
     Yields SSE events with thinking steps, tool calls, and final answer.
     """
     try:
         logger.info(f"Chat request: {request.query[:50]}... | Mode: {request.mode}")
         
-        # Convert messages to dict format for orchestrator
-        conversation_history = [
-            {"role": m.role, "content": m.content}
-            for m in request.messages
-        ] if request.messages else None
-        
-        # Use the agentic orchestrator
-        async for event in app_state.orchestrator.chat(
-            query=request.query,
-            session_id=request.session_id,
-            kb_name=request.kb_name,
-            stream=True
-        ):
-            # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
-            # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
-            if event.get("type") == "answer":
-                content = event.get("content") or ""
-                safe = {
-                    "type": "answer",
-                    "session_id": event.get("session_id"),
-                    "content_b64": base64.b64encode(
-                        content.encode("utf-8")
-                    ).decode("ascii"),
-                }
-                data = json.dumps(safe, separators=(",", ":"))
-            else:
-                data = json.dumps(event, separators=(",", ":"))
-            yield f"data: {data}\n\n"
-        
-        # End of stream
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        
+        # Route based on selected mode
+        if request.mode == "agentic":
+            # Use agentic orchestrator for full agentic behavior
+            async for event in _stream_agentic(request):
+                yield event
+        else:
+            # Use RAGEngine for other modes (basic, advanced, profound)
+            async for event in _stream_rag_mode(request):
+                yield event
+                
     except Exception as e:
         logger.error(f"Error in chat stream: {e}", exc_info=True)
         error_data = json.dumps({
@@ -277,6 +271,92 @@ async def agentic_chat_stream(request: ChatRequest):
             "message": str(e)
         })
         yield f"data: {error_data}\n\n"
+
+
+async def _stream_agentic(request: ChatRequest):
+    """Stream using AgenticOrchestrator."""
+    async for event in app_state.orchestrator.chat(
+        query=request.query,
+        session_id=request.session_id,
+        kb_name=request.kb_name,
+        stream=True
+    ):
+        # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
+        # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
+        if event.get("type") == "answer":
+            content = event.get("content") or ""
+            safe = {
+                "type": "answer",
+                "session_id": event.get("session_id"),
+                "content_b64": base64.b64encode(
+                    content.encode("utf-8")
+                ).decode("ascii"),
+            }
+            data = json.dumps(safe, separators=(",", ":"))
+        else:
+            data = json.dumps(event, separators=(",", ":"))
+        yield f"data: {data}\n\n"
+    
+    # End of stream
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+async def _stream_rag_mode(request: ChatRequest):
+    """Stream using RAGEngine with selected mode (basic, advanced, profound)."""
+    from perspicacite.models.rag import RAGRequest as RAGReq, RAGMode
+    
+    # Map string mode to RAGMode enum
+    mode_map = {
+        "basic": RAGMode.BASIC,
+        "advanced": RAGMode.ADVANCED,
+        "profound": RAGMode.PROFOUND,
+    }
+    rag_mode = mode_map.get(request.mode, RAGMode.BASIC)
+    
+    logger.info(f"Using RAGEngine with mode: {rag_mode.value}")
+    
+    # Yield thinking event
+    yield json.dumps({
+        "type": "thinking",
+        "message": f"Using {rag_mode.value} mode..."
+    })
+    
+    # Create RAG request
+    rag_request = RAGReq(
+        query=request.query,
+        kb_name=request.kb_name or "default",
+        mode=rag_mode,
+        stream=True
+    )
+    
+    # Execute using RAGEngine
+    try:
+        response = await app_state.rag_engine.query(rag_request)
+        
+        # Stream the response
+        yield json.dumps({
+            "type": "thinking",
+            "message": f"Retrieved {len(response.sources)} sources"
+        })
+        
+        # Send answer as base64 (consistent with agentic mode)
+        content = response.answer or ""
+        safe = {
+            "type": "answer",
+            "session_id": request.session_id,
+            "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        }
+        yield json.dumps(safe, separators=(",", ":"))
+        
+    except Exception as e:
+        logger.error(f"RAG engine error: {e}")
+        yield json.dumps({
+            "type": "error",
+            "message": f"Error in {rag_mode.value} mode: {str(e)}"
+        })
+    
+    # End of stream
+    yield json.dumps({"type": "done"})
 
 
 @app.get("/api/health")
