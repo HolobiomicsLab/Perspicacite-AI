@@ -15,7 +15,7 @@ class ChatRequest(BaseModel):
 
     messages: list[Message]
     kb_name: str = "default"
-    mode: RAGMode = RAGMode.STANDARD
+    mode: RAGMode = RAGMode.AGENTIC
     provider: str = "anthropic"
     model: str = "claude-3-5-sonnet-20241022"
     stream: bool = True

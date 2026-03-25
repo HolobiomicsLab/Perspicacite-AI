@@ -50,7 +50,6 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     query: str = Field(..., description="Current user query")
-    mode: str = Field(default="agentic", description="RAG mode: quick, standard, advanced, agentic")
     max_papers: int = Field(default=3, ge=1, le=10, description="Max papers to search")
     stream: bool = Field(default=True, description="Stream response")
     conversation_id: str | None = None
@@ -306,16 +305,6 @@ HTML_TEMPLATE = """
             <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
             
             <div class="settings-group">
-                <label class="settings-label">Research Mode</label>
-                <select id="mode">
-                    <option value="agentic">🧠 Agentic (Deep Research)</option>
-                    <option value="advanced">⚡ Advanced</option>
-                    <option value="standard">📚 Standard</option>
-                    <option value="quick">⚡ Quick</option>
-                </select>
-            </div>
-            
-            <div class="settings-group">
                 <label class="settings-label">Max Papers</label>
                 <input type="number" id="maxPapers" value="3" min="1" max="10">
             </div>
@@ -426,7 +415,6 @@ HTML_TEMPLATE = """
             const query = input.value.trim();
             if (!query) return;
             
-            const mode = document.getElementById('mode').value;
             const maxPapers = parseInt(document.getElementById('maxPapers').value);
             
             isProcessing = true;
@@ -462,7 +450,6 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({
                         query: query,
                         messages: [{ role: 'user', content: query }],
-                        mode: mode,
                         max_papers: maxPapers,
                         stream: true,
                         conversation_id: conversationId
@@ -605,14 +592,13 @@ async def research_and_respond(
         # Step 5: Generate response
         yield f"data: {json.dumps({'type': 'status', 'content': '🤔 Generating answer...'})}\n\n"
         
-        rag_mode = RAGMode.AGENTIC if mode == "agentic" else RAGMode.STANDARD
         request = RAGRequest(
             query=query,
             kb_name=kb.collection_name,
-            mode=rag_mode,
+            mode=RAGMode.AGENTIC,
             provider="openai",
             model="gpt-4o",
-            max_iterations=2 if mode == "agentic" else 1,
+            max_iterations=3,
         )
         
         # For now, stream a simple response

@@ -8,25 +8,21 @@ try:
     @mcp.tool
     async def research_literature(
         query: str,
-        mode: str = "deep",
         kb_name: str = "default",
         max_iterations: int = 3,
-        use_web_search: bool = True,
     ) -> str:
         """
         Research a scientific question using Perspicacité's RAG system.
 
         Args:
             query: Research question
-            mode: RAG mode (quick, standard, advanced, deep, citation)
             kb_name: Knowledge base to search
             max_iterations: Maximum research iterations
-            use_web_search: Whether to use web search
 
         Returns:
             Research answer with citations
         """
-        return f"Research on '{query}' completed using {mode} mode."
+        return f"Research on '{query}' completed using agentic mode."
 
     @mcp.tool
     async def search_knowledge_base(

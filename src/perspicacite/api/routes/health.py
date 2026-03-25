@@ -25,5 +25,5 @@ async def api_info():
     return {
         "version": "2.0.0",
         "available_providers": ["anthropic", "openai", "deepseek", "gemini"],
-        "rag_modes": ["quick", "standard", "advanced", "deep", "citation"],
+        "rag_mode": "agentic",
     }

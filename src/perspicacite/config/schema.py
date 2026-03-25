@@ -110,36 +110,15 @@ class RAGModeSettings(BaseModel):
 
 
 class RAGModesConfig(BaseModel):
-    """RAG mode configurations."""
+    """RAG mode configuration - only agentic mode is supported."""
 
-    quick: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=1,
-        tools=["kb_search"],
-        rerank=False,
-    ))
-    standard: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=1,
-        tools=["kb_search"],
-        rerank=True,
-    ))
-    advanced: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=2,
-        tools=["kb_search", "web_search"],
+    agentic: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
+        max_iterations=5,
+        tools=["kb_search", "lotus_search", "literature_search", "fetch_pdf"],
         rerank=True,
         query_expansion=True,
-    ))
-    deep: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=5,
-        tools=["kb_search", "web_search", "fetch_pdf", "citation_network"],
-        rerank=True,
         enable_planning=True,
         enable_reflection=True,
-    ))
-    citation: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=3,
-        tools=["kb_search", "web_search", "citation_network"],
-        rerank=True,
-        build_citation_graph=True,
     ))
 
 
