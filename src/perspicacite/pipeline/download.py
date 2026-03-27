@@ -1,5 +1,6 @@
 """Content download utilities with retry logic."""
 
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -110,6 +111,7 @@ class PDFDownloader:
 async def get_open_access_url(
     doi: str,
     http_client: httpx.AsyncClient | None = None,
+    email: str | None = None,
 ) -> str | None:
     """
     Query Unpaywall for open access PDF URL.
@@ -117,16 +119,24 @@ async def get_open_access_url(
     Args:
         doi: DOI to lookup
         http_client: Optional HTTP client
+        email: Email for Unpaywall API (required). Uses UNPAYWALL_EMAIL env var or config.
 
     Returns:
         OA PDF URL or None
     """
+    # Get email from parameter, env var, or default
+    if not email:
+        email = os.getenv("UNPAYWALL_EMAIL")
+    if not email:
+        logger.error("unpaywall_no_email", doi=doi)
+        return None
+    
     client = http_client or httpx.AsyncClient(timeout=10.0)
     should_close = http_client is None
 
     try:
-        # Unpaywall API (no key required for basic use)
-        url = f"https://api.unpaywall.org/v2/{doi}?email=user@example.com"
+        # Unpaywall API (no key required, but email is required)
+        url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
         response = await client.get(url)
         response.raise_for_status()
 

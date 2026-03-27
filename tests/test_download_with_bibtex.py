@@ -68,8 +68,13 @@ class TestBibTeXParsing:
 class TestPDFDownloadWithBibTeXDOIs:
     """Test PDF download functionality using DOIs from BibTeX file."""
 
+    @pytest.fixture
+    def test_email(self):
+        """Test email for Unpaywall."""
+        return "test@example.com"
+
     @pytest.mark.asyncio
-    async def test_get_open_access_url_with_real_dois(self, sample_dois):
+    async def test_get_open_access_url_with_real_dois(self, sample_dois, test_email):
         """Test Unpaywall lookup with DOIs from BibTeX (mocked)."""
         from perspicacite.pipeline.download import get_open_access_url
         
@@ -89,16 +94,19 @@ class TestPDFDownloadWithBibTeXDOIs:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
         
-        result = await get_open_access_url(test_doi, http_client=mock_client)
+        result = await get_open_access_url(test_doi, http_client=mock_client, email=test_email)
         
         assert result is not None
         assert test_doi in result or "example.com" in result
         mock_client.get.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_fallback_with_bibtex_dois(self, sample_dois):
+    async def test_fallback_with_bibtex_dois(self, sample_dois, test_email, monkeypatch):
         """Test fallback mechanism with DOIs from BibTeX file."""
         from perspicacite.pipeline.download import get_pdf_with_fallback
+        
+        # Set email in environment
+        monkeypatch.setenv("UNPAYWALL_EMAIL", test_email)
         
         test_doi = sample_dois[1]
         
@@ -124,7 +132,6 @@ class TestPDFDownloadWithBibTeXDOIs:
         # Mock PDF download
         mock_pdf = Mock()
         mock_pdf.content = b"%PDF-1.4 Test PDF content"
-        mock_pdf.headers = {"content-type": "application/pdf"}
         mock_pdf.raise_for_status = Mock()
         
         mock_client = AsyncMock()
@@ -145,9 +152,12 @@ class TestPDFDownloadWithBibTeXDOIs:
         assert mock_client.get.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_multiple_dois_from_bibtex(self, sample_dois):
+    async def test_multiple_dois_from_bibtex(self, sample_dois, test_email, monkeypatch):
         """Test processing multiple DOIs from BibTeX file."""
         from perspicacite.pipeline.download import get_pdf_with_fallback
+        
+        # Set email in environment
+        monkeypatch.setenv("UNPAYWALL_EMAIL", test_email)
         
         results = []
         

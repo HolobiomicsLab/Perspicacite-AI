@@ -214,9 +214,17 @@ class TestAlternativeEndpoint:
 class TestPDFWithFallback:
     """Tests for PDF download with fallback to alternative endpoint."""
 
+    @pytest.fixture
+    def test_email(self):
+        """Test email for Unpaywall."""
+        return "test@example.com"
+
     @pytest.mark.asyncio
-    async def test_get_pdf_with_fallback_unpaywall_success(self):
+    async def test_get_pdf_with_fallback_unpaywall_success(self, test_email, monkeypatch):
         """Test when Unpaywall finds the PDF."""
+        # Set email in environment for the test
+        monkeypatch.setenv("UNPAYWALL_EMAIL", test_email)
+        
         # Mock Unpaywall response
         mock_unpaywall_response = Mock()
         mock_unpaywall_response.json = Mock(return_value={
@@ -250,8 +258,11 @@ class TestPDFWithFallback:
         assert mock_client.get.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_get_pdf_with_fallback_uses_alternative(self):
+    async def test_get_pdf_with_fallback_uses_alternative(self, test_email, monkeypatch):
         """Test fallback to alternative endpoint when Unpaywall fails."""
+        # Set email in environment for the test
+        monkeypatch.setenv("UNPAYWALL_EMAIL", test_email)
+        
         # Mock Unpaywall response - no OA available
         mock_unpaywall_response = Mock()
         mock_unpaywall_response.json = Mock(return_value={
@@ -294,8 +305,11 @@ class TestPDFWithFallback:
         assert mock_client.get.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_get_pdf_with_fallback_no_alternative(self):
+    async def test_get_pdf_with_fallback_no_alternative(self, test_email, monkeypatch):
         """Test when Unpaywall fails and no alternative is provided."""
+        # Set email in environment for the test
+        monkeypatch.setenv("UNPAYWALL_EMAIL", test_email)
+        
         mock_unpaywall_response = Mock()
         mock_unpaywall_response.json = Mock(return_value={
             "is_oa": False,
@@ -320,8 +334,13 @@ class TestPDFWithFallback:
 class TestUnpaywall:
     """Tests for Unpaywall integration."""
 
+    @pytest.fixture
+    def test_email(self):
+        """Test email for Unpaywall."""
+        return "test@example.com"
+
     @pytest.mark.asyncio
-    async def test_get_open_access_url_found(self):
+    async def test_get_open_access_url_found(self, test_email):
         """Test finding OA URL via Unpaywall."""
         mock_response = Mock()
         mock_response.json = Mock(return_value={
@@ -338,12 +357,13 @@ class TestUnpaywall:
         result = await get_open_access_url(
             "10.1234/test",
             http_client=mock_client,
+            email=test_email,
         )
 
         assert result == "https://oa.example.com/paper.pdf"
 
     @pytest.mark.asyncio
-    async def test_get_open_access_url_not_found(self):
+    async def test_get_open_access_url_not_found(self, test_email):
         """Test when no OA version available."""
         mock_response = Mock()
         mock_response.json = Mock(return_value={
@@ -358,6 +378,7 @@ class TestUnpaywall:
         result = await get_open_access_url(
             "10.1234/paywalled",
             http_client=mock_client,
+            email=test_email,
         )
 
         assert result is None
