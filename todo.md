@@ -1,8 +1,11 @@
 # Perspicacité v2 TODO
 
+## Available Resource
+packages_to_use/Perspicacite-AI-release Contains previous version. We should search there first for methods to adapt to the new version
+
 ## Short Term
 
-- [ ] Alternative endpoint scihub
+- [x] Alternative endpoint scihub
 - [ ] UI tune to be more like modern AI chatbot interface
 - [ ] tool to create KB from bibtex file
 - [ ] publisher api download

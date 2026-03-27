@@ -158,6 +158,22 @@ web_search:
   cache_ttl: 3600
 
 # =============================================================================
+# PDF Download Configuration
+# =============================================================================
+
+pdf_download:
+  # Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror)
+  # User must provide their own endpoint URL
+  # Example: "https://sci-hub.se/"
+  alternative_endpoint: null
+  
+  # Timeout for PDF downloads (seconds)
+  timeout: 30
+  
+  # Maximum retries for failed downloads
+  max_retries: 3
+
+# =============================================================================
 # MCP Server Configuration
 # =============================================================================
 

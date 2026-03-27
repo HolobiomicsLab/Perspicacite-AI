@@ -198,6 +198,17 @@ class WebSearchConfig(BaseModel):
     cache_ttl: int = Field(default=3600, ge=0)  # seconds
 
 
+class PDFDownloadConfig(BaseModel):
+    """PDF download configuration."""
+
+    alternative_endpoint: Optional[str] = Field(
+        default=None,
+        description="Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror). User must provide their own."
+    )
+    timeout: float = Field(default=30.0, gt=0)
+    max_retries: int = Field(default=3, ge=0)
+
+
 class LoggingConfig(BaseModel):
     """Logging configuration."""
 
@@ -233,6 +244,7 @@ class Config(BaseModel):
     rag_modes: RAGModesConfig = Field(default_factory=RAGModesConfig)
     scilex: SciLexConfig = Field(default_factory=SciLexConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    pdf_download: PDFDownloadConfig = Field(default_factory=PDFDownloadConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
