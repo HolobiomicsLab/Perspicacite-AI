@@ -277,28 +277,42 @@ class TestBibTeXFileIntegration:
                     )
                 
                 if pdf_bytes and pdf_bytes[:4] == b"%PDF":
-                    print(f"✓ Successfully downloaded {len(pdf_bytes)} bytes")
-                    results.append((doi, True, len(pdf_bytes)))
+                    # Determine source based on download path
+                    source = "unknown"
+                    if alt_endpoint and UNPAYWALL_EMAIL:
+                        # If we have both, check which one worked
+                        # Unpaywall success would have returned earlier
+                        source = "alternative_endpoint"
+                    elif UNPAYWALL_EMAIL:
+                        source = "unpaywall"
+                    elif alt_endpoint:
+                        source = "alternative_endpoint"
+                    
+                    print(f"✓ Successfully downloaded {len(pdf_bytes)} bytes from {source}")
+                    results.append((doi, True, len(pdf_bytes), source))
                     
                     # Save PDF
                     output_path = Path(f"/tmp/bibtex_{doi.replace('/', '_')}.pdf")
                     output_path.write_bytes(pdf_bytes)
+                    print(f"✓ Saved to: {output_path}")
                 else:
                     print(f"✗ Failed to download")
-                    results.append((doi, False, 0))
+                    results.append((doi, False, 0, None))
                     
             except Exception as e:
                 print(f"✗ Error: {e}")
-                results.append((doi, False, 0))
+                results.append((doi, False, 0, None))
         
         # Print summary
         print(f"\n\n{'='*60}")
         print("Download Summary:")
         print(f"{'='*60}")
         success_count = sum(1 for r in results if r[1])
-        for doi, success, size in results:
+        for result in results:
+            doi, success, size, source = result
             status = "✓" if success else "✗"
-            print(f"{status} {doi}: {size} bytes")
+            source_info = f" (from {source})" if source else ""
+            print(f"{status} {doi}: {size} bytes{source_info}")
         print(f"\nSuccess rate: {success_count}/{len(results)}")
         
         # Note: We don't assert here because real downloads may fail
