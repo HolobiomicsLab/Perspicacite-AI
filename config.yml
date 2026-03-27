@@ -162,6 +162,11 @@ web_search:
 # =============================================================================
 
 pdf_download:
+  # Email for Unpaywall API (required for querying open access PDFs)
+  # Get one at: https://unpaywall.org/products/api
+  # Example: "your-email@example.com"
+  unpaywall_email: null
+  
   # Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror)
   # User must provide their own endpoint URL
   # Example: "https://sci-hub.se/"

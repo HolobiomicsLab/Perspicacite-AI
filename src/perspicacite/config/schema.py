@@ -201,6 +201,10 @@ class WebSearchConfig(BaseModel):
 class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
+    unpaywall_email: Optional[str] = Field(
+        default=None,
+        description="Email for Unpaywall API. Required for querying open access PDFs."
+    )
     alternative_endpoint: Optional[str] = Field(
         default=None,
         description="Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror). User must provide their own."

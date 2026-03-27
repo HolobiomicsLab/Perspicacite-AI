@@ -512,8 +512,10 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     skipped_duplicates = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0}
 
-    # Get alternative endpoint from config
-    alt_endpoint = app_state.config.pdf_download.alternative_endpoint if app_state.config else None
+    # Get PDF download config
+    pdf_config = app_state.config.pdf_download if app_state.config else None
+    alt_endpoint = pdf_config.alternative_endpoint if pdf_config else None
+    unpaywall_email = pdf_config.unpaywall_email if pdf_config else None
 
     for pd in request.papers:
         import hashlib
@@ -549,7 +551,8 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
                 # Try Unpaywall first, then alternative endpoint
                 pdf_bytes = await get_pdf_with_fallback(
                     pd.doi, 
-                    alternative_endpoint=alt_endpoint
+                    alternative_endpoint=alt_endpoint,
+                    unpaywall_email=unpaywall_email
                 )
                 if pdf_bytes and len(pdf_bytes) > 1000:
                     parsed = await app_state.pdf_parser.parse(pdf_bytes)
@@ -694,8 +697,10 @@ async def add_bibtex_to_kb(name: str, request: Request):
     papers_to_add = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0}
 
-    # Get alternative endpoint from config
-    alt_endpoint = app_state.config.pdf_download.alternative_endpoint if app_state.config else None
+    # Get PDF download config
+    pdf_config = app_state.config.pdf_download if app_state.config else None
+    alt_endpoint = pdf_config.alternative_endpoint if pdf_config else None
+    unpaywall_email = pdf_config.unpaywall_email if pdf_config else None
 
     for entry in parsed_entries:
         import hashlib
@@ -725,7 +730,8 @@ async def add_bibtex_to_kb(name: str, request: Request):
                 # Try Unpaywall first, then alternative endpoint
                 pdf_bytes = await get_pdf_with_fallback(
                     entry["doi"],
-                    alternative_endpoint=alt_endpoint
+                    alternative_endpoint=alt_endpoint,
+                    unpaywall_email=unpaywall_email
                 )
                 if pdf_bytes and len(pdf_bytes) > 1000:
                     parsed = await app_state.pdf_parser.parse(pdf_bytes)

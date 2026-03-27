@@ -261,6 +261,7 @@ async def get_pdf_with_fallback(
     doi: str,
     alternative_endpoint: str | None = None,
     http_client: httpx.AsyncClient | None = None,
+    unpaywall_email: str | None = None,
 ) -> bytes | None:
     """
     Get PDF for DOI, trying Unpaywall first, then alternative endpoint.
@@ -269,6 +270,7 @@ async def get_pdf_with_fallback(
         doi: DOI to lookup
         alternative_endpoint: Optional alternative endpoint URL
         http_client: Optional HTTP client
+        unpaywall_email: Email for Unpaywall API (uses env var if not provided)
         
     Returns:
         PDF bytes or None if not found
@@ -278,7 +280,7 @@ async def get_pdf_with_fallback(
     
     try:
         # Try Unpaywall first
-        oa_url = await get_open_access_url(doi, client)
+        oa_url = await get_open_access_url(doi, client, email=unpaywall_email)
         if oa_url:
             logger.info("pdf_download_using_unpaywall", doi=doi, url=oa_url)
             downloader = PDFDownloader()
