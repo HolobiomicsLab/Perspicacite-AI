@@ -505,12 +505,15 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
 
     from perspicacite.models.papers import Paper, Author, PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-    from perspicacite.pipeline.download import get_open_access_url
+    from perspicacite.pipeline.download import get_pdf_with_fallback
 
     # Convert PaperData dicts to Paper models with deduplication check
     papers_to_add = []
     skipped_duplicates = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0}
+
+    # Get alternative endpoint from config
+    alt_endpoint = app_state.config.pdf_download.alternative_endpoint if app_state.config else None
 
     for pd in request.papers:
         import hashlib
@@ -543,19 +546,17 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
         if pd.doi and app_state.pdf_downloader and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
-                # Try Unpaywall for OA PDF URL
-                pdf_url = await get_open_access_url(pd.doi)
-                if pdf_url:
-                    # Download and parse PDF
-                    pdf_bytes = await app_state.pdf_downloader.download(pdf_url)
-                    if pdf_bytes and len(pdf_bytes) > 1000:
-                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
-                        if parsed and parsed.text:
-                            full_text = parsed.text
-                            download_stats["success"] += 1
-                            logger.info(f"Downloaded full text for: {pd.title[:50]}...")
-                        else:
-                            download_stats["failed"] += 1
+                # Try Unpaywall first, then alternative endpoint
+                pdf_bytes = await get_pdf_with_fallback(
+                    pd.doi, 
+                    alternative_endpoint=alt_endpoint
+                )
+                if pdf_bytes and len(pdf_bytes) > 1000:
+                    parsed = await app_state.pdf_parser.parse(pdf_bytes)
+                    if parsed and parsed.text:
+                        full_text = parsed.text
+                        download_stats["success"] += 1
+                        logger.info(f"Downloaded full text for: {pd.title[:50]}...")
                     else:
                         download_stats["failed"] += 1
                 else:
@@ -626,7 +627,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
     # Parse BibTeX entries
     from perspicacite.models.papers import Paper, Author, PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-    from perspicacite.pipeline.download import get_open_access_url
+    from perspicacite.pipeline.download import get_pdf_with_fallback
     import re
 
     def parse_bibtex_entry(entry: str) -> dict | None:
@@ -693,6 +694,9 @@ async def add_bibtex_to_kb(name: str, request: Request):
     papers_to_add = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0}
 
+    # Get alternative endpoint from config
+    alt_endpoint = app_state.config.pdf_download.alternative_endpoint if app_state.config else None
+
     for entry in parsed_entries:
         import hashlib
         paper_id = entry["doi"] if entry["doi"] else f"generated:{hashlib.md5(entry['title'].encode()).hexdigest()[:12]}"
@@ -718,14 +722,16 @@ async def add_bibtex_to_kb(name: str, request: Request):
         if entry["doi"] and app_state.pdf_downloader and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
-                pdf_url = await get_open_access_url(entry["doi"])
-                if pdf_url:
-                    pdf_bytes = await app_state.pdf_downloader.download(pdf_url)
-                    if pdf_bytes and len(pdf_bytes) > 1000:
-                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
-                        if parsed and parsed.text:
-                            full_text = parsed.text
-                            download_stats["success"] += 1
+                # Try Unpaywall first, then alternative endpoint
+                pdf_bytes = await get_pdf_with_fallback(
+                    entry["doi"],
+                    alternative_endpoint=alt_endpoint
+                )
+                if pdf_bytes and len(pdf_bytes) > 1000:
+                    parsed = await app_state.pdf_parser.parse(pdf_bytes)
+                    if parsed and parsed.text:
+                        full_text = parsed.text
+                        download_stats["success"] += 1
             except Exception as e:
                 logger.warning(f"PDF download failed for {entry['title'][:50]}: {e}")
                 download_stats["failed"] += 1
