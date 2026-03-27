@@ -825,7 +825,7 @@ HTML_TEMPLATE = r"""
             max-width: 1200px;
             margin: 0 auto;
             display: grid;
-            grid-template-columns: 1fr 380px;
+            grid-template-columns: 320px 1fr;
             gap: 20px;
             height: calc(100vh - 40px);
         }
@@ -895,6 +895,82 @@ HTML_TEMPLATE = r"""
             color: var(--text-main);
             border: 1px solid #e2e8f0;
             border-bottom-left-radius: 4px;
+        }
+
+        /* Inline thinking message in chat */
+        .message.thinking-message {
+            background: #f1f5f9;
+            border: 1px dashed #cbd5e1;
+            font-size: 13px;
+            padding: 12px 16px;
+        }
+
+        .thinking-header-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        .thinking-toggle {
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+
+        .thinking-count {
+            color: #64748b;
+            font-size: 11px;
+            margin-left: auto;
+        }
+
+        .thinking-content {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .thinking-content.collapsed {
+            display: none;
+        }
+
+        .thinking-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .thinking-step {
+            display: flex;
+            gap: 8px;
+            padding: 8px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .thinking-step .icon {
+            flex-shrink: 0;
+        }
+
+        .thinking-step .content {
+            flex: 1;
+        }
+
+        .thinking-step .details {
+            margin-top: 4px;
+            padding: 8px;
+            background: #f8fafc;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #475569;
+        }
+
+        .thinking-step .query-info {
+            margin-top: 4px;
+            font-size: 11px;
+            color: #64748b;
         }
 
         .input-area {
@@ -1472,6 +1548,34 @@ HTML_TEMPLATE = r"""
 </head>
 <body>
     <div class="container">
+        <div class="side-panel">
+            <div class="panel">
+                <h3>📚 Knowledge Base</h3>
+                <select id="kb-select" class="kb-select" onchange="selectKB(this.value)">
+                    <option value="">No KB (web search only)</option>
+                </select>
+                <div id="kb-info" class="kb-info" style="display:none;"></div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
+                    <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
+                </div>
+                <div id="kb-create-form" class="kb-create-form">
+                    <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
+                    <input id="kb-desc-input" type="text" placeholder="Description (optional)">
+                    <button onclick="createKB()">Create</button>
+                </div>
+            </div>
+            
+            <div class="panel" style="flex: 1; display: flex; flex-direction: column;">
+                <h3>
+                    <span id="status-dot" class="status-indicator initializing"></span>
+                    System Status
+                </h3>
+                <div id="system-status">Initializing...</div>
+                <div class="session-info" id="session-info"></div>
+            </div>
+        </div>
+        
         <div class="main-panel">
             <div class="header">
                 <h1>🔬 Perspicacité v2</h1>
@@ -1513,55 +1617,6 @@ HTML_TEMPLATE = r"""
                                 <polygon points="22,2 15,22 11,13 2,9"></polygon>
                             </svg>
                         </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="side-panel">
-            <div class="panel">
-                <h3>📚 Knowledge Base</h3>
-                <select id="kb-select" class="kb-select" onchange="selectKB(this.value)">
-                    <option value="">No KB (web search only)</option>
-                </select>
-                <div id="kb-info" class="kb-info" style="display:none;"></div>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
-                    <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
-                </div>
-                <div id="kb-create-form" class="kb-create-form">
-                    <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
-                    <input id="kb-desc-input" type="text" placeholder="Description (optional)">
-                    <button onclick="createKB()">Create</button>
-                </div>
-            </div>
-            
-            <div class="panel">
-                <h3>
-                    <span id="status-dot" class="status-indicator initializing"></span>
-                    System Status
-                </h3>
-                <div id="system-status">Initializing...</div>
-                <div class="session-info" id="session-info"></div>
-            </div>
-            
-            <div class="panel">
-                <div class="thinking-header">
-                    <h3 style="margin:0;">🧠 Agent Thinking</h3>
-                    <button id="thinking-collapse-btn" class="thinking-collapse-btn" onclick="toggleThinkingCollapse()">Collapse all</button>
-                </div>
-                <div id="thinking-panel">
-                    <div style="color: #94a3b8; font-size: 13px;">
-                        Agent thinking will appear here...
-                    </div>
-                </div>
-            </div>
-            
-            <div class="panel">
-                <h3>📊 Detected Intent</h3>
-                <div id="intent-panel">
-                    <div style="color: #94a3b8; font-size: 13px;">
-                        Intent will be detected automatically...
                     </div>
                 </div>
             </div>
@@ -1744,9 +1799,8 @@ HTML_TEMPLATE = r"""
             addMessage('user', query);
             messages.push({role: 'user', content: query});
             
-            // Clear thinking panel
-            document.getElementById('thinking-panel').innerHTML = '';
-            document.getElementById('intent-panel').innerHTML = '<div style="color: #94a3b8;">Analyzing...</div>';
+            // Clear previous thinking
+            clearThinking();
             
             try {
                 const response = await fetch('/api/chat', {
@@ -1939,14 +1993,47 @@ HTML_TEMPLATE = r"""
             return result.join('');
         }
 
-        let thinkingCollapsed = false;
+        // Thinking steps are now added to the chat as collapsible messages
+        let currentThinkingMessage = null;
+        let thinkingSteps = [];
+
+        function createThinkingMessage() {
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = 'message assistant thinking-message';
+            div.innerHTML = `
+                <div class="thinking-header-bar" onclick="toggleThinkingMessage(this.parentElement)">
+                    <span class="thinking-toggle">▶</span>
+                    <span>🧠 Agent Thinking</span>
+                    <span class="thinking-count"></span>
+                </div>
+                <div class="thinking-content collapsed">
+                    <div class="thinking-steps"></div>
+                </div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            currentThinkingMessage = div;
+            thinkingSteps = [];
+            return div;
+        }
+
+        function toggleThinkingMessage(messageDiv) {
+            const content = messageDiv.querySelector('.thinking-content');
+            const toggle = messageDiv.querySelector('.thinking-toggle');
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                toggle.textContent = '▼';
+            } else {
+                content.classList.add('collapsed');
+                toggle.textContent = '▶';
+            }
+        }
 
         function addThinkingStep(message, type, details, query) {
-            const panel = document.getElementById('thinking-panel');
-
-            // Remove "waiting" message if present
-            if (panel.children.length === 1 && panel.children[0].style.color === 'rgb(148, 163, 184)') {
-                panel.innerHTML = '';
+            // Create thinking message if not exists
+            if (!currentThinkingMessage) {
+                createThinkingMessage();
             }
 
             const icons = {
@@ -1957,62 +2044,41 @@ HTML_TEMPLATE = r"""
                 complete: '✅'
             };
 
-            const div = document.createElement('div');
-            div.className = `thinking-step ${type}${thinkingCollapsed ? ' collapsed' : ''}`;
+            thinkingSteps.push({ message, type, details, query });
+
+            // Update the count
+            const countSpan = currentThinkingMessage.querySelector('.thinking-count');
+            countSpan.textContent = `(${thinkingSteps.length} steps)`;
+
+            // Add step to content
+            const stepsContainer = currentThinkingMessage.querySelector('.thinking-steps');
+            const stepDiv = document.createElement('div');
+            stepDiv.className = `thinking-step ${type}`;
 
             let queryInfo = '';
             if (query) {
                 queryInfo = `<div class="query-info">Query: <code>${query}</code></div>`;
             }
 
-            let stepDetails = '';
-            if (details || queryInfo) {
-                stepDetails = `
-                    <div class="step-details">
-                        ${queryInfo}
-                        ${details ? `<div class="details">${details}</div>` : ''}
-                    </div>
-                    <div class="step-summary">${message}${query ? ` — Query: ${query}` : ''}</div>
-                `;
-            }
-
-            div.innerHTML = `
-                <span class="chevron" onclick="toggleStepCollapse(this.parentElement)">▼</span>
+            stepDiv.innerHTML = `
                 <span class="icon">${icons[type] || '•'}</span>
                 <div class="content">
                     <div>${message}</div>
-                    ${stepDetails}
+                    ${details ? `<div class="details">${details}</div>` : ''}
+                    ${queryInfo}
                 </div>
             `;
 
-            panel.appendChild(div);
-            panel.scrollTop = panel.scrollHeight;
+            stepsContainer.appendChild(stepDiv);
+            
+            // Auto-scroll chat
+            const container = document.getElementById('chat-container');
+            container.scrollTop = container.scrollHeight;
         }
-        
-        function showIntent(intent) {
-            const panel = document.getElementById('intent-panel');
-            const displayNames = {
-                'NATURAL_PRODUCTS_ONLY': 'Natural Products Only',
-                'PAPERS_ONLY': 'Papers Only',
-                'COMBINED_RESEARCH': 'Combined Research',
-                'FOLLOW_UP': 'Follow-up Question',
-                'CLARIFICATION': 'Clarification',
-                'ANALYSIS': 'Analysis',
-                'UNKNOWN': 'Unknown'
-            };
-            
-            const classNames = {
-                'NATURAL_PRODUCTS_ONLY': 'natural_products_only',
-                'PAPERS_ONLY': 'papers_only',
-                'COMBINED_RESEARCH': 'combined_research',
-                'FOLLOW_UP': 'follow_up'
-            };
-            
-            panel.innerHTML = `
-                <span class="intent-badge ${classNames[intent] || 'combined_research'}">
-                    ${displayNames[intent] || intent}
-                </span>
-            `;
+
+        function clearThinking() {
+            currentThinkingMessage = null;
+            thinkingSteps = [];
         }
         
         // Paper curation
@@ -2108,19 +2174,7 @@ HTML_TEMPLATE = r"""
         // Delete KB modal
         let kbToDelete = '';
 
-        // Thinking panel collapse
-
-        function toggleThinkingCollapse() {
-            thinkingCollapsed = !thinkingCollapsed;
-            document.querySelectorAll('.thinking-step').forEach(el => {
-                el.classList.toggle('collapsed', thinkingCollapsed);
-            });
-            document.getElementById('thinking-collapse-btn').textContent = thinkingCollapsed ? 'Expand all' : 'Collapse all';
-        }
-
-        function toggleStepCollapse(el) {
-            el.classList.toggle('collapsed');
-        }
+        // Thinking message toggle handled in toggleThinkingMessage function
 
         function showDeleteKBDialog(kbName) {
             kbToDelete = kbName;
