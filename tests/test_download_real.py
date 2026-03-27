@@ -263,8 +263,8 @@ class TestBibTeXFileIntegration:
         alt_endpoint = get_alternative_endpoint()
         results = []
         
-        # Test first 2 DOIs
-        for doi in dois[:2]:
+        # Test all DOIs (or use dois[:2] for first 2 only)
+        for doi in dois:
             print(f"\nTrying DOI: {doi}")
             
             try:
