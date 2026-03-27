@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.rag.tools import Tool, ToolRegistry
 
 logger = get_logger("perspicacite.rag.modes.agentic")
@@ -155,8 +156,8 @@ class AgenticRAGMode(BaseRAGMode):
         super().__init__(config)
         self.quality_assessor: DocumentQualityAssessor | None = None
         self.early_exit_confidence = getattr(
-            config.rag_modes, 'agentic', {}
-        ).get('early_exit_confidence', 0.85)
+            getattr(config.rag_modes, 'agentic', None), 'early_exit_confidence', 0.85
+        )
         self.max_consecutive_failures = 2
 
     async def execute(
@@ -173,8 +174,8 @@ class AgenticRAGMode(BaseRAGMode):
         self.quality_assessor = DocumentQualityAssessor(llm)
         
         max_iterations = request.max_iterations or getattr(
-            self.config.rag_modes, 'agentic', {}
-        ).get('max_iterations', 3)
+            getattr(self.config.rag_modes, 'agentic', None), 'max_iterations', 3
+        )
 
         logger.info("agentic_rag_start", query=request.query, max_iterations=max_iterations)
 
@@ -297,7 +298,7 @@ class AgenticRAGMode(BaseRAGMode):
         try:
             query_embedding = await embedding_provider.embed([query])
             kb_results = await vector_store.search(
-                collection=request.kb_name,
+                collection=chroma_collection_name_for_kb(request.kb_name),
                 query_embedding=query_embedding[0],
                 top_k=10,
             )

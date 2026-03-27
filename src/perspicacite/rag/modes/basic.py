@@ -7,16 +7,16 @@ Basic RAG performs simple retrieval and generation:
 - Direct response generation (no refinement)
 """
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
+from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
-    MANDATORY_PROMPT,
-    FORMAT_PROMPT,
 )
 
 logger = get_logger("perspicacite.rag.modes.basic")
@@ -63,7 +63,7 @@ class BasicRAGMode(BaseRAGMode):
         logger.info("basic_retrieve_documents", query=request.query[:100])
         
         raw_results = await vector_store.search(
-            collection=request.kb_name,
+            collection=chroma_collection_name_for_kb(request.kb_name),
             query_embedding=query_embedding[0],
             top_k=self.initial_docs,
         )
@@ -101,6 +101,11 @@ class BasicRAGMode(BaseRAGMode):
 
         # Step 5: Prepare sources
         sources = self._prepare_sources(selected_documents)
+        
+        # Step 6: Append references section to answer
+        if sources:
+            references = self._format_references(sources)
+            answer = answer.strip() + "\n\n" + references
 
         logger.info("basic_rag_complete", sources=len(sources))
 
@@ -128,13 +133,16 @@ class BasicRAGMode(BaseRAGMode):
             request, llm, vector_store, embedding_provider, tools
         )
         
-        yield StreamEvent.status("Basic RAG: Generating answer...")
+        # Yield sources for UI display
+        for source in response.sources:
+            yield StreamEvent.source(source)
         
-        # Stream the answer word by word
-        words = response.answer.split()
-        for i, word in enumerate(words):
-            chunk = word + (" " if i < len(words) - 1 else "")
-            yield StreamEvent.content(chunk)
+        # Send the complete answer as a single content event
+        # (Word-by-word streaming breaks markdown formatting)
+        yield StreamEvent(
+            event="content",
+            data=json.dumps({"delta": response.answer}),
+        )
         
         yield StreamEvent.done(
             conversation_id="",
@@ -190,26 +198,44 @@ class BasicRAGMode(BaseRAGMode):
         # Format context
         context = self._format_documents_for_prompt(documents)
         
-        # Use exact prompts from release package
-        # Combine mandatory + default system prompts as done in original
-        combined_prompt = MANDATORY_PROMPT + "\n" + DEFAULT_SYSTEM_PROMPT
-        
-        # Build template as in original get_response()
-        template = f"""System prompt: {combined_prompt}
-Context: {context}
-Format: {FORMAT_PROMPT}
+        # Structured system prompt for better formatting
+        system_prompt = """You are a scientific AI assistant. Provide clear, well-structured answers using markdown formatting.
+
+FORMAT REQUIREMENTS:
+1. Start with a brief overview/introduction (2-3 sentences)
+2. Use ## for main section headings (e.g., ## Overview, ## Key Points)
+3. Use ### for subsections if needed
+4. Use bullet points (- item) for lists
+5. Use **bold** SPARINGLY - only for the most important 2-3 key terms
+6. Use *italics* for emphasis on specific words or phrases
+7. Separate paragraphs with blank lines
+8. Include relevant examples if helpful
+
+IMPORTANT: Do not put entire paragraphs in bold. Only individual important words or short phrases.
+
+Your response should be easy to read with clear visual structure."""
+
+        # Build user prompt with context
+        template = f"""Based on the following research documents, please answer this question:
+
 Question: {query}
 
-Additional information:
-- Total documents used: {len(documents)}
-- Unique sources: {len(set(self._get_doc_citation(d) for d in documents))}
+Documents:
+{context}
 
-Provide a comprehensive answer based on the documents above."""
+---
+
+Instructions:
+- Provide a comprehensive answer with clear sections
+- Use markdown formatting (headings ##, bullet points -, minimal bold **)
+- Base your answer on the documents provided
+- Number of documents: {len(documents)}
+- Unique sources: {len(set(self._get_doc_citation(d) for d in documents))}"""
 
         try:
             response = await llm.complete(
                 messages=[
-                    {"role": "system", "content": combined_prompt},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": template},
                 ],
                 model=request.model,
@@ -217,10 +243,57 @@ Provide a comprehensive answer based on the documents above."""
                 max_tokens=2000,
                 temperature=0.3,
             )
-            return response
+            # Post-process to ensure proper structure
+            return self._format_response(response)
         except Exception as e:
             logger.error("basic_response_generation_error", error=str(e))
             return f"Error generating response: {e}"
+
+    def _format_response(self, text: str) -> str:
+        """Post-process response to ensure proper formatting."""
+        if not text:
+            return text
+        
+        lines = text.split('\n')
+        formatted_lines = []
+        in_list = False
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Skip empty lines but preserve structure
+            if not stripped:
+                formatted_lines.append('')
+                in_list = False
+                continue
+            
+            # Check if line is already a heading
+            if stripped.startswith('#'):
+                formatted_lines.append(line)
+                in_list = False
+                continue
+            
+            # Check if line looks like a list item
+            if stripped.startswith(('- ', '* ', '1. ', '2. ')):
+                formatted_lines.append(line)
+                in_list = True
+                continue
+            
+            # Regular paragraph - ensure it's not joined with previous
+            if formatted_lines and formatted_lines[-1] and not formatted_lines[-1].endswith('  '):
+                # Add spacing between paragraphs
+                pass
+            
+            formatted_lines.append(line)
+        
+        # Join lines back
+        result = '\n'.join(formatted_lines)
+        
+        # Ensure proper spacing around headers
+        result = result.replace('\n##', '\n\n##')
+        result = result.replace('\n###', '\n\n###')
+        
+        return result.strip()
 
     def _prepare_sources(self, documents: list[Any]) -> list[SourceReference]:
         """Prepare source references from documents."""
@@ -267,3 +340,21 @@ Provide a comprehensive answer based on the documents above."""
             ))
 
         return sources
+
+    def _format_references(self, sources: list[SourceReference]) -> str:
+        """Format sources as a references section."""
+        if not sources:
+            return ""
+        
+        lines = ["---", "## References"]
+        for i, src in enumerate(sources, 1):
+            ref = f"[{i}] {src.title}"
+            if src.authors:
+                ref += f" - {src.authors}"
+            if src.year:
+                ref += f" ({src.year})"
+            if src.doi:
+                ref += f" - DOI: {src.doi}"
+            lines.append(ref)
+        
+        return "\n".join(lines)

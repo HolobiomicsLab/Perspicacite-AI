@@ -53,8 +53,8 @@ class RAGRequest(BaseModel):
     query: str
     kb_name: str = "default"
     mode: RAGMode = RAGMode.BASIC
-    provider: str = "anthropic"
-    model: str = "claude-3-5-sonnet-20241022"
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
     max_iterations: Optional[int] = None
     use_web_search: bool = False
     filters: Optional[SearchFilters] = None
@@ -118,6 +118,13 @@ class StreamEvent(BaseModel):
         import json
 
         return cls(event="content", data=json.dumps({"delta": delta}))
+
+    @classmethod
+    def source(cls, source: "SourceReference") -> "StreamEvent":
+        """Create a source event."""
+        import json
+
+        return cls(event="source", data=json.dumps(source.model_dump()))
 
     @classmethod
     def done(

@@ -16,6 +16,7 @@ import json
 import base64
 import asyncio
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional, List
 from contextlib import asynccontextmanager
@@ -60,7 +61,7 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage] = Field(default_factory=list, description="Conversation history")
     session_id: Optional[str] = Field(default=None, description="Session ID for persistence")
     kb_name: Optional[str] = Field(default=None, description="Knowledge base to search first")
-    mode: str = Field(default="agentic", description="RAG mode: agentic, profound, advanced, basic")
+    mode: str = Field(default="basic", description="RAG mode: basic, advanced, profound, agentic")
     stream: bool = Field(default=True, description="Stream the response")
     max_papers: int = Field(default=3, ge=1, le=10)
 
@@ -315,11 +316,8 @@ async def _stream_rag_mode(request: ChatRequest):
     
     logger.info(f"Using RAGEngine with mode: {rag_mode.value}")
     
-    # Yield thinking event
-    yield json.dumps({
-        "type": "thinking",
-        "message": f"Using {rag_mode.value} mode..."
-    })
+    # Generate session_id if not provided
+    session_id = request.session_id or str(uuid.uuid4())
     
     # Create RAG request
     rag_request = RAGReq(
@@ -329,34 +327,50 @@ async def _stream_rag_mode(request: ChatRequest):
         stream=True
     )
     
-    # Execute using RAGEngine
+    # Execute using RAGEngine streaming
+    full_answer = ""
+    sources = []
+    
     try:
-        response = await app_state.rag_engine.query(rag_request)
-        
-        # Stream the response
-        yield json.dumps({
-            "type": "thinking",
-            "message": f"Retrieved {len(response.sources)} sources"
-        })
-        
-        # Send answer as base64 (consistent with agentic mode)
-        content = response.answer or ""
-        safe = {
-            "type": "answer",
-            "session_id": request.session_id,
-            "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-        }
-        yield json.dumps(safe, separators=(",", ":"))
+        async for event in app_state.rag_engine.query_stream(rag_request):
+            if event.event == "status":
+                # Forward status updates
+                yield f"data: {json.dumps({'type': 'thinking', 'message': json.loads(event.data)['message']})}\n\n"
+            
+            elif event.event == "source":
+                # Collect sources
+                source_data = json.loads(event.data)
+                sources.append(source_data)
+                # Also forward to UI for display
+                yield f"data: {json.dumps({'type': 'source', 'source': source_data})}\n\n"
+            
+            elif event.event == "content":
+                # Accumulate answer content
+                delta = json.loads(event.data)['delta']
+                full_answer += delta
+            
+            elif event.event == "done":
+                # Send final answer as base64
+                safe = {
+                    "type": "answer",
+                    "session_id": session_id,
+                    "content_b64": base64.b64encode(full_answer.encode("utf-8")).decode("ascii"),
+                    "sources": sources,
+                }
+                yield f"data: {json.dumps(safe, separators=(',', ':'))}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+            
+            elif event.event == "error":
+                yield f"data: {json.dumps({'type': 'error', 'message': event.data})}\n\n"
+                return
         
     except Exception as e:
         logger.error(f"RAG engine error: {e}")
-        yield json.dumps({
-            "type": "error",
-            "message": f"Error in {rag_mode.value} mode: {str(e)}"
-        })
+        yield f"data: {json.dumps({'type': 'error', 'message': f'Error in {rag_mode.value} mode: {str(e)}'})}\n\n"
     
-    # End of stream
-    yield json.dumps({"type": "done"})
+    # End of stream (fallback if no done event)
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 @app.get("/api/health")
@@ -751,7 +765,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
 
 
 # HTML Template for the web interface
-HTML_TEMPLATE = """
+HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -874,7 +888,6 @@ HTML_TEMPLATE = """
         .input-area {
             padding: 16px 24px 20px;
             background: #fafbfc;
-            border-top: 1px solid #e2e8f0;
         }
 
         .chat-input-wrapper {
@@ -911,7 +924,7 @@ HTML_TEMPLATE = """
         .input-actions {
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            justify-content: flex-end;
             gap: 12px;
             padding-top: 8px;
             border-top: 1px solid #e2e8f0;
@@ -1477,10 +1490,10 @@ HTML_TEMPLATE = """
                     ></textarea>
                     <div class="input-actions">
                         <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)">
-                            <option value="agentic">🤖 Perspicacité Agentic</option>
-                            <option value="profound">🔬 Deep Research</option>
+                            <option value="basic" selected>📚 Quick Search</option>
                             <option value="advanced">⚡ Advanced (Hybrid)</option>
-                            <option value="basic">📚 Quick Search</option>
+                            <option value="profound">🔬 Deep Research</option>
+                            <option value="agentic">🤖 Perspicacité Agentic</option>
                         </select>
                         <button id="send-btn" class="send-btn" onclick="sendQuery()" disabled>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1549,7 +1562,7 @@ HTML_TEMPLATE = """
         let isProcessing = false;
         let selectedKb = null;
         let lastFoundPapers = [];
-        let currentMode = 'agentic';
+        let currentMode = 'basic';
         
         const modeDescriptions = {
             'agentic': '🤖 KB-first with intent detection and tool use',
@@ -1768,6 +1781,15 @@ HTML_TEMPLATE = """
                         }
                         if (data.type === 'thinking') {
                             addThinkingStep(data.message, 'analyzing', data.details);
+                        } else if (data.type === 'source') {
+                            // Source from RAG modes (basic, advanced, profound)
+                            if (data.source) {
+                                addThinkingStep(
+                                    `Source: ${data.source.title}`,
+                                    'result',
+                                    `Relevance: ${(data.source.relevance_score * 100).toFixed(1)}%`
+                                );
+                            }
                         } else if (data.type === 'tool_call') {
                             addThinkingStep(
                                 `Using tool: ${data.tool}`,
@@ -1789,9 +1811,11 @@ HTML_TEMPLATE = """
                                 ? decodeUtf8FromBase64(data.content_b64)
                                 : (data.content || '');
                             assistantDiv.innerHTML = formatMessage(assistantMessage);
-                            sessionId = data.session_id;
-                            document.getElementById('session-info').textContent =
-                                `Session: ${sessionId.slice(0, 8)}...`;
+                            sessionId = data.session_id || sessionId;
+                            if (sessionId) {
+                                document.getElementById('session-info').textContent =
+                                    `Session: ${sessionId.slice(0, 8)}...`;
+                            }
                         } else if (data.type === 'papers_found' && data.papers && data.papers.length > 0) {
                             lastFoundPapers = data.papers;
                             if (assistantDiv) {
@@ -1833,12 +1857,74 @@ HTML_TEMPLATE = """
         }
         
         function formatMessage(content) {
-            // Simple markdown-like formatting
-            return content
-                .replace(/\\n/g, '<br>')
-                .replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')
-                .replace(/\\*(.*?)\\*/g, '<em>$1</em>')
-                .replace(/`(.*?)`/g, '<code style="background: #e2e8f0; padding: 2px 4px; border-radius: 4px;">$1</code>');
+            if (!content) return '';
+            
+            // Escape HTML entities first
+            let formatted = content
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            
+            // Split into lines for processing
+            let lines = formatted.split('\n');
+            let result = [];
+            let inList = false;
+            
+            for (let line of lines) {
+                let trimmed = line.trim();
+                
+                // Headers
+                if (trimmed.startsWith('### ')) {
+                    if (inList) { result.push('</ul>'); inList = false; }
+                    result.push('<h3 style="color: var(--primary); margin: 16px 0 8px 0; font-size: 1.1em;">' + trimmed.substring(4) + '</h3>');
+                    continue;
+                }
+                if (trimmed.startsWith('## ')) {
+                    if (inList) { result.push('</ul>'); inList = false; }
+                    result.push('<h2 style="color: var(--primary); margin: 20px 0 10px 0; font-size: 1.2em; border-bottom: 1px solid var(--border);">' + trimmed.substring(3) + '</h2>');
+                    continue;
+                }
+                if (trimmed.startsWith('# ')) {
+                    if (inList) { result.push('</ul>'); inList = false; }
+                    result.push('<h1 style="color: var(--primary); margin: 24px 0 12px 0; font-size: 1.4em;">' + trimmed.substring(2) + '</h1>');
+                    continue;
+                }
+                
+                // List items
+                if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+                    if (!inList) { result.push('<ul style="margin: 8px 0; padding-left: 20px;">'); inList = true; }
+                    let item = trimmed.substring(2);
+                    // Process bold/italic within list item
+                    item = item.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                    item = item.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+                    result.push('<li style="margin: 4px 0;">' + item + '</li>');
+                    continue;
+                }
+                
+                // End list if we hit a non-list line
+                if (inList && trimmed) {
+                    result.push('</ul>');
+                    inList = false;
+                }
+                
+                // Empty line = paragraph break
+                if (!trimmed) {
+                    result.push('<br>');
+                    continue;
+                }
+                
+                // Regular paragraph with inline formatting
+                let para = trimmed;
+                para = para.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                para = para.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+                para = para.replace(/`([^`]+)`/g, '<code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em;">$1</code>');
+                result.push('<p style="margin: 8px 0; line-height: 1.6;">' + para + '</p>');
+            }
+            
+            // Close any open list
+            if (inList) result.push('</ul>');
+            
+            return result.join('');
         }
 
         let thinkingCollapsed = false;

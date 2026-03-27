@@ -17,6 +17,7 @@ from typing import Any
 
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
+from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.prompts import (
     PROFOUND_ANALYZE_DOCUMENTS_PROMPT_TEMPLATE,
@@ -78,7 +79,17 @@ class ProfoundRAGMode(BaseRAGMode):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        rag_settings = getattr(config.rag_modes, 'profound', {})
+        rag_settings = getattr(config.rag_modes, 'profound', None)
+        
+        # Handle both dict and Pydantic model
+        if rag_settings is None:
+            rag_settings = {}
+        elif hasattr(rag_settings, 'model_dump'):
+            # Pydantic v2 model
+            rag_settings = rag_settings.model_dump()
+        elif hasattr(rag_settings, 'dict'):
+            # Pydantic v1 model
+            rag_settings = rag_settings.dict()
         
         # Settings from release package
         self.max_cycles = rag_settings.get('max_iterations', 3)
@@ -149,7 +160,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     vector_store=vector_store,
                     embedding_provider=embedding_provider,
                     tools=tools,
-                    kb_name=request.kb_name,
+                    kb_name=chroma_collection_name_for_kb(request.kb_name),
                 )
                 
                 cycle_steps.append(step)
@@ -231,6 +242,8 @@ class ProfoundRAGMode(BaseRAGMode):
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute Profound RAG with streaming output."""
+        import json
+        
         yield StreamEvent.status("Profound RAG: Initializing deep research...")
         
         # Delegate to non-streaming for core logic
@@ -238,13 +251,15 @@ class ProfoundRAGMode(BaseRAGMode):
             request, llm, vector_store, embedding_provider, tools
         )
         
-        yield StreamEvent.status("Profound RAG: Generating final answer...")
+        # Yield sources for UI display
+        for source in response.sources:
+            yield StreamEvent.source(source)
         
-        # Stream the answer word by word
-        words = response.answer.split()
-        for i, word in enumerate(words):
-            chunk = word + (" " if i < len(words) - 1 else "")
-            yield StreamEvent.content(chunk)
+        # Send the complete answer as a single content event
+        yield StreamEvent(
+            event="content",
+            data=json.dumps({"delta": response.answer}),
+        )
         
         yield StreamEvent.done(
             conversation_id="",
@@ -721,6 +736,11 @@ Generate a final answer."""
         # Prepare sources
         sources = self._prepare_sources(documents)
         
+        # Append references section to answer
+        if sources:
+            references = self._format_references(sources)
+            answer = answer.strip() + "\n\n" + references
+        
         return RAGResponse(
             answer=answer,
             sources=sources,
@@ -783,3 +803,21 @@ Generate a final answer."""
             ))
 
         return sources
+
+    def _format_references(self, sources: list[SourceReference]) -> str:
+        """Format sources as a references section."""
+        if not sources:
+            return ""
+        
+        lines = ["---", "## References"]
+        for i, src in enumerate(sources, 1):
+            ref = f"[{i}] {src.title}"
+            if src.authors:
+                ref += f" - {src.authors}"
+            if src.year:
+                ref += f" ({src.year})"
+            if src.doi:
+                ref += f" - DOI: {src.doi}"
+            lines.append(ref)
+        
+        return "\n".join(lines)

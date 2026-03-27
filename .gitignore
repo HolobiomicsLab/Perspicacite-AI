@@ -71,4 +71,5 @@ packages_to_use/
 *.md
 !Perspicacite_v2_Planning.md
 !IMPLEMENTATION_GUIDE.md
+!todo.md
 PROBLEMS.md

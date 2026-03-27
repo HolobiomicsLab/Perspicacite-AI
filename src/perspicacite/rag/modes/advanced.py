@@ -25,6 +25,7 @@ from perspicacite.rag.prompts import (
     REFINE_RESPONSE_HUMAN_PROMPT_SUFFIX,
     FOCUS_INSTRUCTIONS_PROMPT,
 )
+from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.retrieval.hybrid import hybrid_retrieval
 
 logger = get_logger("perspicacite.rag.modes.advanced")
@@ -44,7 +45,17 @@ class AdvancedRAGMode(BaseRAGMode):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        rag_settings = getattr(config.rag_modes, 'advanced', {})
+        rag_settings = getattr(config.rag_modes, 'advanced', None)
+        
+        # Handle both dict and Pydantic model
+        if rag_settings is None:
+            rag_settings = {}
+        elif hasattr(rag_settings, 'model_dump'):
+            # Pydantic v2 model
+            rag_settings = rag_settings.model_dump()
+        elif hasattr(rag_settings, 'dict'):
+            # Pydantic v1 model
+            rag_settings = rag_settings.dict()
         
         self.initial_docs = 150  # From release package
         self.final_max_docs = 5
@@ -95,7 +106,7 @@ class AdvancedRAGMode(BaseRAGMode):
             queries=all_queries,
             vector_store=vector_store,
             embedding_provider=embedding_provider,
-            kb_name=request.kb_name,
+            kb_name=chroma_collection_name_for_kb(request.kb_name),
             llm=llm,
         )
         
@@ -122,6 +133,11 @@ class AdvancedRAGMode(BaseRAGMode):
 
         # Step 5: Prepare sources
         sources = self._prepare_sources(selected_documents)
+        
+        # Step 6: Append references section to answer
+        if sources:
+            references = self._format_references(sources)
+            answer = answer.strip() + "\n\n" + references
 
         logger.info("advanced_rag_complete", sources=len(sources), refined=self.use_refinement)
 
@@ -142,6 +158,8 @@ class AdvancedRAGMode(BaseRAGMode):
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute Advanced RAG with streaming output."""
+        import json
+        
         yield StreamEvent.status("Advanced RAG: Generating query variations...")
         
         # Delegate to non-streaming for core logic
@@ -149,13 +167,15 @@ class AdvancedRAGMode(BaseRAGMode):
             request, llm, vector_store, embedding_provider, tools
         )
         
-        yield StreamEvent.status("Advanced RAG: Generating answer...")
+        # Yield sources for UI display
+        for source in response.sources:
+            yield StreamEvent.source(source)
         
-        # Stream the answer word by word
-        words = response.answer.split()
-        for i, word in enumerate(words):
-            chunk = word + (" " if i < len(words) - 1 else "")
-            yield StreamEvent.content(chunk)
+        # Send the complete answer as a single content event
+        yield StreamEvent(
+            event="content",
+            data=json.dumps({"delta": response.answer}),
+        )
         
         yield StreamEvent.done(
             conversation_id="",
@@ -630,3 +650,21 @@ Provide an improved response."""
             ))
 
         return sources
+
+    def _format_references(self, sources: list[SourceReference]) -> str:
+        """Format sources as a references section."""
+        if not sources:
+            return ""
+        
+        lines = ["---", "## References"]
+        for i, src in enumerate(sources, 1):
+            ref = f"[{i}] {src.title}"
+            if src.authors:
+                ref += f" - {src.authors}"
+            if src.year:
+                ref += f" ({src.year})"
+            if src.doi:
+                ref += f" - DOI: {src.doi}"
+            lines.append(ref)
+        
+        return "\n".join(lines)

@@ -16,8 +16,8 @@ class ChatRequest(BaseModel):
     messages: list[Message]
     kb_name: str = "default"
     mode: RAGMode = RAGMode.AGENTIC
-    provider: str = "anthropic"
-    model: str = "claude-3-5-sonnet-20241022"
+    provider: str = "deepseek"
+    model: str = "deepseek-chat"
     stream: bool = True
     use_web_search: bool = False
     conversation_id: Optional[str] = None
