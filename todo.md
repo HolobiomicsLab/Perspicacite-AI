@@ -4,11 +4,11 @@
 
 - [ ] Alternative endpoint scihub
 - [ ] UI tune to be more like modern AI chatbot interface
-- [ ] MCP support
 - [ ] tool to create KB from bibtex file
 - [ ] publisher api download
 
-
+## Medium Term
+- [ ] MCP support
 
 ## Long Term
 
