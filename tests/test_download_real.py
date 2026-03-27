@@ -36,25 +36,42 @@ TEST_DOIS = [
     "10.1089/can.2016.0027",  # Cannabis and cannabinoid research
 ]
 
-# Get Unpaywall email from environment
-UNPAYWALL_EMAIL = os.getenv("UNPAYWALL_EMAIL", "")
+def get_unpaywall_email():
+    """Get Unpaywall email from environment or config."""
+    from perspicacite.config.loader import load_config
+    
+    # First check environment
+    email = os.getenv("UNPAYWALL_EMAIL")
+    if email:
+        return email
+    
+    # Then check config file
+    try:
+        config = load_config()
+        return config.pdf_download.unpaywall_email
+    except Exception:
+        return None
 
 
 def get_alternative_endpoint():
     """Get alternative endpoint from environment or config."""
-    from perspicacite.config.schema import Config
+    from perspicacite.config.loader import load_config
     
     # First check environment
     endpoint = os.getenv("SCIHUB_URL")
     if endpoint:
         return endpoint
     
-    # Then check config
+    # Then check config file
     try:
-        config = Config()
+        config = load_config()
         return config.pdf_download.alternative_endpoint
     except Exception:
         return None
+
+
+# Get Unpaywall email
+UNPAYWALL_EMAIL = get_unpaywall_email() or ""
 
 
 @pytest.fixture(scope="module")
@@ -189,12 +206,14 @@ class TestRealFallback:
         
         print(f"\n\nTesting fallback mechanism for DOI: {test_doi}")
         print(f"Alternative endpoint: {alternative_endpoint}")
+        print(f"Unpaywall email configured: {bool(UNPAYWALL_EMAIL)}")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             pdf_bytes = await get_pdf_with_fallback(
                 test_doi,
                 alternative_endpoint=alternative_endpoint,
-                http_client=client
+                http_client=client,
+                unpaywall_email=UNPAYWALL_EMAIL or None
             )
         
         if pdf_bytes:
@@ -253,7 +272,8 @@ class TestBibTeXFileIntegration:
                     pdf_bytes = await get_pdf_with_fallback(
                         doi,
                         alternative_endpoint=alt_endpoint,
-                        http_client=client
+                        http_client=client,
+                        unpaywall_email=UNPAYWALL_EMAIL
                     )
                 
                 if pdf_bytes and pdf_bytes[:4] == b"%PDF":

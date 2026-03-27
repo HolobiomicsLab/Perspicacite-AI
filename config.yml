@@ -165,12 +165,12 @@ pdf_download:
   # Email for Unpaywall API (required for querying open access PDFs)
   # Get one at: https://unpaywall.org/products/api
   # Example: "your-email@example.com"
-  unpaywall_email: null
+  unpaywall_email: "tao.jiang@univ-cotedazur.fr"
   
   # Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror)
   # User must provide their own endpoint URL
   # Example: "https://sci-hub.se/"
-  alternative_endpoint: null
+  alternative_endpoint: "https://sci-hub.fr/"
   
   # Timeout for PDF downloads (seconds)
   timeout: 30
