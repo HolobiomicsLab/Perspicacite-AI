@@ -1,6 +1,6 @@
 """Document processing pipeline."""
 
-__all__ = ["KBBuilder", "PDFDownloader", "DownloadResult", "PaperParser", "Unpaywall"]
+__all__ = ["KBBuilder", "PDFDownloader", "DownloadResult", "ContentResult"]
 
 # Lazy imports
 def __getattr__(name):
@@ -8,15 +8,12 @@ def __getattr__(name):
         from perspicacite.pipeline.kb_builder import KBBuilder
         return KBBuilder
     if name == "PDFDownloader":
-        from perspicacite.pipeline.download import PDFDownloader
+        from perspicacite.pipeline.download.base import PDFDownloader
         return PDFDownloader
     if name == "DownloadResult":
-        from perspicacite.pipeline.download import DownloadResult
+        from perspicacite.pipeline.download.base import DownloadResult
         return DownloadResult
-    if name == "PaperParser":
-        from perspicacite.pipeline.download import PaperParser
-        return PaperParser
-    if name == "Unpaywall":
-        from perspicacite.pipeline.download import Unpaywall
-        return Unpaywall
+    if name == "ContentResult":
+        from perspicacite.pipeline.download.base import ContentResult
+        return ContentResult
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

@@ -209,6 +209,34 @@ class PDFDownloadConfig(BaseModel):
         default=None,
         description="Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror). User must provide their own."
     )
+    
+    # Publisher API keys for institutional access
+    # Open access (no key needed)
+    # - arXiv: fully open, no registration needed
+    
+    # Institutional access (API keys needed)
+    wiley_tdm_token: Optional[str] = Field(
+        default=None,
+        description="Wiley TDM (Text and Data Mining) API client token. Register at https://developer.wiley.com/"
+    )
+    elsevier_api_key: Optional[str] = Field(
+        default=None,
+        description="Elsevier ScienceDirect API key. Register at https://dev.elsevier.com/"
+    )
+    aaas_api_key: Optional[str] = Field(
+        default=None,
+        description="AAAS (Science) API key for institutional access."
+    )
+    rsc_api_key: Optional[str] = Field(
+        default=None,
+        description="Royal Society of Chemistry API key. Register at https://api.rsc.org/"
+    )
+    springer_api_key: Optional[str] = Field(
+        default=None,
+        description="Springer Nature API key. Register at https://dev.springernature.com/"
+    )
+    # ACS typically uses IP-based access, no API key
+    
     timeout: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=3, ge=0)
 

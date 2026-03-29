@@ -60,6 +60,7 @@ class ChatRequest(BaseModel):
     query: str = Field(..., description="Current research question")
     messages: List[ChatMessage] = Field(default_factory=list, description="Conversation history")
     session_id: Optional[str] = Field(default=None, description="Session ID for persistence")
+    conversation_id: Optional[str] = Field(default=None, description="Conversation ID for persistent chat thread")
     kb_name: Optional[str] = Field(default=None, description="Knowledge base to search first")
     mode: str = Field(default="basic", description="RAG mode: basic, advanced, profound, agentic")
     stream: bool = Field(default=True, description="Stream the response")
@@ -232,9 +233,33 @@ async def chat_endpoint(request: ChatRequest):
     if not app_state.initialized:
         await app_state.initialize()
     
+    # Get or create conversation for persistence
+    conversation_id = request.conversation_id
+    if app_state.session_store:
+        if conversation_id:
+            # Verify conversation exists
+            conv = await app_state.session_store.get_conversation(conversation_id)
+            if not conv:
+                conversation_id = None  # Will create new below
+        
+        if not conversation_id:
+            # Create new conversation
+            session_id = request.session_id or str(uuid.uuid4())
+            kb_name = request.kb_name or "default"
+            # Use first 30 chars of query as title
+            title = request.query[:30] + "..." if len(request.query) > 30 else request.query
+            
+            conv = await app_state.session_store.create_conversation(
+                session_id=session_id,
+                kb_name=kb_name,
+                title=title,
+            )
+            conversation_id = conv.id
+            logger.info(f"Created new conversation: {conversation_id} for session {session_id}")
+    
     if request.stream:
         return StreamingResponse(
-            agentic_chat_stream(request),
+            agentic_chat_stream(request, conversation_id),
             media_type="text/event-stream"
         )
     else:
@@ -242,7 +267,7 @@ async def chat_endpoint(request: ChatRequest):
         return {"error": "Non-streaming not supported. Use stream=true"}
 
 
-async def agentic_chat_stream(request: ChatRequest):
+async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[str] = None):
     """
     Stream chat responses using selected RAG mode.
     
@@ -252,17 +277,51 @@ async def agentic_chat_stream(request: ChatRequest):
     
     Yields SSE events with thinking steps, tool calls, and final answer.
     """
+    from perspicacite.models.messages import Message
+    
+    # Save user message to conversation if we have one
+    if conversation_id and app_state.session_store:
+        try:
+            await app_state.session_store.add_message(
+                conversation_id,
+                Message(role="user", content=request.query)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save user message: {e}")
+    
+    assistant_content = ""
+    
     try:
         logger.info(f"Chat request: {request.query[:50]}... | Mode: {request.mode}")
         
         # Route based on selected mode
         if request.mode == "agentic":
             # Use agentic orchestrator for full agentic behavior
-            async for event in _stream_agentic(request):
+            async for event in _stream_agentic(request, conversation_id):
+                # Collect assistant content for saving
+                if event.startswith("data:"):
+                    try:
+                        data = json.loads(event[5:].strip())
+                        if data.get("type") == "answer":
+                            content_b64 = data.get("content_b64")
+                            if content_b64:
+                                assistant_content = base64.b64decode(content_b64).decode("utf-8")
+                    except:
+                        pass
                 yield event
         else:
             # Use RAGEngine for other modes (basic, advanced, profound)
-            async for event in _stream_rag_mode(request):
+            async for event in _stream_rag_mode(request, conversation_id):
+                # Collect assistant content for saving
+                if event.startswith("data:"):
+                    try:
+                        data = json.loads(event[5:].strip())
+                        if data.get("type") == "answer":
+                            content_b64 = data.get("content_b64")
+                            if content_b64:
+                                assistant_content = base64.b64decode(content_b64).decode("utf-8")
+                    except:
+                        pass
                 yield event
                 
     except Exception as e:
@@ -272,9 +331,20 @@ async def agentic_chat_stream(request: ChatRequest):
             "message": str(e)
         })
         yield f"data: {error_data}\n\n"
+    
+    # Save assistant message to conversation
+    if conversation_id and app_state.session_store and assistant_content:
+        try:
+            await app_state.session_store.add_message(
+                conversation_id,
+                Message(role="assistant", content=assistant_content)
+            )
+            logger.info(f"Saved conversation messages to {conversation_id}")
+        except Exception as e:
+            logger.warning(f"Failed to save assistant message: {e}")
 
 
-async def _stream_agentic(request: ChatRequest):
+async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] = None):
     """Stream using AgenticOrchestrator."""
     async for event in app_state.orchestrator.chat(
         query=request.query,
@@ -289,6 +359,7 @@ async def _stream_agentic(request: ChatRequest):
             safe = {
                 "type": "answer",
                 "session_id": event.get("session_id"),
+                "conversation_id": conversation_id,
                 "content_b64": base64.b64encode(
                     content.encode("utf-8")
                 ).decode("ascii"),
@@ -302,7 +373,7 @@ async def _stream_agentic(request: ChatRequest):
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
-async def _stream_rag_mode(request: ChatRequest):
+async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] = None):
     """Stream using RAGEngine with selected mode (basic, advanced, profound)."""
     from perspicacite.models.rag import RAGRequest as RAGReq, RAGMode
     
@@ -354,6 +425,7 @@ async def _stream_rag_mode(request: ChatRequest):
                 safe = {
                     "type": "answer",
                     "session_id": session_id,
+                    "conversation_id": conversation_id,
                     "content_b64": base64.b64encode(full_answer.encode("utf-8")).decode("ascii"),
                     "sources": sources,
                 }
@@ -391,6 +463,107 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "llm": provider_info
     }
+
+
+# ── Conversation routes ─────────────────────────────────────────────
+
+@app.get("/api/conversations")
+async def list_conversations(session_id: Optional[str] = None):
+    """List all conversations (optionally filtered by session_id)."""
+    if not app_state.session_store:
+        return []
+    
+    # If no session_id provided, return all conversations
+    if session_id:
+        conversations = await app_state.session_store.list_conversations(session_id)
+    else:
+        # Get all conversations from all sessions
+        import aiosqlite
+        async with aiosqlite.connect(app_state.session_store.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                "SELECT * FROM conversations ORDER BY updated_at DESC"
+            )
+            conversations = [
+                {
+                    "id": r["id"],
+                    "title": r["title"],
+                    "kb_name": r["kb_name"],
+                    "session_id": r["session_id"],
+                    "created_at": r["created_at"],
+                    "updated_at": r["updated_at"],
+                }
+                for r in rows
+            ]
+    
+    return conversations
+
+
+@app.get("/api/conversations/{conv_id}")
+async def get_conversation(conv_id: str):
+    """Get a specific conversation with all messages."""
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="Session store not available")
+    
+    conversation = await app_state.session_store.get_conversation(conv_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    return {
+        "id": conversation.id,
+        "title": conversation.title,
+        "kb_name": conversation.kb_name,
+        "messages": [
+            {
+                "role": m.role,
+                "content": m.content,
+                "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+            }
+            for m in conversation.messages
+        ]
+    }
+
+
+@app.post("/api/conversations")
+async def create_conversation(request: dict):
+    """Create a new conversation."""
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="Session store not available")
+    
+    session_id = request.get("session_id", "default")
+    kb_name = request.get("kb_name", "default")
+    title = request.get("title", "New Conversation")
+    
+    conversation = await app_state.session_store.create_conversation(
+        session_id=session_id,
+        kb_name=kb_name,
+        title=title,
+    )
+    
+    return {
+        "id": conversation.id,
+        "title": conversation.title,
+        "kb_name": conversation.kb_name,
+        "session_id": session_id,
+    }
+
+
+@app.post("/api/conversations/{conv_id}/messages")
+async def add_message(conv_id: str, request: dict):
+    """Add a message to a conversation."""
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="Session store not available")
+    
+    from perspicacite.models.messages import Message
+    
+    message = Message(
+        role=request.get("role", "user"),
+        content=request.get("content", ""),
+    )
+    
+    await app_state.session_store.add_message(conv_id, message)
+    
+    return {"status": "ok"}
 
 
 # ── KB CRUD routes ──────────────────────────────────────────────────
@@ -789,7 +962,8 @@ HTML_TEMPLATE = r"""
         @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700&family=Libre+Franklin:wght@300;400;500;600&family=Quicksand:wght@400;500;600&display=swap');
 
         :root {
-            --bg-main: #E9F2F4;
+            --bg-main: #f8fafc;
+            --bg-sidebar: #f1f5f9;
             --bg-card: #ffffff;
             --primary: #1b4479;
             --primary-light: #2d5a9e;
@@ -797,10 +971,31 @@ HTML_TEMPLATE = r"""
             --accent: #61CE70;
             --text-main: #1e293b;
             --text-muted: #64748b;
-            --border: #1b4479;
-            --input-border: #1b4479;
-            --shadow: 0 4px 20px rgba(27, 68, 121, 0.15);
-            --radius: 0.35rem;
+            --border: #e2e8f0;
+            --input-border: #cbd5e1;
+            --shadow: none;
+            --radius: 0.5rem;
+        }
+
+        /* Dark theme */
+        [data-theme="dark"] {
+            --bg-main: #0f172a;
+            --bg-sidebar: #1e293b;
+            --bg-card: #1e293b;
+            --primary: #60a5fa;
+            --primary-light: #93c5fd;
+            --secondary: #2dd4bf;
+            --accent: #4ade80;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --input-border: #475569;
+            --shadow: none;
+        }
+
+        /* Theme transition */
+        *, *::before, *::after {
+            transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
         }
 
         * {
@@ -809,11 +1004,12 @@ HTML_TEMPLATE = r"""
             padding: 0;
         }
 
-        body {
+        html, body {
             font-family: 'Libre Franklin', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: var(--bg-main);
-            min-height: 100vh;
-            padding: 20px;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
             color: var(--text-main);
         }
 
@@ -822,55 +1018,81 @@ HTML_TEMPLATE = r"""
         }
 
         .container {
-            max-width: 1200px;
-            margin: 0 auto;
             display: grid;
-            grid-template-columns: 320px 1fr;
-            gap: 20px;
-            height: calc(100vh - 40px);
+            grid-template-columns: 280px 1fr;
+            height: 100vh;
+            width: 100vw;
         }
 
         .main-panel {
-            background: var(--bg-card);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
+            background: var(--bg-main);
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            border: 1px solid rgba(27, 68, 121, 0.1);
+            border-left: 1px solid var(--border);
         }
 
         .header {
-            background: var(--primary);
-            color: white;
-            padding: 20px 24px;
+            background: var(--bg-main);
+            color: var(--text-main);
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-title {
+            flex: 1;
+        }
+
+        .theme-toggle {
+            width: 36px;
+            height: 36px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-card);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--primary);
+            background: var(--bg-sidebar);
         }
 
         .header h1 {
-            font-size: 22px;
+            font-size: 18px;
             font-weight: 600;
             margin-bottom: 4px;
-            color: white;
+            color: var(--primary);
         }
 
         .header p {
-            opacity: 0.85;
+            color: var(--text-muted);
             font-size: 13px;
-            font-weight: 300;
+            font-weight: 400;
         }
 
         .chat-container {
             flex: 1;
             overflow-y: auto;
-            padding: 24px;
+            padding: 24px 32px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 12px;
         }
 
         .message {
-            max-width: 80%;
-            padding: 14px 18px;
+            max-width: 85%;
+            padding: 12px 16px;
             border-radius: var(--radius);
             line-height: 1.6;
             animation: fadeIn 0.3s ease;
@@ -886,15 +1108,15 @@ HTML_TEMPLATE = r"""
             align-self: flex-end;
             background: var(--primary);
             color: white;
-            border-bottom-right-radius: 4px;
+            border-bottom-right-radius: 2px;
         }
 
         .message.assistant {
             align-self: flex-start;
-            background: #f8fafc;
+            background: var(--bg-card);
             color: var(--text-main);
-            border: 1px solid #e2e8f0;
-            border-bottom-left-radius: 4px;
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 2px;
         }
 
         /* Inline thinking message in chat */
@@ -974,21 +1196,21 @@ HTML_TEMPLATE = r"""
         }
 
         .input-area {
-            padding: 16px 24px 20px;
-            background: #fafbfc;
+            padding: 16px 32px 24px;
+            background: var(--bg-main);
+            border-top: 1px solid var(--border);
         }
 
         .chat-input-wrapper {
-            background: white;
-            border: 2px solid var(--input-border);
-            border-radius: 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
             padding: 12px 16px;
-            transition: border-color 0.2s, box-shadow 0.2s;
+            transition: border-color 0.2s;
         }
 
         .chat-input-wrapper:focus-within {
             border-color: var(--primary-light);
-            box-shadow: 0 0 0 3px rgba(27, 68, 121, 0.1);
         }
 
         .chat-input {
@@ -1116,25 +1338,31 @@ HTML_TEMPLATE = r"""
         .side-panel {
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            background: var(--bg-sidebar);
+            padding: 16px;
+            gap: 12px;
+            overflow: hidden;
         }
 
         .panel {
-            background: var(--bg-card);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            padding: 18px;
-            border: 1px solid rgba(27, 68, 121, 0.1);
+            background: transparent;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow: hidden;
         }
 
         .panel h3 {
-            color: var(--primary);
-            margin-bottom: 14px;
-            font-size: 15px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            font-size: 11px;
             font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
         }
 
         .thinking-step {
@@ -1275,48 +1503,45 @@ HTML_TEMPLATE = r"""
         /* KB Panel */
         .kb-select {
             width: 100%;
-            padding: 10px 12px;
-            border: 2px solid var(--input-border);
+            padding: 8px 10px;
+            border: 1px solid var(--input-border);
             border-radius: var(--radius);
             font-size: 13px;
             outline: none;
             background: white;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             font-family: inherit;
             color: var(--text-main);
         }
         .kb-select:focus {
             border-color: var(--secondary);
-            box-shadow: 0 0 0 3px rgba(4, 145, 154, 0.1);
         }
 
         .kb-info {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--text-muted);
-            margin-bottom: 10px;
-            padding: 8px 10px;
-            background: #f8fafc;
+            margin-bottom: 8px;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.5);
             border-radius: var(--radius);
-            border: 1px solid #e2e8f0;
         }
 
         .kb-create-toggle {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--secondary);
             cursor: pointer;
             border: none;
             background: none;
-            padding: 4px 0;
+            padding: 2px 0;
             font-weight: 500;
         }
 
         .kb-create-form {
             display: none;
-            margin-top: 10px;
-            padding: 12px;
-            background: #f8fafc;
+            margin-top: 8px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.5);
             border-radius: var(--radius);
-            border: 1px solid #e2e8f0;
         }
         .kb-create-form.visible { display: block; }
 
@@ -1329,6 +1554,100 @@ HTML_TEMPLATE = r"""
             margin-bottom: 8px;
             outline: none;
             font-family: inherit;
+        }
+
+        /* New Chat Button */
+        .new-chat-btn {
+            width: 100%;
+            padding: 10px 14px;
+            background: transparent;
+            color: var(--primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 13px;
+            font-weight: 500;
+            font-family: 'Chivo', sans-serif;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+        .new-chat-btn:hover {
+            background: rgba(27, 68, 121, 0.05);
+            border-color: var(--primary);
+        }
+        .new-chat-btn span {
+            font-size: 16px;
+            font-weight: 400;
+        }
+
+        /* Chat History Section */
+        .chat-history-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+        }
+        .chat-history-section h3 {
+            margin-bottom: 8px;
+        }
+        .chat-history-list {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .chat-history-item {
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            transition: background 0.15s;
+        }
+        .chat-history-item:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+        .chat-history-item.active {
+            background: rgba(255, 255, 255, 0.9);
+        }
+        .chat-history-item .chat-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-main);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .chat-history-item .chat-date {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .chat-history-item .chat-kb {
+            font-size: 10px;
+            color: var(--secondary);
+            font-weight: 500;
+            background: rgba(4, 145, 154, 0.1);
+            padding: 1px 6px;
+            border-radius: 10px;
+            display: inline-block;
+            max-width: 100%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* KB Section */
+        .kb-section {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
         }
         .kb-create-form input:focus {
             border-color: var(--secondary);
@@ -1379,7 +1698,7 @@ HTML_TEMPLATE = r"""
             border-radius: var(--radius);
             max-width: 400px;
             width: 90%;
-            box-shadow: var(--shadow);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
         }
         .modal h3 { margin-bottom: 12px; color: var(--primary); font-family: 'Chivo', sans-serif; }
         .modal p { margin-bottom: 12px; color: var(--text-muted); font-size: 14px; }
@@ -1536,6 +1855,50 @@ HTML_TEMPLATE = r"""
             font-size: 0.9em;
         }
 
+        /* Dark theme specific overrides */
+        [data-theme="dark"] .message.assistant {
+            background: #27354c;
+            border-color: #334155;
+        }
+
+        [data-theme="dark"] .chat-input-wrapper {
+            background: #1e293b;
+        }
+
+        [data-theme="dark"] .chat-input {
+            color: var(--text-main);
+        }
+
+        [data-theme="dark"] .chat-input::placeholder {
+            color: #64748b;
+        }
+
+        [data-theme="dark"] .kb-select {
+            background: #1e293b;
+            color: var(--text-main);
+        }
+
+        [data-theme="dark"] .kb-info {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        [data-theme="dark"] .kb-create-form {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        [data-theme="dark"] .chat-history-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        [data-theme="dark"] .chat-history-item.active {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        [data-theme="dark"] .message.thinking-message {
+            background: #27354c;
+            border-color: #475569;
+        }
+
         @media (max-width: 900px) {
             .container {
                 grid-template-columns: 1fr;
@@ -1549,37 +1912,55 @@ HTML_TEMPLATE = r"""
 <body>
     <div class="container">
         <div class="side-panel">
-            <div class="panel">
-                <h3>📚 Knowledge Base</h3>
-                <select id="kb-select" class="kb-select" onchange="selectKB(this.value)">
-                    <option value="">No KB (web search only)</option>
-                </select>
-                <div id="kb-info" class="kb-info" style="display:none;"></div>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
-                    <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
+            <div class="panel" style="flex: 1; display: flex; flex-direction: column; gap: 16px;">
+                <!-- New Chat Button -->
+                <button class="new-chat-btn" onclick="startNewChat()">
+                    <span>+</span> New Chat
+                </button>
+                
+                <!-- Chat History -->
+                <div class="chat-history-section">
+                    <h3>💬 Chat History</h3>
+                    <div id="chat-history-list" class="chat-history-list">
+                        <div class="chat-history-item active" data-session="" data-kb="" data-created-at="">
+                            <span class="chat-title">Current Chat</span>
+                            <span class="chat-kb">Web Search</span>
+                            <span class="chat-date">Now</span>
+                        </div>
+                    </div>
                 </div>
-                <div id="kb-create-form" class="kb-create-form">
-                    <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
-                    <input id="kb-desc-input" type="text" placeholder="Description (optional)">
-                    <button onclick="createKB()">Create</button>
+                
+                <!-- Knowledge Base -->
+                <div class="kb-section">
+                    <h3>📚 Knowledge Base</h3>
+                    <select id="kb-select" class="kb-select" onchange="selectKB(this.value)">
+                        <option value="">No KB (web search only)</option>
+                    </select>
+                    <div id="kb-info" class="kb-info" style="display:none;"></div>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                        <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
+                        <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
+                    </div>
+                    <div id="kb-create-form" class="kb-create-form">
+                        <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
+                        <input id="kb-desc-input" type="text" placeholder="Description (optional)">
+                        <button onclick="createKB()">Create</button>
+                    </div>
                 </div>
-            </div>
-            
-            <div class="panel" style="flex: 1; display: flex; flex-direction: column;">
-                <h3>
-                    <span id="status-dot" class="status-indicator initializing"></span>
-                    System Status
-                </h3>
-                <div id="system-status">Initializing...</div>
-                <div class="session-info" id="session-info"></div>
             </div>
         </div>
         
         <div class="main-panel">
             <div class="header">
-                <h1>🔬 Perspicacité v2</h1>
-                <p>Literature AI assistant — KB-first retrieval with web fallback</p>
+                <div class="header-content">
+                    <div class="header-title">
+                        <h1>🔬 Perspicacité v2</h1>
+                        <p>Literature AI assistant — KB-first retrieval with web fallback</p>
+                    </div>
+                    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+                        <span id="theme-icon">🌙</span>
+                    </button>
+                </div>
             </div>
             
             <div class="chat-container" id="chat-container">
@@ -1625,6 +2006,7 @@ HTML_TEMPLATE = r"""
 
     <script>
         let sessionId = null;
+        let conversationId = null;  // Persistent conversation ID from backend
         let messages = [];
         let isProcessing = false;
         let selectedKb = null;
@@ -1638,9 +2020,185 @@ HTML_TEMPLATE = r"""
             'basic': '📚 Fast single-query retrieval'
         };
         
+        // Theme management
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeIcon(savedTheme);
+        }
+        
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateThemeIcon(newTheme);
+        }
+        
+        function updateThemeIcon(theme) {
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = theme === 'light' ? '🌙' : '☀️';
+            }
+        }
+        
+        // Initialize theme on load
+        initTheme();
+        
         function setMode(mode) {
             currentMode = mode;
             console.log('RAG Mode set to:', mode);
+        }
+        
+        function startNewChat() {
+            // Generate a new session ID and clear conversation
+            sessionId = null;
+            conversationId = null;
+            messages = [];
+            
+            // Clear chat container except welcome message
+            const container = document.getElementById('chat-container');
+            container.innerHTML = `
+                <div class="message assistant">
+                    Hello! I'm Perspicacité — an AI literature assistant. I will:
+                    <br><br>
+                    • Search your selected Knowledge Base first (curated by you)<br>
+                    • Fall back to web literature search (OpenAlex) when your KB is insufficient<br>
+                    • Ground answers in retrieved papers and maintain conversation context<br>
+                    • Let you curate: add selected retrieved papers back into your KB<br><br>
+                    Try: "What are key metabolites in jasmine?" or "Summarize feature-based molecular networking (FBMN)"
+                </div>
+            `;
+            
+            // Add current chat to history
+            addChatToHistory();
+            
+            // Focus input
+            document.getElementById('query-input').focus();
+            console.log('New chat started');
+        }
+        
+        function addChatToHistory(convData = null) {
+            const historyList = document.getElementById('chat-history-list');
+            const now = new Date();
+            const nowIso = now.toISOString();
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            // Use provided data or current state
+            const kbName = convData ? (convData.kb_name || 'Web Search') : (selectedKb || 'Web Search');
+            const title = convData ? (convData.title || 'Untitled Chat') : `Chat ${historyList.children.length}`;
+            const convId = convData ? convData.id : null;
+            const createdAt = convData ? (convData.created_at || convData.updated_at) : nowIso;
+            
+            // Format date display
+            let dateStr;
+            if (convData && convData.updated_at) {
+                dateStr = formatDate(convData.updated_at);
+            } else {
+                dateStr = 'Just now';
+            }
+            
+            // Remove active class from all items
+            historyList.querySelectorAll('.chat-history-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Add new history item
+            const item = document.createElement('div');
+            item.className = 'chat-history-item active';
+            item.dataset.kb = convData ? (convData.kb_name || '') : (selectedKb || '');
+            item.dataset.convId = convId || '';
+            item.dataset.createdAt = createdAt;
+            item.innerHTML = `
+                <span class="chat-title">${title}</span>
+                <span class="chat-kb">${kbName === 'default' ? 'Web Search' : kbName}</span>
+                <span class="chat-date">${dateStr}</span>
+            `;
+            item.onclick = function() { loadChatFromHistory(this); };
+            historyList.insertBefore(item, historyList.firstChild);
+        }
+        
+        function formatDate(isoString) {
+            if (!isoString) return '';
+            try {
+                const date = new Date(isoString);
+                // Check if date is valid
+                if (isNaN(date.getTime())) {
+                    return isoString;  // Return as-is if can't parse
+                }
+                return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+                       date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                return isoString;  // Return as-is on error
+            }
+        }
+        
+        async function loadChatFromHistory(item) {
+            // Remove active class from all items
+            document.querySelectorAll('.chat-history-item').forEach(i => {
+                i.classList.remove('active');
+            });
+            item.classList.add('active');
+            
+            // Set conversation ID
+            conversationId = item.dataset.convId || null;
+            
+            // Restore the KB that was used for this chat
+            const kbName = item.dataset.kb;
+            if (kbName !== undefined) {
+                const kbSelect = document.getElementById('kb-select');
+                kbSelect.value = kbName;
+                selectedKb = kbName || null;
+                console.log('Restored KB:', kbName || 'Web Search');
+                
+                // Update KB info display if KB exists
+                if (kbName) {
+                    selectKB(kbName);
+                } else {
+                    document.getElementById('kb-info').style.display = 'none';
+                    document.getElementById('kb-delete-btn').style.display = 'none';
+                }
+            }
+            
+            // Load conversation messages from backend if we have a conversation ID
+            if (conversationId) {
+                try {
+                    const response = await fetch(`/api/conversations/${conversationId}`);
+                    if (response.ok) {
+                        const conv = await response.json();
+                        
+                        // Clear and rebuild chat container
+                        const container = document.getElementById('chat-container');
+                        container.innerHTML = '';
+                        messages = [];
+                        
+                        // Add messages
+                        for (const msg of conv.messages) {
+                            addMessage(msg.role, msg.content);
+                            messages.push({ role: msg.role, content: msg.content });
+                        }
+                        
+                        console.log(`Loaded ${conv.messages.length} messages from conversation ${conversationId}`);
+                    }
+                } catch (e) {
+                    console.error('Failed to load conversation:', e);
+                }
+            } else {
+                // New conversation - show welcome message
+                const container = document.getElementById('chat-container');
+                container.innerHTML = `
+                    <div class="message assistant">
+                        Hello! I'm Perspicacité — an AI literature assistant. I will:
+                        <br><br>
+                        • Search your selected Knowledge Base first (curated by you)<br>
+                        • Fall back to web literature search (OpenAlex) when your KB is insufficient<br>
+                        • Ground answers in retrieved papers and maintain conversation context<br>
+                        • Let you curate: add selected retrieved papers back into your KB<br><br>
+                        Try: "What are key metabolites in jasmine?" or "Summarize feature-based molecular networking (FBMN)"
+                    </div>
+                `;
+                messages = [];
+            }
         }
         
         function handleInputKeydown(event) {
@@ -1667,24 +2225,135 @@ HTML_TEMPLATE = r"""
                 const response = await fetch('/api/health');
                 const data = await response.json();
                 
-                const statusDot = document.getElementById('status-dot');
-                const statusText = document.getElementById('system-status');
-                
                 if (data.initialized) {
-                    statusDot.className = 'status-indicator ready';
-                    statusText.innerHTML = '✓ Ready';
                     loadKBs();
                 } else {
-                    statusDot.className = 'status-indicator initializing';
-                    statusText.innerHTML = '⏳ Initializing...';
                     setTimeout(checkStatus, 2000);
                 }
             } catch (e) {
-                document.getElementById('system-status').innerHTML = '❌ Error: ' + e.message;
+                console.error('Health check failed:', e);
             }
         }
         
         checkStatus();
+        loadConversationHistory();
+        
+        // Auto-refresh timestamps every minute
+        setInterval(updateTimestamps, 60000);
+        
+        // Update relative timestamps
+        function updateTimestamps() {
+            const items = document.querySelectorAll('.chat-history-item');
+            items.forEach(item => {
+                // For new chats, we use a data attribute to store creation time
+                const createdAt = item.dataset.createdAt;
+                if (createdAt) {
+                    const dateEl = item.querySelector('.chat-date');
+                    if (dateEl) {
+                        const elapsed = Date.now() - new Date(createdAt).getTime();
+                        const minutes = Math.floor(elapsed / 60000);
+                        const hours = Math.floor(elapsed / 3600000);
+                        const days = Math.floor(elapsed / 86400000);
+                        
+                        if (minutes < 1) {
+                            dateEl.textContent = 'Just now';
+                        } else if (minutes < 60) {
+                            dateEl.textContent = `${minutes}m ago`;
+                        } else if (hours < 24) {
+                            dateEl.textContent = `${hours}h ago`;
+                        } else if (days < 7) {
+                            dateEl.textContent = `${days}d ago`;
+                        } else {
+                            dateEl.textContent = formatDate(createdAt);
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Load conversation history from backend
+        async function loadConversationHistory() {
+            try {
+                const response = await fetch('/api/conversations');
+                if (!response.ok) {
+                    console.log('No conversation history available');
+                    return;
+                }
+                
+                const conversations = await response.json();
+                if (!conversations || conversations.length === 0) {
+                    console.log('No saved conversations');
+                    return;
+                }
+                
+                // Clear the default "Current Chat" item
+                const historyList = document.getElementById('chat-history-list');
+                historyList.innerHTML = '';
+                
+                // Add each conversation to the list
+                for (const conv of conversations) {
+                    const item = document.createElement('div');
+                    item.className = 'chat-history-item';
+                    item.dataset.kb = conv.kb_name === 'default' ? '' : conv.kb_name;
+                    item.dataset.convId = conv.id;
+                    item.dataset.createdAt = conv.created_at || conv.updated_at;
+                    
+                    const title = conv.title || 'Untitled Chat';
+                    const kbDisplay = conv.kb_name === 'default' ? 'Web Search' : conv.kb_name;
+                    
+                    // Calculate relative time
+                    const updatedAt = conv.updated_at || conv.created_at;
+                    let dateStr;
+                    if (updatedAt) {
+                        const elapsed = Date.now() - new Date(updatedAt).getTime();
+                        const minutes = Math.floor(elapsed / 60000);
+                        const hours = Math.floor(elapsed / 3600000);
+                        const days = Math.floor(elapsed / 86400000);
+                        
+                        if (minutes < 1) {
+                            dateStr = 'Just now';
+                        } else if (minutes < 60) {
+                            dateStr = `${minutes}m ago`;
+                        } else if (hours < 24) {
+                            dateStr = `${hours}h ago`;
+                        } else if (days < 7) {
+                            dateStr = `${days}d ago`;
+                        } else {
+                            dateStr = formatDate(updatedAt);
+                        }
+                    } else {
+                        dateStr = '';
+                    }
+                    
+                    item.innerHTML = `
+                        <span class="chat-title">${title}</span>
+                        <span class="chat-kb">${kbDisplay}</span>
+                        <span class="chat-date">${dateStr}</span>
+                    `;
+                    item.onclick = function() { loadChatFromHistory(this); };
+                    historyList.appendChild(item);
+                }
+                
+                // Make the first (most recent) conversation active visually, but don't load it
+                // This allows user to click and select any conversation
+                const firstItem = historyList.querySelector('.chat-history-item');
+                if (firstItem) {
+                    firstItem.classList.add('active');
+                    // Set the conversation ID without loading messages
+                    conversationId = firstItem.dataset.convId || null;
+                    // Restore KB for this conversation
+                    const kbName = firstItem.dataset.kb;
+                    if (kbName !== undefined) {
+                        document.getElementById('kb-select').value = kbName;
+                        selectedKb = kbName || null;
+                    }
+                }
+                
+                console.log(`Loaded ${conversations.length} conversations from history`);
+            } catch (e) {
+                console.error('Failed to load conversation history:', e);
+            }
+        }
         
         // KB management
         async function loadKBs() {
@@ -1799,6 +2468,20 @@ HTML_TEMPLATE = r"""
             addMessage('user', query);
             messages.push({role: 'user', content: query});
             
+            // Add to chat history on first message
+            if (messages.length <= 2) {
+                const historyList = document.getElementById('chat-history-list');
+                const activeItem = historyList.querySelector('.chat-history-item.active');
+                if (activeItem) {
+                    // Update title with first query preview
+                    const preview = query.length > 25 ? query.substring(0, 25) + '...' : query;
+                    activeItem.querySelector('.chat-title').textContent = preview;
+                    // Store and display KB used
+                    activeItem.dataset.kb = selectedKb || '';
+                    activeItem.querySelector('.chat-kb').textContent = selectedKb || 'Web Search';
+                }
+            }
+            
             // Clear previous thinking
             clearThinking();
             
@@ -1810,6 +2493,7 @@ HTML_TEMPLATE = r"""
                         query: query,
                         messages: messages.slice(0, -1),
                         session_id: sessionId,
+                        conversation_id: conversationId,
                         kb_name: selectedKb,
                         mode: currentMode,
                         stream: true
@@ -1878,9 +2562,14 @@ HTML_TEMPLATE = r"""
                                 : (data.content || '');
                             assistantDiv.innerHTML = formatMessage(assistantMessage);
                             sessionId = data.session_id || sessionId;
-                            if (sessionId) {
-                                document.getElementById('session-info').textContent =
-                                    `Session: ${sessionId.slice(0, 8)}...`;
+                            // Capture conversation_id from response
+                            if (data.conversation_id) {
+                                conversationId = data.conversation_id;
+                                // Update active history item with conversation_id
+                                const activeItem = document.querySelector('.chat-history-item.active');
+                                if (activeItem && !activeItem.dataset.convId) {
+                                    activeItem.dataset.convId = conversationId;
+                                }
                             }
                         } else if (data.type === 'papers_found' && data.papers && data.papers.length > 0) {
                             lastFoundPapers = data.papers;

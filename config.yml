@@ -172,6 +172,39 @@ pdf_download:
   # Example: "https://sci-hub.se/"
   alternative_endpoint: "https://sci-hub.fr/"
   
+  # Publisher API keys for institutional access
+  # These enable downloading papers when Unpaywall doesn't have OA versions
+  
+  # === Open Access (no key needed) ===
+  # arXiv: Fully open access, no registration needed
+  
+  # === API Key Required ===
+  
+  # Wiley TDM (Text and Data Mining) API Token
+  # Register at: https://developer.wiley.com/api/wiley-text-and-data-mining-tdm/
+  # wiley_tdm_token: "your-wiley-tdm-token"
+  
+  # Elsevier ScienceDirect API Key
+  # Register at: https://dev.elsevier.com/
+  # Note: Elsevier API returns XML/text content, not PDF
+  # elsevier_api_key: "your-elsevier-api-key"
+  
+  # AAAS (Science journals) API Key
+  # For institutional access to Science, Science Advances, etc.
+  # aaas_api_key: "your-aaas-api-key"
+  
+  # Royal Society of Chemistry (RSC) API Key
+  # Register at: https://api.rsc.org/
+  # rsc_api_key: "your-rsc-api-key"
+  
+  # Springer Nature API Key
+  # Register at: https://dev.springernature.com/
+  # springer_api_key: "your-springer-api-key"
+  
+  # === IP-based Access (no key needed) ===
+  # ACS (American Chemical Society): Uses institutional IP recognition
+  # Some ACS articles are Open Access (ACS AuthorChoice)
+  
   # Timeout for PDF downloads (seconds)
   timeout: 30
   
