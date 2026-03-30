@@ -84,6 +84,37 @@ database:
 # =============================================================================
 
 rag_modes:
+  # NOTE: The following mode names are used by the web app and API:
+  # basic, advanced, profound, agentic
+  
+  # Basic mode - fast, simple retrieval with optional hybrid
+  basic:
+    max_iterations: 1
+    use_hybrid: true  # Enable BM25 + vector hybrid retrieval
+    
+  # Advanced mode - query expansion + WRRF fusion + hybrid retrieval
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+    enable_reflection: false
+    query_expansion: true
+    
+  # Profound mode - multi-cycle research with WRRF and hybrid retrieval
+  profound:
+    max_iterations: 3
+    use_hybrid: true
+    use_wrrf: true  # Enable Weighted Reciprocal Rank Fusion for multi-query
+    enable_planning: true
+    enable_reflection: true
+    
+  # Agentic mode - autonomous agent with tool use
+  agentic:
+    max_iterations: 5
+    use_hybrid: true  # Enable hybrid retrieval for KB searches
+    early_exit_confidence: 0.85
+  
+  # Legacy mode names (for backward compatibility)
   quick:
     max_iterations: 1
     tools: ["kb_search"]
@@ -93,12 +124,6 @@ rag_modes:
     max_iterations: 1
     tools: ["kb_search"]
     rerank: true
-    
-  advanced:
-    max_iterations: 2
-    tools: ["kb_search", "web_search"]
-    rerank: true
-    query_expansion: true
     
   deep:
     max_iterations: 5

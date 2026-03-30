@@ -13,6 +13,8 @@ from .intent import IntentClassifier, Intent
 from .planner import ResearchPlanner, Step, StepType, Plan, _log_steps_detail
 from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 from perspicacite.models.kb import chroma_collection_name_for_kb
+from perspicacite.retrieval.hybrid import hybrid_retrieval
+from perspicacite.rag.utils import format_references_academic
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Message:
     """A conversation message."""
+
     role: str  # "user", "assistant", "system", "tool"
     content: str
     timestamp: datetime = field(default_factory=datetime.now)
@@ -29,6 +32,7 @@ class Message:
 @dataclass
 class AgentSession:
     """Persistent session for agent conversations."""
+
     session_id: str
     messages: List[Message] = field(default_factory=list)
     knowledge_base: Optional[DynamicKnowledgeBase] = None
@@ -36,23 +40,16 @@ class AgentSession:
     kb_name: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
-    
+
     def add_message(self, role: str, content: str, metadata: Optional[dict] = None):
         """Add a message to the session."""
-        self.messages.append(Message(
-            role=role,
-            content=content,
-            metadata=metadata or {}
-        ))
+        self.messages.append(Message(role=role, content=content, metadata=metadata or {}))
         self.last_active = datetime.now()
-    
+
     def get_conversation_history(self, limit: int = 10) -> List[dict]:
         """Get conversation history as list of dicts."""
-        return [
-            {"role": m.role, "content": m.content}
-            for m in self.messages[-limit:]
-        ]
-    
+        return [{"role": m.role, "content": m.content} for m in self.messages[-limit:]]
+
     def get_context_string(self) -> str:
         """Get recent conversation context as string."""
         context = []
@@ -65,54 +62,56 @@ class AgenticOrchestrator:
     """
     True agentic orchestrator with LLM-driven planning and execution.
     """
-    
+
     def __init__(
         self,
         llm_client,
         tool_registry,
         embedding_provider,
         vector_store,
-        max_iterations: int = 5
+        max_iterations: int = 5,
+        use_hybrid: bool = True,
     ):
         self.llm = llm_client
         self.tools = tool_registry
         self.embeddings = embedding_provider
         self.vector_store = vector_store
         self.max_iterations = max_iterations
-        
+        self.use_hybrid = use_hybrid
+
         self.intent_classifier = IntentClassifier(llm_client)
         self.planner = ResearchPlanner(llm_client)
-        
+
         # Session management
         self.sessions: Dict[str, AgentSession] = {}
-    
+
     def get_or_create_session(self, session_id: Optional[str] = None) -> AgentSession:
         """Get existing session or create new one."""
         if session_id and session_id in self.sessions:
             return self.sessions[session_id]
-        
+
         new_session_id = session_id or str(uuid.uuid4())
         session = AgentSession(session_id=new_session_id)
-        
+
         # Create persistent KB for this session
         session.knowledge_base = DynamicKnowledgeBase(
             vector_store=self.vector_store,
             embedding_service=self.embeddings,
         )
-        
+
         self.sessions[new_session_id] = session
         return session
-    
+
     async def chat(
         self,
         query: str,
         session_id: Optional[str] = None,
         kb_name: Optional[str] = None,
-        stream: bool = True
+        stream: bool = True,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Main chat entry point with true agentic behavior.
-        
+
         Yields:
             Dict with type: "thinking", "tool_call", "tool_result", "answer", "papers_found"
         """
@@ -121,16 +120,16 @@ class AgenticOrchestrator:
         logger.info(f"Query: {query}")
         logger.info(f"Session ID (client): {session_id!r}")
         logger.info(f"KB: {kb_name or 'none'}")
-        
+
         session = self.get_or_create_session(session_id)
         logger.info(f"Resolved session_id: {session.session_id}")
         session.add_message("user", query)
         session.kb_name = kb_name
         logger.info(f"Session messages count: {len(session.messages)}")
-        
+
         # Step 1: Classify intent
         yield {"type": "thinking", "message": "Analyzing your query..."}
-        
+
         intent_result = await self.intent_classifier.classify(
             query=query,
             conversation_history=session.get_conversation_history(),
@@ -139,21 +138,24 @@ class AgenticOrchestrator:
         logger.info(f"Intent classified: {intent_result.intent.name}")
         logger.info(f"Confidence: {intent_result.confidence}")
         logger.info(f"Suggested tools: {intent_result.suggested_tools}")
-        
+
         yield {
-            "type": "thinking", 
+            "type": "thinking",
             "message": f"Intent: {intent_result.intent.name.replace('_', ' ').title()}",
-            "details": intent_result.reasoning
+            "details": intent_result.reasoning,
         }
-        
+
         # Step 2: Create dynamic plan
         yield {"type": "thinking", "message": "Creating research plan..."}
-        
+
         # Available tools: registered tools (excluding deactivated ones) + built-in
-        available_tools = [t for t in self.tools.list_tools() if t != "lotus_search"] + ["literature_search", "kb_search"]
+        available_tools = [t for t in self.tools.list_tools() if t != "lotus_search"] + [
+            "literature_search",
+            "kb_search",
+        ]
         logger.info(f"Available tools: {available_tools}")
         previous_findings = self._summarize_findings(session.research_findings)
-        
+
         plan = await self.planner.create_plan(
             query=query,
             intent_result=intent_result,
@@ -162,12 +164,13 @@ class AgenticOrchestrator:
             previous_findings=previous_findings,
             active_kb_name=kb_name,
         )
-        
+
         # If a KB is selected, always search it first (don't rely on the LLM planner)
         if kb_name:
             has_kb_step = any(s.type == StepType.KB_SEARCH for s in plan.steps)
             if not has_kb_step:
                 from perspicacite.rag.agentic.planner import ResearchPlanner
+
                 clean_query = ResearchPlanner._clean_query_for_search(query)
                 kb_step = Step(
                     id="step1",
@@ -182,31 +185,31 @@ class AgenticOrchestrator:
                     f"Injected kb_search as step1 for KB {kb_name!r} tool_input.query={clean_query!r}"
                 )
 
-        logger.info(
-            f"Orchestrator plan reasoning ({len(plan.reasoning)} chars): {plan.reasoning}"
-        )
+        logger.info(f"Orchestrator plan reasoning ({len(plan.reasoning)} chars): {plan.reasoning}")
         _log_steps_detail(plan.steps, "Orchestrator plan (final, after KB inject if any)")
-        
+
         if plan.can_answer_from_history:
             yield {"type": "thinking", "message": "I can answer from our conversation history..."}
-        
+
         # Step 3: Execute plan iteratively
         step_results: Dict[str, Any] = {}
         completed_steps: List[Step] = []
         self._found_papers: List[Dict[str, Any]] = []
-        
+
         for iteration in range(self.max_iterations):
             logger.info(f"\n--- Iteration {iteration + 1}/{self.max_iterations} ---")
-            
+
             # Find next executable step
             next_step = self._get_next_step(plan, completed_steps, step_results)
-            
+
             if not next_step:
                 logger.info("No more steps to execute")
                 break
-            
-            logger.info(f"Next step: {next_step.id} ({next_step.type.value}) - {next_step.description}")
-            
+
+            logger.info(
+                f"Next step: {next_step.id} ({next_step.type.value}) - {next_step.description}"
+            )
+
             # Check condition
             if next_step.condition and not self._evaluate_condition(
                 next_step.condition, step_results
@@ -214,7 +217,7 @@ class AgenticOrchestrator:
                 logger.info(f"Step {next_step.id} condition not met, skipping")
                 completed_steps.append(next_step)
                 continue
-            
+
             # Execute step
             yield {
                 "type": "tool_call",
@@ -223,42 +226,44 @@ class AgenticOrchestrator:
                 "description": next_step.description,
                 "query": next_step.tool_input.get("query", ""),
             }
-            
+
             import time
+
             step_start_time = time.time()
             logger.info(f"Executing step {next_step.id}...")
-            result = await self._execute_step(
-                next_step, 
-                query, 
-                step_results,
-                session
-            )
+            result = await self._execute_step(next_step, query, step_results, session)
             step_duration = time.time() - step_start_time
-            
+
             # Log the result
             result_str = str(result)
             logger.info(f"Step {next_step.id} completed in {step_duration:.2f}s")
             logger.info(f"Result length: {len(result_str)} chars")
             # Show first 2000 chars to see actual content (not just titles)
             preview_len = min(2000, len(result_str))
-            logger.info(f"Result preview: {result_str[:preview_len]}{'...[truncated]' if len(result_str) > preview_len else ''}")
-            
+            logger.info(
+                f"Result preview: {result_str[:preview_len]}{'...[truncated]' if len(result_str) > preview_len else ''}"
+            )
+
             step_results[next_step.id] = result
             completed_steps.append(next_step)
-            
+
             yield {
                 "type": "tool_result",
                 "step": next_step.id,
-                "result_summary": self._summarize_result(result)
+                "result_summary": self._summarize_result(result),
             }
-            
+
             # Evaluate if we need to replan
-            if next_step.type in (StepType.LOTUS_SEARCH, StepType.LITERATURE_SEARCH, StepType.KB_SEARCH):
+            if next_step.type in (
+                StepType.LOTUS_SEARCH,
+                StepType.LITERATURE_SEARCH,
+                StepType.KB_SEARCH,
+            ):
                 should_continue = await self._evaluate_progress(
                     query, plan, completed_steps, step_results
                 )
                 logger.info(f"Progress evaluation: {should_continue}")
-                
+
                 if should_continue == "replan":
                     evaluation = "Need more specific search"
                     plan = await self.planner.replan(
@@ -268,58 +273,56 @@ class AgenticOrchestrator:
                 elif should_continue == "answer":
                     logger.info("Sufficient results, moving to answer")
                     break
-        
+
         logger.info(f"\n=== Execution complete ===")
         logger.info(f"Completed {len(completed_steps)} steps")
         logger.info(f"Step results keys: {list(step_results.keys())}")
-        
+
         # Step 4: Generate final answer
         yield {"type": "thinking", "message": "Synthesizing answer..."}
-        
+
         answer = await self._generate_answer(
-            query=query,
-            plan=plan,
-            step_results=step_results,
-            session=session
+            query=query, plan=plan, step_results=step_results, session=session
         )
-        
-        session.add_message("assistant", answer, {
-            "intent": intent_result.intent.name,
-            "steps_completed": len(completed_steps),
-            "tools_used": [s.tool for s in completed_steps if s.tool]
-        })
-        
+
+        session.add_message(
+            "assistant",
+            answer,
+            {
+                "intent": intent_result.intent.name,
+                "steps_completed": len(completed_steps),
+                "tools_used": [s.tool for s in completed_steps if s.tool],
+            },
+        )
+
         yield {"type": "answer", "content": answer, "session_id": session.session_id}
-        
+
         # Yield found papers so the UI can offer "Add to KB"
         found_papers = self._extract_papers_from_results(step_results)
         if found_papers:
             yield {"type": "papers_found", "papers": found_papers}
-    
+
     def _get_next_step(
-        self, 
-        plan: Plan, 
-        completed: List[Step],
-        results: Dict[str, Any]
+        self, plan: Plan, completed: List[Step], results: Dict[str, Any]
     ) -> Optional[Step]:
         """Get the next executable step based on dependencies."""
         completed_ids = {s.id for s in completed}
-        
+
         for step in plan.steps:
             if step.id in completed_ids:
                 continue
-            
+
             # Check if dependencies are satisfied
             if all(dep in completed_ids for dep in step.depends_on):
                 return step
-        
+
         return None
-    
+
     def _evaluate_condition(self, condition: str, results: Dict[str, Any]) -> bool:
         """Evaluate a step condition."""
         # Simple condition evaluation
         condition_lower = condition.lower()
-        
+
         if "found" in condition_lower or "results" in condition_lower:
             # Check if any previous step had results
             for result in results.values():
@@ -327,27 +330,23 @@ class AgenticOrchestrator:
                     if "not found" not in str(result).lower() and "no " not in str(result).lower():
                         return True
             return False
-        
+
         return True  # Default to executing
-    
+
     async def _execute_step(
-        self,
-        step: Step,
-        original_query: str,
-        step_results: Dict[str, Any],
-        session: AgentSession
+        self, step: Step, original_query: str, step_results: Dict[str, Any], session: AgentSession
     ) -> Any:
         """Execute a single step."""
-        
+
         if step.type == StepType.LOTUS_SEARCH:
             logger.info("LOTUS_SEARCH: skipped (deactivated)")
             return "LOTUS search is currently deactivated."
-        
+
         elif step.type == StepType.LITERATURE_SEARCH:
             query = step.tool_input.get("query", original_query)
             logger.info(f"LITERATURE_SEARCH: query='{query}'")
             return await self._fallback_openalex_search(query)
-        
+
         elif step.type == StepType.DOWNLOAD_PAPERS:
             # Download papers from OpenAlex results
             openalex_result = step_results.get(step.depends_on[0]) if step.depends_on else None
@@ -359,7 +358,7 @@ class AgenticOrchestrator:
                         downloaded.append(paper)
                 return downloaded
             return []
-        
+
         elif step.type == StepType.KB_SEARCH:
             if session.kb_name:
                 try:
@@ -371,9 +370,7 @@ class AgenticOrchestrator:
                         f"KB_SEARCH: kb_name={session.kb_name!r} collection={collection_name!r} "
                         f"step_id={step.id!r}"
                     )
-                    logger.info(
-                        f"KB_SEARCH: search_query ({len(kb_query)} chars)={kb_query!r}"
-                    )
+                    logger.info(f"KB_SEARCH: search_query ({len(kb_query)} chars)={kb_query!r}")
 
                     dkb = DynamicKnowledgeBase(
                         vector_store=self.vector_store,
@@ -391,6 +388,49 @@ class AgenticOrchestrator:
                     logger.info(
                         f"KB_SEARCH: vector hits (after dedupe/score filter)={len(results)}"
                     )
+
+                    # Apply hybrid retrieval if enabled
+                    if self.use_hybrid and results:
+                        try:
+                            logger.info("KB_SEARCH: applying hybrid retrieval (BM25 + vector)")
+                            # Convert results to format expected by hybrid_retrieval
+                            vector_scores = [r.get("score", 0.5) for r in results]
+
+                            # Create document objects with proper attributes
+                            doc_objects = []
+                            for r in results:
+                                doc = type("Doc", (), {})()
+                                doc.metadata = r.get("metadata")
+                                doc.page_content = r.get("text", "")
+                                doc.score = r.get("score", 0.5)
+                                doc_objects.append(doc)
+
+                            hybrid_results = await hybrid_retrieval(
+                                query=kb_query,
+                                documents=doc_objects,
+                                vector_scores=vector_scores,
+                                use_llm_weights=True,
+                                llm=self.llm,
+                            )
+
+                            # Update results with hybrid scores
+                            results = []
+                            for doc, hybrid_score in hybrid_results:
+                                results.append(
+                                    {
+                                        "text": doc.page_content,
+                                        "metadata": doc.metadata,
+                                        "score": hybrid_score,
+                                    }
+                                )
+
+                            logger.info(
+                                f"KB_SEARCH: hybrid retrieval complete, {len(results)} results"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"KB_SEARCH: hybrid retrieval failed: {e}", exc_info=True
+                            )
                     for j, r in enumerate(results, 1):
                         meta = r.get("metadata")
                         pid = (
@@ -404,21 +444,27 @@ class AgenticOrchestrator:
                             else "Unknown"
                         )
                         txt = r.get("text") or ""
-                        
+
                         # Warn if text is empty - this indicates a data quality issue
                         if not txt.strip():
-                            logger.warning(f"KB_SEARCH hit {j}: EMPTY TEXT CONTENT for paper_id={pid!r} title={title!r}")
-                        
+                            logger.warning(
+                                f"KB_SEARCH hit {j}: EMPTY TEXT CONTENT for paper_id={pid!r} title={title!r}"
+                            )
+
                         logger.info(
                             f"KB_SEARCH hit {j}/{len(results)}: paper_id={pid!r} "
                             f"score={r.get('score', 0):.4f} title={title!r} text_len={len(txt)}"
                         )
                         preview = txt[:280].replace("\n", " ")
                         if preview.strip():
-                            logger.info(f"KB_SEARCH hit {j} text_preview: {preview}{'…' if len(txt) > 280 else ''}")
+                            logger.info(
+                                f"KB_SEARCH hit {j} text_preview: {preview}{'…' if len(txt) > 280 else ''}"
+                            )
 
                     if results:
-                        formatted_parts = [f"Found {len(results)} relevant documents in knowledge base:"]
+                        formatted_parts = [
+                            f"Found {len(results)} relevant documents in knowledge base:"
+                        ]
                         for i, r in enumerate(results, 1):
                             meta = r.get("metadata")
                             title = (
@@ -427,29 +473,21 @@ class AgenticOrchestrator:
                                 else "Unknown"
                             )
                             authors = (
-                                getattr(meta, "authors", None) or ""
-                                if meta is not None
-                                else ""
+                                getattr(meta, "authors", None) or "" if meta is not None else ""
                             )
-                            year = (
-                                getattr(meta, "year", None) or ""
-                                if meta is not None
-                                else ""
-                            )
-                            doi = (
-                                getattr(meta, "doi", None) or ""
-                                if meta is not None
-                                else ""
-                            )
+                            year = getattr(meta, "year", None) or "" if meta is not None else ""
+                            doi = getattr(meta, "doi", None) or "" if meta is not None else ""
                             score = r.get("score", 0)
                             # Include more text content for better context (up to 1500 chars)
                             raw_text = r.get("text", "") or ""
                             text_content = raw_text[:1500]
-                            
+
                             # Log warning if text is empty - this is a data quality issue
                             if not raw_text.strip():
-                                logger.warning(f"KB_SEARCH: Hit {i} has EMPTY text content for '{title}'")
-                            
+                                logger.warning(
+                                    f"KB_SEARCH: Hit {i} has EMPTY text content for '{title}'"
+                                )
+
                             formatted_parts.append(f"\n{i}. {title} (relevance: {score:.2f})")
                             if authors:
                                 formatted_parts.append(f"   Authors: {authors}")
@@ -473,22 +511,22 @@ class AgenticOrchestrator:
                     return "Knowledge base search failed."
             logger.info("KB_SEARCH: skipped — no knowledge base selected on session")
             return "No knowledge base selected."
-        
+
         elif step.type == StepType.ANALYZE:
             # LLM analysis of results
             return await self._analyze_results(original_query, step_results)
-        
+
         elif step.type == StepType.SYNTHESIZE:
             # LLM synthesis of multiple sources
             return await self._synthesize_results(original_query, step_results)
-        
+
         elif step.type == StepType.ANSWER:
             # Generate final answer - handled in chat() method
             # This step just marks that we should answer
             return "ANSWER_STEP"
-        
+
         return None
-    
+
     async def _llm_judge_kb_sufficiency(self, user_query: str, kb_result_text: str) -> bool:
         """
         Ask the LLM whether KB retrieval is enough to answer without web/OpenAlex.
@@ -497,10 +535,12 @@ class AgenticOrchestrator:
         """
         excerpt = (kb_result_text or "").strip()
         low = excerpt.lower()
-        
+
         # Log what we're working with
-        logger.info(f"KB_JUDGE: input length={len(kb_result_text or '')} chars, excerpt length={len(excerpt)} chars")
-        
+        logger.info(
+            f"KB_JUDGE: input length={len(kb_result_text or '')} chars, excerpt length={len(excerpt)} chars"
+        )
+
         if not excerpt:
             logger.info("KB_JUDGE: empty excerpt -> insufficient")
             return False
@@ -515,7 +555,7 @@ class AgenticOrchestrator:
         max_judge_chars = 8000
         if len(excerpt) > max_judge_chars:
             excerpt = excerpt[:max_judge_chars] + "\n[... truncated for judge ...]"
-        
+
         # Log the actual excerpt being sent to judge (first 1000 chars)
         logger.info(f"KB_JUDGE: excerpt preview (first 1000 chars): {excerpt[:1000]}...")
 
@@ -526,7 +566,7 @@ class AgenticOrchestrator:
             "Knowledge base retrieval (from curated papers):\n---\n"
             f"{excerpt}\n"
             "---\n\n"
-            'Reply with ONLY a single JSON object, no markdown fences: '
+            "Reply with ONLY a single JSON object, no markdown fences: "
             '{"sufficient": true or false, "reason": "short phrase"}\n\n'
             "Guidelines:\n"
             "- sufficient=true if the snippets clearly address the question (definitions, how a method works, "
@@ -560,11 +600,7 @@ class AgenticOrchestrator:
             return False
 
     async def _evaluate_progress(
-        self,
-        query: str,
-        plan: Plan,
-        completed_steps: List[Step],
-        step_results: Dict[str, Any]
+        self, query: str, plan: Plan, completed_steps: List[Step], step_results: Dict[str, Any]
     ) -> str:
         """Evaluate if we should continue, replan, or answer."""
         last_step = completed_steps[-1]
@@ -590,14 +626,14 @@ class AgenticOrchestrator:
             return "answer"
 
         return "continue"
-    
+
     async def _analyze_results(self, query: str, step_results: Dict[str, Any]) -> str:
         """Have LLM analyze the results."""
         # Combine results
         combined = []
         for step_id, result in step_results.items():
             combined.append(f"{step_id}:\n{str(result)[:500]}")
-        
+
         prompt = f"""You are analyzing research results to determine their relevance and completeness for answering a query.
 
 Original Query: "{query}"
@@ -616,15 +652,15 @@ Provide your analysis in a structured format:
 - Key Findings: What was discovered
 - Gaps: What's missing or unclear
 - Recommendation: Whether to continue researching or proceed to answer"""
-        
+
         return await self.llm.complete(prompt, temperature=0.3)
-    
+
     async def _synthesize_results(self, query: str, step_results: Dict[str, Any]) -> str:
         """Have LLM synthesize multiple sources."""
         combined = []
         for step_id, result in step_results.items():
             combined.append(f"Source ({step_id}):\n{str(result)[:400]}")
-        
+
         prompt = f"""You are synthesizing information from multiple research sources to create a coherent answer.
 
 Original Query: "{query}"
@@ -641,15 +677,11 @@ Synthesis Guidelines:
 6. Identify the most reliable or relevant sources for the query
 
 Provide a synthesized summary that combines the key insights from all sources."""
-        
+
         return await self.llm.complete(prompt, temperature=0.3)
-    
+
     async def _generate_answer(
-        self,
-        query: str,
-        plan: Plan,
-        step_results: Dict[str, Any],
-        session: AgentSession
+        self, query: str, plan: Plan, step_results: Dict[str, Any], session: AgentSession
     ) -> str:
         """Generate final answer using all results."""
 
@@ -667,7 +699,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
 
         # Prioritize certain result types
         if "lotus" in step_results:
-            lotus_result = step_results['lotus']
+            lotus_result = step_results["lotus"]
             logger.info(f"LOTUS result length: {len(str(lotus_result))} chars")
             context_parts.append(f"LOTUS Search Results:\n{lotus_result}")
 
@@ -696,7 +728,7 @@ Previous Conversation Context:
 Research Results:
 {context}
 
-{numbered_paper_list if numbered_paper_list else ''}
+{numbered_paper_list if numbered_paper_list else ""}
 
 Answer Generation Guidelines:
 1. Focus on answering the SPECIFIC question asked - avoid tangential information
@@ -728,7 +760,9 @@ Generate your answer:"""
 
         return answer
 
-    def _build_numbered_paper_list(self, papers: List[Dict[str, Any]], max_abstract_chars: int = 800) -> str:
+    def _build_numbered_paper_list(
+        self, papers: List[Dict[str, Any]], max_abstract_chars: int = 800
+    ) -> str:
         """Build a numbered paper list for LLM context with full citation info.
 
         Each paper is numbered [1], [2], etc. and includes title, authors, year,
@@ -758,7 +792,7 @@ Generate your answer:"""
 
             # Truncate abstract to relevant portion
             if len(abstract) > max_abstract_chars:
-                abstract = abstract[:max_abstract_chars].rsplit(' ', 1)[0] + "..."
+                abstract = abstract[:max_abstract_chars].rsplit(" ", 1)[0] + "..."
 
             lines.append(f"[{i}] {title}")
             lines.append(f"    Authors: {author_str}")
@@ -771,10 +805,7 @@ Generate your answer:"""
         return "\n".join(lines)
 
     async def _score_papers_for_relevance(
-        self,
-        query: str,
-        papers: List[Dict[str, Any]],
-        min_score: int = 3
+        self, query: str, papers: List[Dict[str, Any]], min_score: int = 3
     ) -> List[Dict[str, Any]]:
         """Use LLM to score papers for query relevance and filter low-scoring ones.
 
@@ -801,7 +832,7 @@ Generate your answer:"""
 
         prompt = (
             "You are evaluating research papers for relevance to a user's query.\n\n"
-            f"User Query: \"{query}\"\n\n"
+            f'User Query: "{query}"\n\n'
             f"Papers to evaluate:\n{paper_list_str}\n\n"
             "For each paper, score its relevance to the query on this scale:\n"
             "1 = Completely irrelevant\n"
@@ -811,7 +842,7 @@ Generate your answer:"""
             "5 = Highly relevant, directly addresses query\n\n"
             "Respond with ONLY a JSON object mapping paper numbers to their scores and brief reasoning.\n"
             'Format: {"scores": {"1": {"score": N, "reason": "..."}, "2": {"score": N, "reason": "..."}, ...}}\n'
-            "Include a \"reason\" explaining why this score was given.\n"
+            'Include a "reason" explaining why this score was given.\n'
             "Only include papers that exist in the list above."
         )
 
@@ -820,9 +851,11 @@ Generate your answer:"""
             import json, re
 
             # Parse JSON from response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if not json_match:
-                logger.warning(f"Could not parse relevance scores from LLM response: {response[:200]}")
+                logger.warning(
+                    f"Could not parse relevance scores from LLM response: {response[:200]}"
+                )
                 return papers  # Fall back to returning all papers
 
             scores_data = json.loads(json_match.group())
@@ -834,22 +867,34 @@ Generate your answer:"""
                 paper_key = str(i)
                 if paper_key in scores:
                     score_info = scores[paper_key]
-                    score = score_info.get("score", 3) if isinstance(score_info, dict) else int(score_info)
+                    score = (
+                        score_info.get("score", 3)
+                        if isinstance(score_info, dict)
+                        else int(score_info)
+                    )
                     paper["relevance_score"] = score
-                    paper["relevance_reason"] = score_info.get("reason", "") if isinstance(score_info, dict) else ""
+                    paper["relevance_reason"] = (
+                        score_info.get("reason", "") if isinstance(score_info, dict) else ""
+                    )
 
                     if score >= min_score:
                         filtered.append(paper)
-                        logger.info(f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - INCLUDED")
+                        logger.info(
+                            f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - INCLUDED"
+                        )
                     else:
-                        logger.info(f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - FILTERED")
+                        logger.info(
+                            f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - FILTERED"
+                        )
                 else:
                     # Default to included if no score found
                     paper["relevance_score"] = 3
                     paper["relevance_reason"] = "No score provided"
                     filtered.append(paper)
 
-            logger.info(f"Relevance filtering: {len(filtered)}/{len(papers)} papers included (min_score={min_score})")
+            logger.info(
+                f"Relevance filtering: {len(filtered)}/{len(papers)} papers included (min_score={min_score})"
+            )
             return filtered
 
         except Exception as e:
@@ -857,46 +902,12 @@ Generate your answer:"""
             return papers  # Fall back to returning all papers on error
 
     def _format_references_section(self, papers: List[Dict[str, Any]]) -> str:
-        """Format a references section in academic citation style.
+        """Format a references section in academic citation style using shared utility.
 
         Uses markdown link format: [Author et al., Year](url "full citation")
         Based on the style from Perspicacite Profonde.
         """
-        if not papers:
-            return ""
-
-        ref_lines = ["## References\n"]
-
-        for i, paper in enumerate(papers, 1):
-            title = paper.get("title", "Unknown Title")
-            authors = paper.get("authors", [])
-            year = paper.get("year", "n.d.")
-            doi = paper.get("doi", "")
-            url = f"https://doi.org/{doi}" if doi else ""
-
-            # Format authors: "FirstAuthor et al." if >2 authors, else "FirstAuthor & SecondAuthor"
-            if len(authors) == 0:
-                author_str = "Unknown"
-            elif len(authors) == 1:
-                author_str = authors[0]
-            elif len(authors) == 2:
-                author_str = f"{authors[0]} & {authors[1]}"
-            else:
-                author_str = f"{authors[0]} et al."
-
-            # Format full citation (for title attribute of the link)
-            if authors:
-                full_citation = f"{', '.join(authors)}. {year}. {title}."
-            else:
-                full_citation = f"{title}. {year}."
-
-            # Use markdown link format: [Author et al., Year](url "full citation")
-            if url:
-                ref_lines.append(f"{i}. [{author_str}, {year}]({url} \"{full_citation}\")")
-            else:
-                ref_lines.append(f"{i}. {author_str}, {year}. {title}.")
-
-        return "\n".join(ref_lines)
+        return format_references_academic(papers)
 
     def _summarize_result(self, result: Any) -> str:
         """Create a brief summary of a result for UI display."""
@@ -904,27 +915,27 @@ Generate your answer:"""
         if len(result_str) > 100:
             return result_str[:100] + "..."
         return result_str
-    
+
     async def _fallback_openalex_search(self, query: str, max_results: int = 10) -> str:
         """Search OpenAlex directly via httpx. Query should already be
         cleaned by the planner (conversational preamble stripped)."""
         import httpx
-        
+
         search_terms = query.strip()
         logger.info(f"OpenAlex search: '{search_terms}'")
-        
+
         url = "https://api.openalex.org/works"
         params = {
             "search": search_terms,
             "per_page": max_results,
-            "mailto": "perspicacite@example.com"
+            "mailto": "perspicacite@example.com",
         }
-        
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, params=params, timeout=30.0)
                 data = response.json()
-                
+
                 papers = []
                 for result in data.get("results", []):
                     paper = {
@@ -936,8 +947,10 @@ Generate your answer:"""
                         ],
                         "year": result.get("publication_year"),
                         "cited_by_count": result.get("cited_by_count", 0),
-                        "abstract": result.get("abstract", "")[:500] if result.get("abstract") else "",
-                        "doi": result.get("doi", "")
+                        "abstract": result.get("abstract", "")[:500]
+                        if result.get("abstract")
+                        else "",
+                        "doi": result.get("doi", ""),
                     }
                     papers.append(paper)
 
@@ -952,49 +965,49 @@ Generate your answer:"""
                 return self._format_paper_list(papers)
         except Exception as e:
             return f"OpenAlex search failed: {e}"
-    
+
     def _format_paper_list(self, papers: list) -> str:
         """Format a list of paper dicts into a readable string."""
         if not papers:
             return "No papers found."
-        
+
         lines = [f"Found {len(papers)} papers:"]
         for i, paper in enumerate(papers, 1):
             lines.append(f"\n{i}. {paper['title']}")
-            if paper['authors']:
+            if paper["authors"]:
                 lines.append(f"   Authors: {', '.join(paper['authors'])}")
-            if paper['year']:
+            if paper["year"]:
                 lines.append(f"   Year: {paper['year']}")
-            cited = paper.get('cited_by_count')
+            cited = paper.get("cited_by_count")
             if cited is not None:
                 lines.append(f"   Citations: {cited}")
-            if paper['doi']:
+            if paper["doi"]:
                 lines.append(f"   DOI: {paper['doi']}")
-            if paper['abstract']:
+            if paper["abstract"]:
                 lines.append(f"   Abstract: {paper['abstract'][:200]}...")
-        
+
         return "\n".join(lines)
 
     def _summarize_findings(self, findings: List[Dict]) -> str:
         """Summarize previous research findings."""
         if not findings:
             return ""
-        
+
         summaries = []
         for finding in findings[-3:]:  # Last 3 findings
             topic = finding.get("topic", "Unknown")
             result = finding.get("result", "")
             summaries.append(f"{topic}: {str(result)[:100]}")
-        
+
         return "\n".join(summaries)
-    
+
     def _format_papers(self, papers: list) -> str:
         """Format list of Paper models into readable string."""
         from perspicacite.models.papers import Paper
-        
+
         if not papers:
             return "No papers found."
-        
+
         lines = [f"Found {len(papers)} papers:"]
         for i, paper in enumerate(papers, 1):
             lines.append(f"\n{i}. {paper.title}")
@@ -1009,20 +1022,22 @@ Generate your answer:"""
                 lines.append(f"   DOI: {paper.doi}")
             if paper.abstract:
                 lines.append(f"   Abstract: {paper.abstract[:200]}...")
-        
+
         # Accumulate for papers_found event
         if hasattr(self, "_found_papers"):
             for paper in papers:
-                self._found_papers.append({
-                    "title": paper.title,
-                    "authors": [a.name for a in paper.authors[:3]],
-                    "year": paper.year,
-                    "doi": paper.doi,
-                    "abstract": paper.abstract[:300] if paper.abstract else "",
-                    "citations": paper.citation_count,
-                    "source": "kb_search",
-                })
-        
+                self._found_papers.append(
+                    {
+                        "title": paper.title,
+                        "authors": [a.name for a in paper.authors[:3]],
+                        "year": paper.year,
+                        "doi": paper.doi,
+                        "abstract": paper.abstract[:300] if paper.abstract else "",
+                        "citations": paper.citation_count,
+                        "source": "kb_search",
+                    }
+                )
+
         return "\n".join(lines)
 
     @staticmethod

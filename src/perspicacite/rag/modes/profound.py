@@ -7,10 +7,14 @@ Profound RAG (ProfondeChain) adds:
 - Early exit based on confidence
 - Reflection and self-evaluation
 - Document quality assessment
+- WRRF multi-query fusion
+- Hybrid retrieval (BM25 + vector)
 """
 
 import json
+import math
 import re
+from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,6 +24,7 @@ from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceRefe
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.prompts import (
+    GENERATE_SIMILAR_QUERIES_PROMPT,
     PROFOUND_ANALYZE_DOCUMENTS_PROMPT_TEMPLATE,
     PROFOUND_CREATE_PLAN_PROMPT,
     PROFOUND_ITERATION_SUMMARY_ORIGINAL_PROMPT,
@@ -32,6 +37,14 @@ from perspicacite.rag.prompts import (
     PROFOUND_ADJUST_PLAN_PROMPT,
     PROFOUND_UNANSWERABLE_QUESTION_PROMPT_TEMPLATE,
 )
+from perspicacite.retrieval.hybrid import hybrid_retrieval
+from perspicacite.rag.utils import (
+    format_references,
+    prepare_sources,
+    get_doc_citation,
+    format_documents_for_prompt,
+    get_system_prompt,
+)
 
 logger = get_logger("perspicacite.rag.modes.profound")
 
@@ -39,6 +52,7 @@ logger = get_logger("perspicacite.rag.modes.profound")
 @dataclass
 class ResearchStep:
     """A single step in the Profound research process."""
+
     step_purpose: str
     query: str
     documents: list[Any] = field(default_factory=list)
@@ -51,6 +65,7 @@ class ResearchStep:
 @dataclass
 class PlanStep:
     """A step in the research plan."""
+
     step_number: int
     purpose: str
     query: str
@@ -60,7 +75,7 @@ class PlanStep:
 class ProfoundRAGMode(BaseRAGMode):
     """
     Profound RAG Mode - Exact port from release package core/profonde.py
-    
+
     This is the original "Profound" mode from Perspicacité v1 with:
     - Multi-cycle research (up to max_cycles)
     - Planning with step-by-step approach
@@ -69,7 +84,7 @@ class ProfoundRAGMode(BaseRAGMode):
     - Early exit based on confidence threshold
     - Document quality assessment
     - Reflection and iteration
-    
+
     Characteristics:
     - Most thorough but slowest mode
     - Best for complex research questions
@@ -79,33 +94,45 @@ class ProfoundRAGMode(BaseRAGMode):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        rag_settings = getattr(config.rag_modes, 'profound', None)
-        
+        rag_settings = getattr(config.rag_modes, "profound", None)
+
         # Handle both dict and Pydantic model
         if rag_settings is None:
             rag_settings = {}
-        elif hasattr(rag_settings, 'model_dump'):
+        elif hasattr(rag_settings, "model_dump"):
             # Pydantic v2 model
             rag_settings = rag_settings.model_dump()
-        elif hasattr(rag_settings, 'dict'):
+        elif hasattr(rag_settings, "dict"):
             # Pydantic v1 model
             rag_settings = rag_settings.dict()
-        
+
         # Settings from release package
-        self.max_cycles = rag_settings.get('max_iterations', 3)
+        self.max_cycles = rag_settings.get("max_iterations", 3)
         self.early_exit_confidence = 0.85
         self.max_consecutive_failures = 2
         self.use_websearch = True
-        
+
+        # WRRF settings
+        self.use_wrrf = rag_settings.get("use_wrrf", True)
+        self.wrrf_rephrases = 2  # Number of query variations to generate
+        self.wrrf_k = 60  # WRRF constant
+
+        # Hybrid retrieval settings
+        self.use_hybrid = rag_settings.get("use_hybrid", True)
+
         # Document retrieval settings
-        self.initial_docs = 5
-        self.final_max_docs = 2
+        self.initial_docs = 150 if self.use_wrrf else 5  # More docs for WRRF
+        self.final_max_docs = 5 if self.use_wrrf else 2  # More final docs with WRRF
         self.max_docs_per_source = 1
-        
+
+        # Sigmoid parameters for score normalization (from advanced mode)
+        self.pth = 0.8
+        self.stp = 30
+
         # State tracking
         self.iterations = 0
         self.consecutive_failures = 0
-        self.research_history: list[dict] = field(default_factory=list)
+        self.research_history: list[dict] = []
 
     async def execute(
         self,
@@ -117,18 +144,16 @@ class ProfoundRAGMode(BaseRAGMode):
     ) -> RAGResponse:
         """
         Execute Profound RAG with multi-cycle planning and reflection.
-        
+
         Ported from: core/profonde.py::ProfondeChain.process()
         """
-        logger.info("profound_rag_start", 
-                   query=request.query, 
-                   max_cycles=self.max_cycles)
-        
+        logger.info("profound_rag_start", query=request.query, max_cycles=self.max_cycles)
+
         # Reset state
         self.iterations = 0
         self.consecutive_failures = 0
         self.research_history = []
-        
+
         all_steps: list[ResearchStep] = []
         all_documents: list[Any] = []
 
@@ -136,22 +161,22 @@ class ProfoundRAGMode(BaseRAGMode):
         for cycle in range(self.max_cycles):
             self.iterations = cycle + 1
             logger.info("profound_cycle_start", cycle=self.iterations)
-            
+
             # Step 1: Create or adjust research plan
             plan = await self._create_plan(
                 query=request.query,
                 llm=llm,
                 history=self.research_history,
             )
-            
-            logger.info("profound_plan_created", 
-                       steps=len(plan),
-                       purposes=[s.purpose for s in plan])
+
+            logger.info(
+                "profound_plan_created", steps=len(plan), purposes=[s.purpose for s in plan]
+            )
 
             # Step 2: Execute each step in the plan
             cycle_steps = []
             cycle_documents = []
-            
+
             for step_info in plan:
                 step = await self._execute_step(
                     step_info=step_info,
@@ -162,7 +187,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     tools=tools,
                     kb_name=chroma_collection_name_for_kb(request.kb_name),
                 )
-                
+
                 cycle_steps.append(step)
                 cycle_documents.extend(step.documents)
                 all_steps.append(step)
@@ -175,11 +200,11 @@ class ProfoundRAGMode(BaseRAGMode):
                         original_query=request.query,
                         llm=llm,
                     )
-                    
+
                     if is_answered and confidence >= self.early_exit_confidence:
-                        logger.info("profound_early_exit", 
-                                   cycle=self.iterations,
-                                   confidence=confidence)
+                        logger.info(
+                            "profound_early_exit", cycle=self.iterations, confidence=confidence
+                        )
                         return await self._finalize_response(
                             query=request.query,
                             steps=all_steps,
@@ -190,25 +215,27 @@ class ProfoundRAGMode(BaseRAGMode):
                         )
 
             # Step 3: Review progress and decide whether to continue
-            self.research_history.append({
-                "cycle": self.iterations,
-                "steps": [
-                    {
-                        "purpose": s.step_purpose,
-                        "success": s.success,
-                        "findings": s.key_findings,
-                        "missing": s.missing_info,
-                    }
-                    for s in cycle_steps
-                ],
-            })
-            
+            self.research_history.append(
+                {
+                    "cycle": self.iterations,
+                    "steps": [
+                        {
+                            "purpose": s.step_purpose,
+                            "success": s.success,
+                            "findings": s.key_findings,
+                            "missing": s.missing_info,
+                        }
+                        for s in cycle_steps
+                    ],
+                }
+            )
+
             should_continue = await self._review_progress(
                 query=request.query,
                 history=self.research_history,
                 llm=llm,
             )
-            
+
             if not should_continue:
                 logger.info("profound_review_says_complete", cycle=self.iterations)
                 break
@@ -243,30 +270,128 @@ class ProfoundRAGMode(BaseRAGMode):
     ) -> AsyncIterator[StreamEvent]:
         """Execute Profound RAG with streaming output."""
         import json
-        
+
         yield StreamEvent.status("Profound RAG: Initializing deep research...")
-        
-        # Delegate to non-streaming for core logic
-        response = await self.execute(
-            request, llm, vector_store, embedding_provider, tools
-        )
-        
-        # Yield sources for UI display
-        for source in response.sources:
-            yield StreamEvent.source(source)
-        
-        # Send the complete answer as a single content event
-        yield StreamEvent(
-            event="content",
-            data=json.dumps({"delta": response.answer}),
-        )
-        
-        yield StreamEvent.done(
-            conversation_id="",
-            tokens_used=0,
-            mode="profound",
-            iterations=getattr(response, 'iterations', self.iterations),
-        )
+
+        # Reset state
+        self.iterations = 0
+        self.consecutive_failures = 0
+        self.research_history = []
+
+        all_steps: list[ResearchStep] = []
+        all_documents: list[Any] = []
+
+        # Main research loop
+        for cycle in range(self.max_cycles):
+            self.iterations = cycle + 1
+            yield StreamEvent.status(
+                f"Profound RAG: Research cycle {self.iterations}/{self.max_cycles}..."
+            )
+
+            # Create or adjust research plan
+            plan = await self._create_plan(
+                query=request.query,
+                llm=llm,
+                history=self.research_history,
+            )
+
+            yield StreamEvent.status(f"Profound RAG: Executing {len(plan)} research steps...")
+
+            # Execute each step in the plan
+            cycle_steps = []
+            cycle_documents = []
+
+            for step_idx, step_info in enumerate(plan):
+                step = await self._execute_step(
+                    step_info=step_info,
+                    query=request.query,
+                    llm=llm,
+                    vector_store=vector_store,
+                    embedding_provider=embedding_provider,
+                    tools=tools,
+                    kb_name=chroma_collection_name_for_kb(request.kb_name),
+                )
+
+                cycle_steps.append(step)
+                cycle_documents.extend(step.documents)
+                all_steps.append(step)
+                all_documents.extend(step.documents)
+
+                if step.success and step.documents:
+                    yield StreamEvent.status(
+                        f"Profound RAG: Step {step_idx + 1} complete - found {len(step.documents)} documents"
+                    )
+
+                    # Check for early exit after each step
+                    is_answered, confidence = await self._evaluate_if_answered(
+                        steps=cycle_steps,
+                        original_query=request.query,
+                        llm=llm,
+                    )
+
+                    if is_answered and confidence >= self.early_exit_confidence:
+                        yield StreamEvent.status(
+                            f"Profound RAG: Early exit triggered (confidence: {confidence:.2f})"
+                        )
+                        # Stream final response
+                        async for event in self._stream_final_response(
+                            query=request.query,
+                            steps=all_steps,
+                            documents=all_documents,
+                            llm=llm,
+                            request=request,
+                            exited_early=True,
+                        ):
+                            yield event
+                        return
+
+            # Review progress
+            self.research_history.append(
+                {
+                    "cycle": self.iterations,
+                    "steps": [
+                        {
+                            "purpose": s.step_purpose,
+                            "success": s.success,
+                            "findings": s.key_findings,
+                            "missing": s.missing_info,
+                        }
+                        for s in cycle_steps
+                    ],
+                }
+            )
+
+            should_continue = await self._review_progress(
+                query=request.query,
+                history=self.research_history,
+                llm=llm,
+            )
+
+            if not should_continue:
+                yield StreamEvent.status("Profound RAG: Research complete based on progress review")
+                break
+
+            # Check consecutive failures
+            cycle_successes = sum(1 for s in cycle_steps if s.success)
+            if cycle_successes == 0:
+                self.consecutive_failures += 1
+                if self.consecutive_failures >= self.max_consecutive_failures:
+                    yield StreamEvent.status("Profound RAG: Max consecutive failures reached")
+                    break
+            else:
+                self.consecutive_failures = 0
+
+        # Stream final response
+        yield StreamEvent.status("Profound RAG: Synthesizing final answer...")
+        async for event in self._stream_final_response(
+            query=request.query,
+            steps=all_steps,
+            documents=all_documents,
+            llm=llm,
+            request=request,
+            exited_early=False,
+        ):
+            yield event
 
     async def _create_plan(
         self,
@@ -276,7 +401,7 @@ class ProfoundRAGMode(BaseRAGMode):
     ) -> list[PlanStep]:
         """
         Create a research plan with specific steps.
-        
+
         Ported from: core/profonde.py - planning logic
         """
         # Build context from history
@@ -285,9 +410,9 @@ class ProfoundRAGMode(BaseRAGMode):
             history_context = "Previous research cycles:\n"
             for h in history:
                 history_context += f"\nCycle {h['cycle']}:\n"
-                for step in h['steps']:
+                for step in h["steps"]:
                     history_context += f"  - {step['purpose']}: {'✓' if step['success'] else '✗'}\n"
-                    if step['missing']:
+                    if step["missing"]:
                         history_context += f"    Missing: {', '.join(step['missing'])}\n"
 
         system_prompt = """You are a research planner. Create a step-by-step plan to answer the research question.
@@ -330,28 +455,30 @@ Create a research plan to answer this question."""
                 temperature=0.3,
                 max_tokens=800,
             )
-            
+
             # Parse JSON
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
                 result = json.loads(response)
-            
+
             steps_data = result.get("steps", [])
-            
+
             # Create PlanStep objects
             plan = []
             for i, step_data in enumerate(steps_data, 1):
-                plan.append(PlanStep(
-                    step_number=i,
-                    purpose=step_data.get("purpose", f"Step {i}"),
-                    query=step_data.get("query", query),
-                    expected_outcome=step_data.get("expected_outcome", ""),
-                ))
-            
+                plan.append(
+                    PlanStep(
+                        step_number=i,
+                        purpose=step_data.get("purpose", f"Step {i}"),
+                        query=step_data.get("query", query),
+                        expected_outcome=step_data.get("expected_outcome", ""),
+                    )
+                )
+
             return plan if plan else [PlanStep(1, "Search for information", query)]
-            
+
         except Exception as e:
             logger.error("profound_plan_creation_error", error=str(e))
             # Fallback plan
@@ -359,6 +486,115 @@ Create a research plan to answer this question."""
                 PlanStep(1, "Search for general information", query),
                 PlanStep(2, "Search for specific details", f"{query} details methodology"),
             ]
+
+    async def _generate_similar_queries(
+        self, original_query: str, llm: Any, number: int = 2
+    ) -> list[str]:
+        """Generate similar query variations for WRRF."""
+        queries = [original_query]
+        if not number or number <= 0:
+            return queries
+        for i in range(number):
+            additional_queries_content = f"Original Query: {original_query}."
+            additional_queries_content += "".join(
+                [f" Additional Q{j + 1}: {query}" for j, query in enumerate(queries[1:])]
+            )
+            prompt = """Rephrase slightly the question based on the original query that is not the same as the additional ones.
+Use scientific language. Your answer should be just one phrase.
+Don't deviate the topic of the queries and questions. Do not use bullet points or numbering."""
+            try:
+                response = await llm.complete(
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {
+                            "role": "user",
+                            "content": f"Queries already used: {additional_queries_content}",
+                        },
+                    ],
+                    temperature=0.7,
+                    max_tokens=100,
+                )
+                new_query = response.strip()
+                if new_query and new_query not in queries:
+                    queries.append(new_query)
+            except Exception as e:
+                logger.warning("profound_query_generation_error", error=str(e))
+                break
+        return queries
+
+    async def _wrrf_retrieval(
+        self,
+        queries: list[str],
+        vector_store: Any,
+        embedding_provider: Any,
+        kb_name: str,
+        llm: Any = None,
+    ) -> list[Any]:
+        """Retrieve documents using WRRF (Weighted Reciprocal Rank Fusion)."""
+        rankings = {}
+        scores_per_query = {}
+        documents_info = {}
+        for q_idx, query in enumerate(queries):
+            query_embedding = await embedding_provider.embed([query])
+            results = await vector_store.search(
+                collection=kb_name,
+                query_embedding=query_embedding[0],
+                top_k=self.initial_docs,
+            )
+            scores_per_query[q_idx] = {}
+            if self.use_hybrid and q_idx == 0 and results and llm is not None:
+                try:
+                    vector_scores = [getattr(r, "score", 0.5) for r in results]
+                    hybrid_results = await hybrid_retrieval(
+                        query=query,
+                        documents=results,
+                        vector_scores=vector_scores,
+                        use_llm_weights=True,
+                        llm=llm,
+                    )
+                    results = [doc for doc, _ in hybrid_results]
+                    for doc, hybrid_score in hybrid_results:
+                        doc.score = hybrid_score
+                except Exception as e:
+                    logger.warning("profound_hybrid_error", error=str(e))
+            for rank, doc in enumerate(results, 1):
+                doc_id = id(doc)
+                if doc_id not in rankings:
+                    rankings[doc_id] = {}
+                    documents_info[doc_id] = doc
+                rankings[doc_id][q_idx] = rank
+                scores_per_query[q_idx][doc_id] = getattr(doc, "score", 0.5)
+        wrrf_scores = {}
+        for doc_id, query_ranks in rankings.items():
+            score = 0.0
+            for q_idx, rank in query_ranks.items():
+                normalized_score = self._sigmoid_normalize(scores_per_query[q_idx][doc_id])
+                wrrf_contribution = normalized_score / (self.wrrf_k + rank)
+                score += wrrf_contribution
+            wrrf_scores[doc_id] = score
+        sorted_docs = sorted(wrrf_scores.items(), key=lambda x: x[1], reverse=True)
+        selected = []
+        seen_titles = set()
+        for doc_id, wrrf_score in sorted_docs:
+            doc = documents_info[doc_id]
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "metadata"):
+                title = getattr(doc.chunk.metadata, "title", "")
+            elif isinstance(doc, dict):
+                title = doc.get("title", "")
+            else:
+                title = ""
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
+            doc.wrrf_score = wrrf_score
+            selected.append(doc)
+            if len(selected) >= self.final_max_docs:
+                break
+        return selected
+
+    def _sigmoid_normalize(self, score: float) -> float:
+        """Apply sigmoid normalization to score."""
+        return 1.0 / (1.0 + math.exp(-self.stp * (score - self.pth)))
 
     async def _execute_step(
         self,
@@ -371,29 +607,61 @@ Create a research plan to answer this question."""
         kb_name: str,
     ) -> ResearchStep:
         """
-        Execute a single research step.
-        
+        Execute a single research step with optional WRRF and hybrid retrieval.
+
         Ported from: core/profonde.py - step execution logic
         """
         step = ResearchStep(
             step_purpose=step_info.purpose,
             query=step_info.query,
         )
-        
-        logger.debug("profound_execute_step", 
-                    step=step_info.step_number,
-                    purpose=step_info.purpose,
-                    query=step_info.query[:100])
+
+        logger.debug(
+            "profound_execute_step",
+            step=step_info.step_number,
+            purpose=step_info.purpose,
+            query=step_info.query[:100],
+            use_wrrf=self.use_wrrf,
+            use_hybrid=self.use_hybrid,
+        )
 
         # Try KB search first
         try:
-            query_embedding = await embedding_provider.embed([step_info.query])
-            kb_results = await vector_store.search(
-                collection=kb_name,
-                query_embedding=query_embedding[0],
-                top_k=self.initial_docs,
-            )
-            
+            if self.use_wrrf:
+                # Use WRRF with multiple query variations
+                logger.debug("profound_using_wrrf", query=step_info.query[:100])
+                queries = await self._generate_similar_queries(
+                    step_info.query, llm, self.wrrf_rephrases
+                )
+                kb_results = await self._wrrf_retrieval(
+                    queries=queries,
+                    vector_store=vector_store,
+                    embedding_provider=embedding_provider,
+                    kb_name=kb_name,
+                    llm=llm,
+                )
+            else:
+                # Simple vector search with optional hybrid
+                query_embedding = await embedding_provider.embed([step_info.query])
+                kb_results = await vector_store.search(
+                    collection=kb_name,
+                    query_embedding=query_embedding[0],
+                    top_k=self.initial_docs,
+                )
+                if self.use_hybrid and kb_results and llm is not None:
+                    try:
+                        vector_scores = [getattr(r, "score", 0.5) for r in kb_results]
+                        hybrid_results = await hybrid_retrieval(
+                            query=step_info.query,
+                            documents=kb_results,
+                            vector_scores=vector_scores,
+                            use_llm_weights=True,
+                            llm=llm,
+                        )
+                        kb_results = [doc for doc, _ in hybrid_results]
+                    except Exception as e:
+                        logger.warning("profound_hybrid_error", error=str(e))
+
             # Assess document quality
             is_sufficient, missing_aspects, confidence = await self._assess_documents(
                 query=step_info.query,
@@ -401,13 +669,13 @@ Create a research plan to answer this question."""
                 purpose=step_info.purpose,
                 llm=llm,
             )
-            
+
             if is_sufficient and kb_results:
-                step.documents = kb_results[:self.final_max_docs]
+                step.documents = kb_results[: self.final_max_docs]
                 step.success = True
                 step.key_findings = [f"Found {len(kb_results)} relevant documents"]
                 step.missing_info = missing_aspects
-                
+
                 # Analyze documents
                 analysis = await self._analyze_step_documents(
                     step_info=step_info,
@@ -415,12 +683,12 @@ Create a research plan to answer this question."""
                     llm=llm,
                 )
                 step.analysis = analysis
-                
-                logger.debug("profound_step_kb_success", 
-                            docs=len(step.documents),
-                            confidence=confidence)
+
+                logger.debug(
+                    "profound_step_kb_success", docs=len(step.documents), confidence=confidence
+                )
                 return step
-                
+
         except Exception as e:
             logger.warning("profound_kb_search_error", error=str(e))
 
@@ -428,32 +696,31 @@ Create a research plan to answer this question."""
         if self.use_websearch and "web_search" in tools.list_tools():
             try:
                 web_tool = tools.get("web_search")
-                web_result = await web_tool.execute(
-                    query=step_info.query, 
-                    max_results=3
-                )
-                
+                web_result = await web_tool.execute(query=step_info.query, max_results=3)
+
                 # Create document from web result
                 if web_result:
-                    step.documents.append({
-                        "source": "web_search",
-                        "content": web_result,
-                        "query": step_info.query,
-                    })
+                    step.documents.append(
+                        {
+                            "source": "web_search",
+                            "content": web_result,
+                            "query": step_info.query,
+                        }
+                    )
                     step.success = True
                     step.key_findings = ["Information from web search"]
                     step.analysis = web_result[:500]
-                    
+
                     logger.debug("profound_step_web_success")
                     return step
-                    
+
             except Exception as e:
                 logger.warning("profound_web_search_error", error=str(e))
 
         # Step failed to find sufficient information
         step.success = False
         step.missing_info = [f"Could not find sufficient information for: {step_info.purpose}"]
-        
+
         logger.debug("profound_step_failed", purpose=step_info.purpose)
         return step
 
@@ -466,23 +733,23 @@ Create a research plan to answer this question."""
     ) -> tuple[bool, list[str], float]:
         """
         Assess if documents are sufficient for the query.
-        
+
         Ported from: core/core.py::assess_document_quality()
         """
         if not documents:
             return False, ["No documents retrieved"], 0.0
-        
+
         # Format documents for assessment
         doc_texts = []
         for i, doc in enumerate(documents[:3]):
-            if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'text'):
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
                 text = doc.chunk.text[:400]
             else:
                 text = str(doc)[:400]
-            doc_texts.append(f"Doc {i+1}: {text}")
-        
+            doc_texts.append(f"Doc {i + 1}: {text}")
+
         doc_content = "\n".join(doc_texts)
-        
+
         system_prompt = f"""Assess if the documents adequately address the query.
 
 Purpose: {purpose}
@@ -504,19 +771,19 @@ Respond in JSON format:
                 temperature=0.0,
                 max_tokens=300,
             )
-            
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
                 result = json.loads(response)
-            
+
             return (
                 result.get("is_sufficient", False),
                 result.get("missing_aspects", []),
                 result.get("confidence", 0.5),
             )
-            
+
         except Exception as e:
             logger.error("profound_assessment_error", error=str(e))
             return False, ["Assessment error"], 0.0
@@ -530,17 +797,17 @@ Respond in JSON format:
         """Analyze documents for a research step."""
         if not documents:
             return "No documents to analyze"
-        
+
         doc_texts = []
         for i, doc in enumerate(documents[:2]):
-            if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'text'):
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
                 text = doc.chunk.text[:500]
             else:
                 text = str(doc)[:500]
-            doc_texts.append(f"[{i+1}] {text}")
-        
+            doc_texts.append(f"[{i + 1}] {text}")
+
         doc_content = "\n\n".join(doc_texts)
-        
+
         prompt = f"""Analyze these documents for the step: {step_info.purpose}
 
 Documents:
@@ -565,21 +832,23 @@ Provide a brief analysis of what was found (2-3 sentences)."""
     ) -> tuple[bool, float]:
         """
         Evaluate if the question is sufficiently answered.
-        
+
         Ported from: core/profonde.py - evaluation logic
         """
         if not steps:
             return False, 0.0
-        
+
         # Format step information
-        steps_info = "\n\n".join([
-            f"Step: {s.step_purpose}\n"
-            f"Success: {s.success}\n"
-            f"Findings: {', '.join(s.key_findings[:2])}\n"
-            f"Missing: {', '.join(s.missing_info[:2])}"
-            for s in steps
-        ])
-        
+        steps_info = "\n\n".join(
+            [
+                f"Step: {s.step_purpose}\n"
+                f"Success: {s.success}\n"
+                f"Findings: {', '.join(s.key_findings[:2])}\n"
+                f"Missing: {', '.join(s.missing_info[:2])}"
+                for s in steps
+            ]
+        )
+
         system_prompt = """Evaluate whether the research has sufficiently answered the original question.
 
 Respond in JSON format:
@@ -599,23 +868,26 @@ Guidelines:
             response = await llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Question: {original_query}\n\nResearch:\n{steps_info}"},
+                    {
+                        "role": "user",
+                        "content": f"Question: {original_query}\n\nResearch:\n{steps_info}",
+                    },
                 ],
                 temperature=0.0,
                 max_tokens=300,
             )
-            
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
                 result = json.loads(response)
-            
+
             return (
                 result.get("question_answered", False),
                 result.get("confidence", 0.0),
             )
-            
+
         except Exception as e:
             logger.error("profound_evaluation_error", error=str(e))
             return False, 0.0
@@ -628,19 +900,21 @@ Guidelines:
     ) -> bool:
         """
         Review research progress and decide whether to continue.
-        
+
         Ported from: core/profonde.py - plan review logic
         """
         if len(history) >= self.max_cycles:
             return False
-        
+
         # Summarize current progress
-        history_summary = "\n".join([
-            f"Cycle {h['cycle']}: " + 
-            ", ".join([f"{s['purpose']}({'✓' if s['success'] else '✗'})" for s in h['steps']])
-            for h in history
-        ])
-        
+        history_summary = "\n".join(
+            [
+                f"Cycle {h['cycle']}: "
+                + ", ".join([f"{s['purpose']}({'✓' if s['success'] else '✗'})" for s in h["steps"]])
+                for h in history
+            ]
+        )
+
         system_prompt = """Review the research progress and decide if we should continue.
 
 Respond in JSON format:
@@ -659,20 +933,23 @@ Guidelines:
             response = await llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Question: {query}\n\nProgress:\n{history_summary}"},
+                    {
+                        "role": "user",
+                        "content": f"Question: {query}\n\nProgress:\n{history_summary}",
+                    },
                 ],
                 temperature=0.3,
                 max_tokens=300,
             )
-            
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
                 result = json.loads(response)
-            
+
             return result.get("should_continue", False)
-            
+
         except Exception as e:
             logger.error("profound_review_error", error=str(e))
             return False
@@ -687,7 +964,7 @@ Guidelines:
         exited_early: bool,
     ) -> RAGResponse:
         """Generate final response based on all research."""
-        
+
         # Format research summary
         research_summary = []
         for step in steps:
@@ -697,9 +974,9 @@ Guidelines:
                 f"Success: {step.success}\n"
                 f"Analysis: {step.analysis[:300]}..."
             )
-        
+
         research_text = "\n\n---\n\n".join(research_summary)
-        
+
         system_prompt = """Generate a comprehensive answer based on the research conducted.
 
 Your answer should:
@@ -735,47 +1012,134 @@ Generate a final answer."""
 
         # Prepare sources
         sources = self._prepare_sources(documents)
-        
+
         # Append references section to answer
         if sources:
             references = self._format_references(sources)
             answer = answer.strip() + "\n\n" + references
-        
+
         return RAGResponse(
             answer=answer,
             sources=sources,
             mode=RAGMode.PROFOUND,
             iterations=self.iterations,
             web_search_used=any(
-                isinstance(d, dict) and d.get("source") == "web_search"
-                for d in documents
+                isinstance(d, dict) and d.get("source") == "web_search" for d in documents
             ),
         )
 
+    async def _stream_final_response(
+        self,
+        query: str,
+        steps: list[ResearchStep],
+        documents: list[Any],
+        llm: Any,
+        request: RAGRequest,
+        exited_early: bool,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream final response generation."""
+
+        # Format research summary
+        research_summary = []
+        for step in steps:
+            research_summary.append(
+                f"Step: {step.step_purpose}\n"
+                f"Query: {step.query}\n"
+                f"Success: {step.success}\n"
+                f"Analysis: {step.analysis[:300]}..."
+            )
+
+        research_text = "\n\n---\n\n".join(research_summary)
+
+        system_prompt = """Generate a comprehensive answer based on the research conducted.
+
+Your answer should:
+1. Directly address the original question
+2. Synthesize findings from all research steps
+3. Maintain scientific accuracy
+4. Acknowledge any information gaps
+5. Be clear and well-structured
+
+If the research did not find sufficient information, clearly state this."""
+
+        user_message = f"""Original question: {query}
+
+Research conducted ({self.iterations} cycles):
+{research_text}
+
+Generate a final answer."""
+
+        # Prepare sources
+        sources = self._prepare_sources(documents)
+        for source in sources:
+            yield StreamEvent.source(source)
+
+        # Stream the LLM response
+        try:
+            async for chunk in llm.stream(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                model=request.model,
+                provider=request.provider,
+                max_tokens=2000,
+                temperature=0.3,
+            ):
+                yield StreamEvent.content(chunk)
+        except Exception as e:
+            logger.error("profound_streaming_error", error=str(e))
+            # Fall back to non-streaming
+            answer = await llm.complete(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                model=request.model,
+                provider=request.provider,
+                max_tokens=2000,
+                temperature=0.3,
+            )
+            yield StreamEvent.content(answer)
+
+        # Add references
+        if sources:
+            references = self._format_references(sources)
+            yield StreamEvent.content("\n\n" + references)
+
+        yield StreamEvent.done(
+            conversation_id="",
+            tokens_used=0,
+            mode="profound",
+            iterations=self.iterations,
+        )
+
     def _prepare_sources(self, documents: list[Any]) -> list[SourceReference]:
-        """Prepare source references from documents."""
+        """Prepare source references from documents with web search handling."""
         seen = set()
         sources = []
-        
+
         for doc in documents:
-            # Handle web search results
+            # Handle web search results (special case for profound mode)
             if isinstance(doc, dict):
                 title = doc.get("source", "Web source")
                 if title == "web_search":
                     title = f"Web search: {doc.get('query', 'Unknown')}"
-                sources.append(SourceReference(
-                    title=title,
-                    relevance_score=0.5,
-                ))
+                sources.append(
+                    SourceReference(
+                        title=title,
+                        relevance_score=0.5,
+                    )
+                )
                 continue
-            
+
             # Handle vector store results
-            if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'metadata'):
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "metadata"):
                 meta = doc.chunk.metadata
-                title = getattr(meta, 'title', 'Untitled')
-                authors = getattr(meta, 'authors', [])
-                year = getattr(meta, 'year', None)
-                doi = getattr(meta, 'doi', None)
+                title = getattr(meta, "title", "Untitled")
+                authors = getattr(meta, "authors", [])
+                year = getattr(meta, "year", None)
+                doi = getattr(meta, "doi", None)
             else:
                 continue
 
@@ -794,30 +1158,18 @@ Generate a final answer."""
                 else:
                     authors_str = str(authors)
 
-            sources.append(SourceReference(
-                title=title,
-                authors=authors_str,
-                year=year,
-                doi=doi,
-                relevance_score=getattr(doc, 'score', 0.0),
-            ))
+            sources.append(
+                SourceReference(
+                    title=title,
+                    authors=authors_str,
+                    year=year,
+                    doi=doi,
+                    relevance_score=getattr(doc, "score", 0.0),
+                )
+            )
 
         return sources
 
     def _format_references(self, sources: list[SourceReference]) -> str:
-        """Format sources as a references section."""
-        if not sources:
-            return ""
-        
-        lines = ["---", "## References"]
-        for i, src in enumerate(sources, 1):
-            ref = f"[{i}] {src.title}"
-            if src.authors:
-                ref += f" - {src.authors}"
-            if src.year:
-                ref += f" ({src.year})"
-            if src.doi:
-                ref += f" - DOI: {src.doi}"
-            lines.append(ref)
-        
-        return "\n".join(lines)
+        """Format sources as a references section using shared utility."""
+        return format_references(sources)

@@ -1,0 +1,1970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perspicacité v2 - True Agentic RAG</title>
+    <style>
+        /* ScienceGuide-inspired styling */
+        @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700&family=Libre+Franklin:wght@300;400;500;600&family=Quicksand:wght@400;500;600&display=swap');
+
+        :root {
+            --bg-main: #f8fafc;
+            --bg-sidebar: #f1f5f9;
+            --bg-card: #ffffff;
+            --primary: #1b4479;
+            --primary-light: #2d5a9e;
+            --secondary: #04919A;
+            --accent: #61CE70;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --input-border: #cbd5e1;
+            --shadow: none;
+            --radius: 0.5rem;
+        }
+
+        /* Dark theme */
+        [data-theme="dark"] {
+            --bg-main: #0f172a;
+            --bg-sidebar: #1e293b;
+            --bg-card: #1e293b;
+            --primary: #60a5fa;
+            --primary-light: #93c5fd;
+            --secondary: #2dd4bf;
+            --accent: #4ade80;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --input-border: #475569;
+            --shadow: none;
+        }
+
+        /* Theme transition */
+        *, *::before, *::after {
+            transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            font-family: 'Libre Franklin', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-main);
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            color: var(--text-main);
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Chivo', sans-serif;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        .main-panel {
+            background: var(--bg-main);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-left: 1px solid var(--border);
+        }
+
+        .header {
+            background: var(--bg-main);
+            color: var(--text-main);
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-title {
+            flex: 1;
+        }
+
+        .theme-toggle {
+            width: 36px;
+            height: 36px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-card);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--primary);
+            background: var(--bg-sidebar);
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: var(--primary);
+        }
+
+        .header p {
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 400;
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            line-height: 1.6;
+            animation: fadeIn 0.3s ease;
+            font-size: 14px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: var(--primary);
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+            background: var(--bg-card);
+            color: var(--text-main);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 2px;
+        }
+
+        /* Inline thinking message in chat */
+        .message.thinking-message {
+            background: #f1f5f9;
+            border: 1px dashed #cbd5e1;
+            font-size: 13px;
+            padding: 12px 16px;
+        }
+
+        .thinking-header-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        .thinking-toggle {
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+
+        .thinking-count {
+            color: #64748b;
+            font-size: 11px;
+            margin-left: auto;
+        }
+
+        .thinking-content {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .thinking-content.collapsed {
+            display: none;
+        }
+
+        .thinking-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .thinking-step {
+            display: flex;
+            gap: 8px;
+            padding: 8px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .thinking-step .icon {
+            flex-shrink: 0;
+        }
+
+        .thinking-step .content {
+            flex: 1;
+        }
+
+        .thinking-step .details {
+            margin-top: 4px;
+            padding: 8px;
+            background: #f8fafc;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #475569;
+        }
+
+        .thinking-step .query-info {
+            margin-top: 4px;
+            font-size: 11px;
+            color: #64748b;
+        }
+
+        .input-area {
+            padding: 16px 32px 24px;
+            background: var(--bg-main);
+            border-top: 1px solid var(--border);
+        }
+
+        .chat-input-wrapper {
+            background: var(--bg-card);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            transition: border-color 0.2s;
+        }
+
+        .chat-input-wrapper:focus-within {
+            border-color: var(--primary-light);
+        }
+
+        .chat-input {
+            width: 100%;
+            min-height: 60px;
+            max-height: 200px;
+            padding: 0 0 8px 0;
+            border: none;
+            background: transparent;
+            font-size: 15px;
+            font-family: inherit;
+            line-height: 1.5;
+            resize: vertical;
+            outline: none;
+        }
+
+        .chat-input::placeholder {
+            color: #94a3b8;
+        }
+
+        .input-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 12px;
+            padding-top: 8px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .mode-dropdown {
+            padding: 6px 10px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--primary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .mode-dropdown:hover {
+            background: rgba(27, 68, 121, 0.08);
+        }
+
+        .send-btn {
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: none;
+            border-radius: 8px;
+            background: var(--primary);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .send-btn:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+
+        .send-btn:not(:disabled):hover {
+            background: var(--primary-light);
+            transform: scale(1.05);
+        }
+
+        .send-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .input-container {
+            padding: 12px 24px 20px;
+            display: flex;
+            gap: 12px;
+            background: #fafbfc;
+        }
+
+        .input-container input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid var(--input-border);
+            border-radius: var(--radius);
+            font-size: 15px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            background: white;
+        }
+
+        .input-container input:focus {
+            border-color: var(--secondary);
+            box-shadow: 0 0 0 3px rgba(4, 145, 154, 0.1);
+        }
+
+        .input-container button {
+            padding: 12px 28px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            font-family: 'Chivo', sans-serif;
+            transition: background 0.2s, transform 0.15s;
+        }
+
+        .input-container button:hover:not(:disabled) {
+            background: var(--primary-light);
+            transform: translateY(-1px);
+        }
+
+        .input-container button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-sidebar);
+            padding: 16px;
+            gap: 12px;
+            overflow: hidden;
+        }
+
+        .panel {
+            background: transparent;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow: hidden;
+        }
+
+        .panel h3 {
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .thinking-step {
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            border-radius: var(--radius);
+            font-size: 13px;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            animation: slideIn 0.3s ease;
+            border-left: 3px solid transparent;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-8px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .thinking-step.analyzing {
+            background: #e0f2fe;
+            color: #0369a1;
+            border-left-color: #0ea5e9;
+        }
+
+        .thinking-step.planning {
+            background: #fef3c7;
+            color: #92400e;
+            border-left-color: #f59e0b;
+        }
+
+        .thinking-step.tool {
+            background: #d1fae5;
+            color: #065f46;
+            border-left-color: var(--accent);
+        }
+
+        .thinking-step.result {
+            background: #e0e7ff;
+            color: #3730a3;
+            border-left-color: #6366f1;
+        }
+
+        .thinking-step.complete {
+            background: #f0fdf4;
+            color: #166534;
+            border-left-color: var(--accent);
+        }
+
+        .thinking-step .icon {
+            font-size: 15px;
+            flex-shrink: 0;
+        }
+
+        .thinking-step .content {
+            flex: 1;
+        }
+
+        .thinking-step .details {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+
+        .session-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid #e2e8f0;
+            border-top: 2px solid var(--secondary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .status-indicator.ready {
+            background: var(--accent);
+        }
+
+        .status-indicator.initializing {
+            background: #f59e0b;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .intent-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: var(--radius);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .intent-badge.natural_products_only {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .intent-badge.papers_only {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .intent-badge.combined_research {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .intent-badge.follow_up {
+            background: #fce7f3;
+            color: #9d174d;
+        }
+
+        /* KB Panel */
+        .kb-select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--input-border);
+            border-radius: var(--radius);
+            font-size: 13px;
+            outline: none;
+            background: white;
+            margin-bottom: 8px;
+            font-family: inherit;
+            color: var(--text-main);
+        }
+        .kb-select:focus {
+            border-color: var(--secondary);
+        }
+
+        .kb-info {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: var(--radius);
+        }
+
+        .kb-create-toggle {
+            font-size: 11px;
+            color: var(--secondary);
+            cursor: pointer;
+            border: none;
+            background: none;
+            padding: 2px 0;
+            font-weight: 500;
+        }
+
+        .kb-create-form {
+            display: none;
+            margin-top: 8px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: var(--radius);
+        }
+        .kb-create-form.visible { display: block; }
+
+        .kb-create-form input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: var(--radius);
+            font-size: 13px;
+            margin-bottom: 8px;
+            outline: none;
+            font-family: inherit;
+        }
+
+        /* New Chat Button */
+        .new-chat-btn {
+            width: 100%;
+            padding: 10px 14px;
+            background: transparent;
+            color: var(--primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 13px;
+            font-weight: 500;
+            font-family: 'Chivo', sans-serif;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+        .new-chat-btn:hover {
+            background: rgba(27, 68, 121, 0.05);
+            border-color: var(--primary);
+        }
+        .new-chat-btn span {
+            font-size: 16px;
+            font-weight: 400;
+        }
+
+        /* Chat History Section */
+        .chat-history-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+        }
+        .chat-history-section h3 {
+            margin-bottom: 8px;
+        }
+        .chat-history-list {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .chat-history-item {
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            transition: background 0.15s;
+        }
+        .chat-history-item:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+        .chat-history-item.active {
+            background: rgba(255, 255, 255, 0.9);
+        }
+        .chat-history-item .chat-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-main);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .chat-history-item .chat-date {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .chat-history-item .chat-kb {
+            font-size: 10px;
+            color: var(--secondary);
+            font-weight: 500;
+            background: rgba(4, 145, 154, 0.1);
+            padding: 1px 6px;
+            border-radius: 10px;
+            display: inline-block;
+            max-width: 100%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* KB Section */
+        .kb-section {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .kb-create-form input:focus {
+            border-color: var(--secondary);
+        }
+
+        .kb-create-form button {
+            width: 100%;
+            padding: 8px;
+            background: var(--secondary);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: 'Chivo', sans-serif;
+        }
+        .kb-create-form button:hover { background: #037a82; }
+
+        .kb-delete-btn {
+            font-size: 11px;
+            color: #dc2626;
+            cursor: pointer;
+            border: none;
+            background: none;
+            padding: 4px 0;
+            font-weight: 500;
+            margin-left: 8px;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(27, 68, 121, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.visible { display: flex; }
+        .modal {
+            background: white;
+            padding: 24px;
+            border-radius: var(--radius);
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+        .modal h3 { margin-bottom: 12px; color: var(--primary); font-family: 'Chivo', sans-serif; }
+        .modal p { margin-bottom: 12px; color: var(--text-muted); font-size: 14px; }
+        .modal input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid var(--input-border);
+            border-radius: var(--radius);
+            margin-bottom: 12px;
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+        }
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        .modal-buttons button {
+            padding: 8px 16px;
+            border-radius: var(--radius);
+            font-size: 13px;
+            cursor: pointer;
+            font-family: 'Chivo', sans-serif;
+            font-weight: 500;
+        }
+        .modal-cancel { background: #e2e8f0; border: none; color: var(--text-main); }
+        .modal-confirm { background: #dc2626; color: white; border: none; }
+        .modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Thinking panel collapse */
+        .thinking-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .thinking-collapse-btn {
+            font-size: 11px;
+            color: var(--secondary);
+            cursor: pointer;
+            border: none;
+            background: none;
+            padding: 2px 6px;
+            font-weight: 500;
+        }
+        .thinking-step.collapsed .step-details { display: none; }
+        .thinking-step .step-summary {
+            display: none;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .thinking-step.collapsed .step-summary { display: block; }
+        .thinking-step .chevron {
+            cursor: pointer;
+            font-size: 10px;
+            margin-right: 4px;
+            transition: transform 0.2s;
+        }
+        .thinking-step.collapsed .chevron { transform: rotate(-90deg); }
+
+        /* Papers found section */
+        .papers-found {
+            margin-top: 14px;
+            padding: 14px;
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: var(--radius);
+            font-size: 13px;
+        }
+        .papers-found h4 {
+            color: #166534;
+            margin-bottom: 10px;
+            font-size: 13px;
+            font-family: 'Chivo', sans-serif;
+        }
+        .paper-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #dcfce7;
+        }
+        .paper-item:last-of-type { border-bottom: none; }
+        .paper-item input[type="checkbox"] {
+            margin-top: 2px;
+            flex-shrink: 0;
+            accent-color: var(--secondary);
+        }
+        .paper-item label {
+            font-size: 12px;
+            color: var(--text-main);
+            line-height: 1.5;
+            cursor: pointer;
+        }
+        .paper-item .paper-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .add-to-kb-btn {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: var(--secondary);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 12px;
+            cursor: pointer;
+            font-family: 'Chivo', sans-serif;
+            font-weight: 500;
+        }
+        .add-to-kb-btn:hover { background: #037a82; }
+        .add-to-kb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 12px 20px;
+            background: var(--primary);
+            color: white;
+            border-radius: var(--radius);
+            font-size: 13px;
+            z-index: 1000;
+            animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s;
+            box-shadow: var(--shadow);
+        }
+        @keyframes toastIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+
+        /* Query info in thinking steps */
+        .query-info {
+            font-size: 11px;
+            color: var(--secondary);
+            margin-top: 4px;
+        }
+        .query-info code {
+            background: #e0f2fe;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: 'Quicksand', monospace;
+        }
+
+        /* Code blocks in messages */
+        .message code {
+            background: #e2e8f0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Quicksand', monospace;
+            font-size: 0.9em;
+        }
+
+        /* Dark theme specific overrides */
+        [data-theme="dark"] .message.assistant {
+            background: #27354c;
+            border-color: #334155;
+        }
+
+        [data-theme="dark"] .chat-input-wrapper {
+            background: #1e293b;
+        }
+
+        [data-theme="dark"] .chat-input {
+            color: var(--text-main);
+        }
+
+        [data-theme="dark"] .chat-input::placeholder {
+            color: #64748b;
+        }
+
+        [data-theme="dark"] .kb-select {
+            background: #1e293b;
+            color: var(--text-main);
+        }
+
+        [data-theme="dark"] .kb-info {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        [data-theme="dark"] .kb-create-form {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        [data-theme="dark"] .chat-history-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        [data-theme="dark"] .chat-history-item.active {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        [data-theme="dark"] .message.thinking-message {
+            background: #27354c;
+            border-color: #475569;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            .side-panel {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="side-panel">
+            <div class="panel" style="flex: 1; display: flex; flex-direction: column; gap: 16px;">
+                <!-- New Chat Button -->
+                <button class="new-chat-btn" onclick="startNewChat()">
+                    <span>+</span> New Chat
+                </button>
+                
+                <!-- Chat History -->
+                <div class="chat-history-section">
+                    <h3>💬 Chat History</h3>
+                    <div id="chat-history-list" class="chat-history-list">
+                        <div class="chat-history-item active" data-session="" data-kb="" data-created-at="">
+                            <span class="chat-title">Current Chat</span>
+                            <span class="chat-kb">Web Search</span>
+                            <span class="chat-date">Now</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Knowledge Base -->
+                <div class="kb-section">
+                    <h3>📚 Knowledge Base</h3>
+                    <select id="kb-select" class="kb-select" onchange="selectKB(this.value)">
+                        <option value="">No KB (web search only)</option>
+                    </select>
+                    <div id="kb-info" class="kb-info" style="display:none;"></div>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                        <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
+                        <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
+                    </div>
+                    <div id="kb-create-form" class="kb-create-form">
+                        <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
+                        <input id="kb-desc-input" type="text" placeholder="Description (optional)">
+                        <button onclick="createKB()">Create</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="main-panel">
+            <div class="header">
+                <div class="header-content">
+                    <div class="header-title">
+                        <h1>🔬 Perspicacité v2</h1>
+                        <p>Literature AI assistant — KB-first retrieval with web fallback</p>
+                    </div>
+                    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
+                        <span id="theme-icon">🌙</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="chat-container" id="chat-container">
+                <div class="message assistant">
+                    Hello! I'm Perspicacité — an AI literature assistant. I will:
+                    <br><br>
+                    • Search your selected Knowledge Base first (curated by you)<br>
+                    • Fall back to web literature search (OpenAlex) when your KB is insufficient<br>
+                    • Ground answers in retrieved papers and maintain conversation context<br>
+                    • Let you curate: add selected retrieved papers back into your KB<br><br>
+                    Try: "What are key metabolites in jasmine?" or "Summarize feature-based molecular networking (FBMN)"
+                </div>
+            </div>
+            
+            <div class="input-area">
+                <div class="chat-input-wrapper">
+                    <textarea 
+                        id="query-input" 
+                        class="chat-input"
+                        placeholder="Ask your research question..."
+                        rows="3"
+                        onkeydown="handleInputKeydown(event)"
+                        oninput="handleInputChange()"
+                    ></textarea>
+                    <div class="input-actions">
+                        <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)">
+                            <option value="basic" selected>📚 Quick Search</option>
+                            <option value="advanced">⚡ Advanced (Hybrid)</option>
+                            <option value="profound">🔬 Deep Research</option>
+                            <option value="agentic">🤖 Perspicacité Agentic</option>
+                        </select>
+                        <button id="send-btn" class="send-btn" onclick="sendQuery()" disabled>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        let conversationId = null;  // Persistent conversation ID from backend
+        let messages = [];
+        let isProcessing = false;
+        let selectedKb = null;
+        let lastFoundPapers = [];
+        let currentMode = 'basic';
+        
+        const modeDescriptions = {
+            'agentic': '🤖 KB-first with intent detection and tool use',
+            'profound': '🔬 Multi-cycle deep research with planning',
+            'advanced': '⚡ Query rephrasing + WRRF + Hybrid retrieval',
+            'basic': '📚 Fast single-query retrieval'
+        };
+        
+        // Theme management
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeIcon(savedTheme);
+        }
+        
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateThemeIcon(newTheme);
+        }
+        
+        function updateThemeIcon(theme) {
+            const icon = document.getElementById('theme-icon');
+            if (icon) {
+                icon.textContent = theme === 'light' ? '🌙' : '☀️';
+            }
+        }
+        
+        // Initialize theme on load
+        initTheme();
+        
+        function setMode(mode) {
+            currentMode = mode;
+            console.log('RAG Mode set to:', mode);
+        }
+        
+        function startNewChat() {
+            // Generate a new session ID and clear conversation
+            sessionId = null;
+            conversationId = null;
+            messages = [];
+            
+            // Clear chat container except welcome message
+            const container = document.getElementById('chat-container');
+            container.innerHTML = `
+                <div class="message assistant">
+                    Hello! I'm Perspicacité — an AI literature assistant. I will:
+                    <br><br>
+                    • Search your selected Knowledge Base first (curated by you)<br>
+                    • Fall back to web literature search (OpenAlex) when your KB is insufficient<br>
+                    • Ground answers in retrieved papers and maintain conversation context<br>
+                    • Let you curate: add selected retrieved papers back into your KB<br><br>
+                    Try: "What are key metabolites in jasmine?" or "Summarize feature-based molecular networking (FBMN)"
+                </div>
+            `;
+            
+            // Add current chat to history
+            addChatToHistory();
+            
+            // Focus input
+            document.getElementById('query-input').focus();
+            console.log('New chat started');
+        }
+        
+        function addChatToHistory(convData = null) {
+            const historyList = document.getElementById('chat-history-list');
+            const now = new Date();
+            const nowIso = now.toISOString();
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            // Use provided data or current state
+            const kbName = convData ? (convData.kb_name || 'Web Search') : (selectedKb || 'Web Search');
+            const title = convData ? (convData.title || 'Untitled Chat') : `Chat ${historyList.children.length}`;
+            const convId = convData ? convData.id : null;
+            const createdAt = convData ? (convData.created_at || convData.updated_at) : nowIso;
+            
+            // Format date display
+            let dateStr;
+            if (convData && convData.updated_at) {
+                dateStr = formatDate(convData.updated_at);
+            } else {
+                dateStr = 'Just now';
+            }
+            
+            // Remove active class from all items
+            historyList.querySelectorAll('.chat-history-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Add new history item
+            const item = document.createElement('div');
+            item.className = 'chat-history-item active';
+            item.dataset.kb = convData ? (convData.kb_name || '') : (selectedKb || '');
+            item.dataset.convId = convId || '';
+            item.dataset.createdAt = createdAt;
+            item.innerHTML = `
+                <span class="chat-title">${title}</span>
+                <span class="chat-kb">${kbName === 'default' ? 'Web Search' : kbName}</span>
+                <span class="chat-date">${dateStr}</span>
+            `;
+            item.onclick = function() { loadChatFromHistory(this); };
+            historyList.insertBefore(item, historyList.firstChild);
+        }
+        
+        function formatDate(isoString) {
+            if (!isoString) return '';
+            try {
+                const date = new Date(isoString);
+                // Check if date is valid
+                if (isNaN(date.getTime())) {
+                    return isoString;  // Return as-is if can't parse
+                }
+                return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+                       date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                return isoString;  // Return as-is on error
+            }
+        }
+        
+        async function loadChatFromHistory(item) {
+            // Remove active class from all items
+            document.querySelectorAll('.chat-history-item').forEach(i => {
+                i.classList.remove('active');
+            });
+            item.classList.add('active');
+            
+            // Set conversation ID
+            conversationId = item.dataset.convId || null;
+            
+            // Restore the KB that was used for this chat
+            const kbName = item.dataset.kb;
+            if (kbName !== undefined) {
+                const kbSelect = document.getElementById('kb-select');
+                kbSelect.value = kbName;
+                selectedKb = kbName || null;
+                console.log('Restored KB:', kbName || 'Web Search');
+                
+                // Update KB info display if KB exists
+                if (kbName) {
+                    selectKB(kbName);
+                } else {
+                    document.getElementById('kb-info').style.display = 'none';
+                    document.getElementById('kb-delete-btn').style.display = 'none';
+                }
+            }
+            
+            // Load conversation messages from backend if we have a conversation ID
+            if (conversationId) {
+                try {
+                    const response = await fetch(`/api/conversations/${conversationId}`);
+                    if (response.ok) {
+                        const conv = await response.json();
+                        
+                        // Clear and rebuild chat container
+                        const container = document.getElementById('chat-container');
+                        container.innerHTML = '';
+                        messages = [];
+                        
+                        // Add messages
+                        for (const msg of conv.messages) {
+                            addMessage(msg.role, msg.content);
+                            messages.push({ role: msg.role, content: msg.content });
+                        }
+                        
+                        console.log(`Loaded ${conv.messages.length} messages from conversation ${conversationId}`);
+                    }
+                } catch (e) {
+                    console.error('Failed to load conversation:', e);
+                }
+            } else {
+                // New conversation - show welcome message
+                const container = document.getElementById('chat-container');
+                container.innerHTML = `
+                    <div class="message assistant">
+                        Hello! I'm Perspicacité — an AI literature assistant. I will:
+                        <br><br>
+                        • Search your selected Knowledge Base first (curated by you)<br>
+                        • Fall back to web literature search (OpenAlex) when your KB is insufficient<br>
+                        • Ground answers in retrieved papers and maintain conversation context<br>
+                        • Let you curate: add selected retrieved papers back into your KB<br><br>
+                        Try: "What are key metabolites in jasmine?" or "Summarize feature-based molecular networking (FBMN)"
+                    </div>
+                `;
+                messages = [];
+            }
+        }
+        
+        function handleInputKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendQuery();
+            }
+        }
+        
+        function handleInputChange() {
+            const input = document.getElementById('query-input');
+            const sendBtn = document.getElementById('send-btn');
+            const hasContent = input.value.trim().length > 0;
+            sendBtn.disabled = !hasContent;
+            
+            // Auto-resize textarea
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        }
+        
+        // Check system status on load
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                
+                if (data.initialized) {
+                    loadKBs();
+                } else {
+                    setTimeout(checkStatus, 2000);
+                }
+            } catch (e) {
+                console.error('Health check failed:', e);
+            }
+        }
+        
+        checkStatus();
+        loadConversationHistory();
+        
+        // Auto-refresh timestamps every minute
+        setInterval(updateTimestamps, 60000);
+        
+        // Update relative timestamps
+        function updateTimestamps() {
+            const items = document.querySelectorAll('.chat-history-item');
+            items.forEach(item => {
+                // For new chats, we use a data attribute to store creation time
+                const createdAt = item.dataset.createdAt;
+                if (createdAt) {
+                    const dateEl = item.querySelector('.chat-date');
+                    if (dateEl) {
+                        const elapsed = Date.now() - new Date(createdAt).getTime();
+                        const minutes = Math.floor(elapsed / 60000);
+                        const hours = Math.floor(elapsed / 3600000);
+                        const days = Math.floor(elapsed / 86400000);
+                        
+                        if (minutes < 1) {
+                            dateEl.textContent = 'Just now';
+                        } else if (minutes < 60) {
+                            dateEl.textContent = `${minutes}m ago`;
+                        } else if (hours < 24) {
+                            dateEl.textContent = `${hours}h ago`;
+                        } else if (days < 7) {
+                            dateEl.textContent = `${days}d ago`;
+                        } else {
+                            dateEl.textContent = formatDate(createdAt);
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Load conversation history from backend
+        async function loadConversationHistory() {
+            try {
+                const response = await fetch('/api/conversations');
+                if (!response.ok) {
+                    console.log('No conversation history available');
+                    return;
+                }
+                
+                const conversations = await response.json();
+                if (!conversations || conversations.length === 0) {
+                    console.log('No saved conversations');
+                    return;
+                }
+                
+                // Clear the default "Current Chat" item
+                const historyList = document.getElementById('chat-history-list');
+                historyList.innerHTML = '';
+                
+                // Add each conversation to the list
+                for (const conv of conversations) {
+                    const item = document.createElement('div');
+                    item.className = 'chat-history-item';
+                    item.dataset.kb = conv.kb_name === 'default' ? '' : conv.kb_name;
+                    item.dataset.convId = conv.id;
+                    item.dataset.createdAt = conv.created_at || conv.updated_at;
+                    
+                    const title = conv.title || 'Untitled Chat';
+                    const kbDisplay = conv.kb_name === 'default' ? 'Web Search' : conv.kb_name;
+                    
+                    // Calculate relative time
+                    const updatedAt = conv.updated_at || conv.created_at;
+                    let dateStr;
+                    if (updatedAt) {
+                        const elapsed = Date.now() - new Date(updatedAt).getTime();
+                        const minutes = Math.floor(elapsed / 60000);
+                        const hours = Math.floor(elapsed / 3600000);
+                        const days = Math.floor(elapsed / 86400000);
+                        
+                        if (minutes < 1) {
+                            dateStr = 'Just now';
+                        } else if (minutes < 60) {
+                            dateStr = `${minutes}m ago`;
+                        } else if (hours < 24) {
+                            dateStr = `${hours}h ago`;
+                        } else if (days < 7) {
+                            dateStr = `${days}d ago`;
+                        } else {
+                            dateStr = formatDate(updatedAt);
+                        }
+                    } else {
+                        dateStr = '';
+                    }
+                    
+                    item.innerHTML = `
+                        <span class="chat-title">${title}</span>
+                        <span class="chat-kb">${kbDisplay}</span>
+                        <span class="chat-date">${dateStr}</span>
+                    `;
+                    item.onclick = function() { loadChatFromHistory(this); };
+                    historyList.appendChild(item);
+                }
+                
+                // Make the first (most recent) conversation active visually, but don't load it
+                // This allows user to click and select any conversation
+                const firstItem = historyList.querySelector('.chat-history-item');
+                if (firstItem) {
+                    firstItem.classList.add('active');
+                    // Set the conversation ID without loading messages
+                    conversationId = firstItem.dataset.convId || null;
+                    // Restore KB for this conversation
+                    const kbName = firstItem.dataset.kb;
+                    if (kbName !== undefined) {
+                        document.getElementById('kb-select').value = kbName;
+                        selectedKb = kbName || null;
+                    }
+                }
+                
+                console.log(`Loaded ${conversations.length} conversations from history`);
+            } catch (e) {
+                console.error('Failed to load conversation history:', e);
+            }
+        }
+        
+        // KB management
+        async function loadKBs() {
+            try {
+                const resp = await fetch('/api/kb');
+                const kbs = await resp.json();
+                const select = document.getElementById('kb-select');
+                const currentVal = select.value;
+                select.innerHTML = '<option value="">No KB (web search only)</option>';
+                for (const kb of kbs) {
+                    const opt = document.createElement('option');
+                    opt.value = kb.name;
+                    opt.textContent = `${kb.name} (${kb.paper_count} papers)`;
+                    if (kb.description) opt.title = kb.description;
+                    select.appendChild(opt);
+                }
+                if (currentVal) select.value = currentVal;
+            } catch (e) {
+                console.error('Failed to load KBs:', e);
+            }
+        }
+        
+        function selectKB(name) {
+            selectedKb = name || null;
+            const infoDiv = document.getElementById('kb-info');
+            const deleteBtn = document.getElementById('kb-delete-btn');
+            if (selectedKb) {
+                fetch(`/api/kb/${selectedKb}`).then(r => r.json()).then(data => {
+                    if (data.error) {
+                        infoDiv.style.display = 'none';
+                        deleteBtn.style.display = 'none';
+                        return;
+                    }
+                    infoDiv.style.display = 'block';
+                    infoDiv.innerHTML = `<strong>${data.name}</strong><br>` +
+                        (data.description ? data.description + '<br>' : '') +
+                        `${data.paper_count} papers, ${data.chunk_count} chunks`;
+                });
+                deleteBtn.style.display = 'inline';
+            } else {
+                infoDiv.style.display = 'none';
+                deleteBtn.style.display = 'none';
+            }
+        }
+        
+        function toggleCreateKB() {
+            document.getElementById('kb-create-form').classList.toggle('visible');
+        }
+        
+        async function createKB() {
+            const name = document.getElementById('kb-name-input').value.trim();
+            const desc = document.getElementById('kb-desc-input').value.trim();
+            if (!name) return;
+            
+            try {
+                const resp = await fetch('/api/kb', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name, description: desc || null })
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    const msg = data.detail
+                        ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
+                        : (data.error || 'Unknown error');
+                    showToast('Error: ' + msg);
+                    return;
+                }
+                if (data.error) {
+                    showToast('Error: ' + data.error);
+                    return;
+                }
+                showToast('KB "' + name + '" created');
+                document.getElementById('kb-name-input').value = '';
+                document.getElementById('kb-desc-input').value = '';
+                document.getElementById('kb-create-form').classList.remove('visible');
+                await loadKBs();
+                document.getElementById('kb-select').value = name;
+                selectKB(name);
+            } catch (e) {
+                showToast('Error creating KB: ' + e.message);
+            }
+        }
+        
+        function decodeUtf8FromBase64(b64) {
+            try {
+                const bin = atob(b64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                return new TextDecoder().decode(bytes);
+            } catch (e) {
+                console.warn('base64 decode failed', e);
+                return '';
+            }
+        }
+        
+        async function sendQuery() {
+            if (isProcessing) return;
+            
+            const input = document.getElementById('query-input');
+            const query = input.value.trim();
+            
+            if (!query) return;
+            
+            isProcessing = true;
+            input.value = '';
+            input.style.height = 'auto';
+            input.disabled = true;
+            document.getElementById('send-btn').disabled = true;
+            
+            // Add user message
+            addMessage('user', query);
+            messages.push({role: 'user', content: query});
+            
+            // Add to chat history on first message
+            if (messages.length <= 2) {
+                const historyList = document.getElementById('chat-history-list');
+                const activeItem = historyList.querySelector('.chat-history-item.active');
+                if (activeItem) {
+                    // Update title with first query preview
+                    const preview = query.length > 25 ? query.substring(0, 25) + '...' : query;
+                    activeItem.querySelector('.chat-title').textContent = preview;
+                    // Store and display KB used
+                    activeItem.dataset.kb = selectedKb || '';
+                    activeItem.querySelector('.chat-kb').textContent = selectedKb || 'Web Search';
+                }
+            }
+            
+            // Clear previous thinking
+            clearThinking();
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        query: query,
+                        messages: messages.slice(0, -1),
+                        session_id: sessionId,
+                        conversation_id: conversationId,
+                        kb_name: selectedKb,
+                        mode: currentMode,
+                        stream: true
+                    })
+                });
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let assistantMessage = '';
+                let assistantDiv = null;
+                // Buffer SSE lines: fetch chunks can split mid-JSON (causes "Unterminated string").
+                let sseBuffer = '';
+                
+                while (true) {
+                    const {done, value} = await reader.read();
+                    if (!done && value) {
+                        sseBuffer += decoder.decode(value, { stream: true });
+                    } else if (done) {
+                        sseBuffer += decoder.decode(new Uint8Array(), { stream: false });
+                    }
+                    let nl;
+                    const LF = String.fromCharCode(10);
+                    while ((nl = sseBuffer.indexOf(LF)) >= 0) {
+                        const line = sseBuffer.slice(0, nl).replace(/\\r$/, '');
+                        sseBuffer = sseBuffer.slice(nl + 1);
+                        if (!line.startsWith('data: ')) continue;
+                        const payload = line.slice(6).trim();
+                        if (!payload) continue;
+                        let data;
+                        try {
+                            data = JSON.parse(payload);
+                        } catch (e) {
+                            console.warn('SSE JSON parse skipped:', e.message);
+                            continue;
+                        }
+                        if (data.type === 'thinking') {
+                            addThinkingStep(data.message, 'analyzing', data.details);
+                        } else if (data.type === 'source') {
+                            // Source from RAG modes (basic, advanced, profound)
+                            if (data.source) {
+                                addThinkingStep(
+                                    `Source: ${data.source.title}`,
+                                    'result',
+                                    `Relevance: ${(data.source.relevance_score * 100).toFixed(1)}%`
+                                );
+                            }
+                        } else if (data.type === 'tool_call') {
+                            addThinkingStep(
+                                `Using tool: ${data.tool}`,
+                                'tool',
+                                data.description,
+                                data.query || ''
+                            );
+                        } else if (data.type === 'tool_result') {
+                            addThinkingStep(
+                                `Result from ${data.step}`,
+                                'result',
+                                data.result_summary
+                            );
+                        } else if (data.type === 'answer') {
+                            if (!assistantDiv) {
+                                assistantDiv = addMessage('assistant', '');
+                            }
+                            assistantMessage = data.content_b64
+                                ? decodeUtf8FromBase64(data.content_b64)
+                                : (data.content || '');
+                            assistantDiv.innerHTML = formatMessage(assistantMessage);
+                            sessionId = data.session_id || sessionId;
+                            // Capture conversation_id from response
+                            if (data.conversation_id) {
+                                conversationId = data.conversation_id;
+                                // Update active history item with conversation_id
+                                const activeItem = document.querySelector('.chat-history-item.active');
+                                if (activeItem && !activeItem.dataset.convId) {
+                                    activeItem.dataset.convId = conversationId;
+                                }
+                            }
+                        } else if (data.type === 'papers_found' && data.papers && data.papers.length > 0) {
+                            lastFoundPapers = data.papers;
+                            if (assistantDiv) {
+                                showPapersCuration(assistantDiv, data.papers);
+                            }
+                        }
+                        if (data.details && data.details.includes('Intent:')) {
+                            const intentMatch = data.details.match(/Intent: (\\w+)/);
+                            if (intentMatch) {
+                                showIntent(intentMatch[1]);
+                            }
+                        }
+                    }
+                    if (done) break;
+                }
+                
+                if (assistantMessage) {
+                    messages.push({role: 'assistant', content: assistantMessage});
+                }
+                
+            } catch (error) {
+                addMessage('assistant', '❌ Error: ' + error.message);
+            }
+            
+            isProcessing = false;
+            input.disabled = false;
+            handleInputChange();  // Update button state based on content
+            input.focus();
+        }
+        
+        function addMessage(role, content) {
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.innerHTML = formatMessage(content);
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            return div;
+        }
+        
+        function formatMessage(content) {
+            if (!content) return '';
+            
+            // Escape HTML entities first
+            let formatted = content
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            
+            // Split into lines for processing
+            let lines = formatted.split('\n');
+            let result = [];
+            let inList = false;
+            
+            for (let line of lines) {
+                let trimmed = line.trim();
+                
+                // Headers
+                if (trimmed.startsWith('### ')) {
+                    if (inList) { result.push('</ul>'); inList = false; }
+                    result.push('<h3 style="color: var(--primary); margin: 16px 0 8px 0; font-size: 1.1em;">' + trimmed.substring(4) + '</h3>');
+                    continue;
+                }
+                if (trimmed.startsWith('## ')) {
+                    if (inList) { result.push('</ul>'); inList = false; }
+                    result.push('<h2 style="color: var(--primary); margin: 20px 0 10px 0; font-size: 1.2em; border-bottom: 1px solid var(--border);">' + trimmed.substring(3) + '</h2>');
+                    continue;
+                }
+                if (trimmed.startsWith('# ')) {
+                    if (inList) { result.push('</ul>'); inList = false; }
+                    result.push('<h1 style="color: var(--primary); margin: 24px 0 12px 0; font-size: 1.4em;">' + trimmed.substring(2) + '</h1>');
+                    continue;
+                }
+                
+                // List items
+                if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+                    if (!inList) { result.push('<ul style="margin: 8px 0; padding-left: 20px;">'); inList = true; }
+                    let item = trimmed.substring(2);
+                    // Process bold/italic within list item
+                    item = item.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                    item = item.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+                    result.push('<li style="margin: 4px 0;">' + item + '</li>');
+                    continue;
+                }
+                
+                // End list if we hit a non-list line
+                if (inList && trimmed) {
+                    result.push('</ul>');
+                    inList = false;
+                }
+                
+                // Empty line = paragraph break
+                if (!trimmed) {
+                    result.push('<br>');
+                    continue;
+                }
+                
+                // Regular paragraph with inline formatting
+                let para = trimmed;
+                para = para.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+                para = para.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+                para = para.replace(/`([^`]+)`/g, '<code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em;">$1</code>');
+                result.push('<p style="margin: 8px 0; line-height: 1.6;">' + para + '</p>');
+            }
+            
+            // Close any open list
+            if (inList) result.push('</ul>');
+            
+            return result.join('');
+        }
+
+        // Thinking steps are now added to the chat as collapsible messages
+        let currentThinkingMessage = null;
+        let thinkingSteps = [];
+
+        function createThinkingMessage() {
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = 'message assistant thinking-message';
+            div.innerHTML = `
+                <div class="thinking-header-bar" onclick="toggleThinkingMessage(this.parentElement)">
+                    <span class="thinking-toggle">▶</span>
+                    <span>🧠 Agent Thinking</span>
+                    <span class="thinking-count"></span>
+                </div>
+                <div class="thinking-content collapsed">
+                    <div class="thinking-steps"></div>
+                </div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            currentThinkingMessage = div;
+            thinkingSteps = [];
+            return div;
+        }
+
+        function toggleThinkingMessage(messageDiv) {
+            const content = messageDiv.querySelector('.thinking-content');
+            const toggle = messageDiv.querySelector('.thinking-toggle');
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                toggle.textContent = '▼';
+            } else {
+                content.classList.add('collapsed');
+                toggle.textContent = '▶';
+            }
+        }
+
+        function addThinkingStep(message, type, details, query) {
+            // Create thinking message if not exists
+            if (!currentThinkingMessage) {
+                createThinkingMessage();
+            }
+
+            const icons = {
+                analyzing: '🧠',
+                planning: '📋',
+                tool: '🔧',
+                result: '📄',
+                complete: '✅'
+            };
+
+            thinkingSteps.push({ message, type, details, query });
+
+            // Update the count
+            const countSpan = currentThinkingMessage.querySelector('.thinking-count');
+            countSpan.textContent = `(${thinkingSteps.length} steps)`;
+
+            // Add step to content
+            const stepsContainer = currentThinkingMessage.querySelector('.thinking-steps');
+            const stepDiv = document.createElement('div');
+            stepDiv.className = `thinking-step ${type}`;
+
+            let queryInfo = '';
+            if (query) {
+                queryInfo = `<div class="query-info">Query: <code>${query}</code></div>`;
+            }
+
+            stepDiv.innerHTML = `
+                <span class="icon">${icons[type] || '•'}</span>
+                <div class="content">
+                    <div>${message}</div>
+                    ${details ? `<div class="details">${details}</div>` : ''}
+                    ${queryInfo}
+                </div>
+            `;
+
+            stepsContainer.appendChild(stepDiv);
+            
+            // Auto-scroll chat
+            const container = document.getElementById('chat-container');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearThinking() {
+            currentThinkingMessage = null;
+            thinkingSteps = [];
+        }
+        
+        // Paper curation
+        function showPapersCuration(parentDiv, papers) {
+            const section = document.createElement('div');
+            section.className = 'papers-found';
+            
+            let html = '<h4>📄 Papers Found (' + papers.length + ')</h4>';
+            papers.forEach((p, i) => {
+                const authors = (p.authors || []).join(', ');
+                const year = p.year || '?';
+                const citations = p.citations != null ? ` | Cited: ${p.citations}` : '';
+                html += `
+                    <div class="paper-item">
+                        <input type="checkbox" id="paper-${i}" checked data-index="${i}">
+                        <label for="paper-${i}">
+                            ${p.title}
+                            <div class="paper-meta">${authors} (${year})${citations}</div>
+                        </label>
+                    </div>`;
+            });
+            
+            const disabled = selectedKb ? '' : 'disabled title="Select a KB first"';
+            const kbLabel = selectedKb ? `Add selected to "${selectedKb}"` : 'Select a KB first';
+            html += `<button class="add-to-kb-btn" onclick="addToKB(this)" ${disabled}>${kbLabel}</button>`;
+            
+            section.innerHTML = html;
+            parentDiv.appendChild(section);
+            
+            const container = document.getElementById('chat-container');
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        async function addToKB(btn) {
+            if (!selectedKb || !lastFoundPapers.length) return;
+            
+            const section = btn.closest('.papers-found');
+            const checkboxes = section.querySelectorAll('input[type="checkbox"]');
+            const selected = [];
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    const p = lastFoundPapers[parseInt(cb.dataset.index)];
+                    selected.push({
+                        title: p.title,
+                        authors: p.authors || [],
+                        year: p.year,
+                        doi: p.doi,
+                        abstract: p.abstract,
+                        citations: p.citations
+                    });
+                }
+            });
+            
+            if (!selected.length) {
+                showToast('No papers selected');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.textContent = 'Adding...';
+            
+            try {
+                const resp = await fetch(`/api/kb/${selectedKb}/papers`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ papers: selected })
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    showToast('Error: ' + data.error);
+                    btn.disabled = false;
+                    btn.textContent = `Add selected to "${selectedKb}"`;
+                    return;
+                }
+                btn.textContent = `✓ Added ${data.added_papers} papers`;
+                showToast(`Added ${data.added_papers} papers to "${selectedKb}"`);
+                loadKBs();
+            } catch (e) {
+                showToast('Error: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = `Add selected to "${selectedKb}"`;
+            }
+        }
+        
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // Delete KB modal
+        let kbToDelete = '';
+
+        // Thinking message toggle handled in toggleThinkingMessage function
+
+        function showDeleteKBDialog(kbName) {
+            kbToDelete = kbName;
+            document.getElementById('delete-kb-name').textContent = kbName;
+            document.getElementById('delete-kb-name2').textContent = kbName;
+            document.getElementById('delete-kb-input').value = '';
+            document.getElementById('delete-kb-confirm').disabled = true;
+            document.getElementById('delete-modal').classList.add('visible');
+        }
+
+        function hideDeleteKBDialog() {
+            document.getElementById('delete-modal').classList.remove('visible');
+            kbToDelete = '';
+        }
+
+        function checkDeleteKBInput() {
+            const input = document.getElementById('delete-kb-input').value;
+            document.getElementById('delete-kb-confirm').disabled = input !== kbToDelete;
+        }
+
+        async function confirmDeleteKB() {
+            if (kbToDelete && document.getElementById('delete-kb-input').value === kbToDelete) {
+                try {
+                    const resp = await fetch(`/api/kb/${kbToDelete}`, { method: 'DELETE' });
+                    const data = await resp.json();
+                    if (data.error) {
+                        showToast('Error: ' + data.error);
+                        return;
+                    }
+                    showToast('KB "' + kbToDelete + '" deleted');
+                    hideDeleteKBDialog();
+                    selectedKb = null;
+                    document.getElementById('kb-select').value = '';
+                    document.getElementById('kb-info').style.display = 'none';
+                    await loadKBs();
+                } catch (e) {
+                    showToast('Error deleting KB: ' + e.message);
+                }
+            }
+        }
+    </script>
+
+    <!-- Delete KB Confirmation Modal -->
+    <div id="delete-modal" class="modal-overlay">
+        <div class="modal">
+            <h3>Delete Knowledge Base</h3>
+            <p>This will permanently delete <strong id="delete-kb-name"></strong> and all its papers. This cannot be undone.</p>
+            <p>Type <strong id="delete-kb-name2"></strong> to confirm:</p>
+            <input type="text" id="delete-kb-input" placeholder="Type KB name to confirm" oninput="checkDeleteKBInput()">
+            <div class="modal-buttons">
+                <button class="modal-cancel" onclick="hideDeleteKBDialog()">Cancel</button>
+                <button class="modal-confirm" id="delete-kb-confirm" onclick="confirmDeleteKB()" disabled>Delete</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

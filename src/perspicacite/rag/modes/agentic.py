@@ -7,6 +7,7 @@ This implementation ports and enhances the v1 Profound mode capabilities:
 - Web search fallback
 - Tool selection and execution
 - Self-evaluation and refinement
+- Hybrid retrieval support
 """
 
 from collections.abc import AsyncIterator
@@ -18,6 +19,7 @@ from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceRefe
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.rag.tools import Tool, ToolRegistry
+from perspicacite.retrieval.hybrid import hybrid_retrieval
 
 logger = get_logger("perspicacite.rag.modes.agentic")
 
@@ -76,17 +78,17 @@ class DocumentQualityAssessor:
         # Format documents for assessment
         doc_texts = []
         for i, doc in enumerate(documents[:5]):  # Limit to top 5
-            if hasattr(doc, 'chunk'):
-                text = doc.chunk.text[:500] if hasattr(doc.chunk, 'text') else str(doc.chunk)[:500]
+            if hasattr(doc, "chunk"):
+                text = doc.chunk.text[:500] if hasattr(doc.chunk, "text") else str(doc.chunk)[:500]
             else:
                 text = str(doc)[:500]
-            doc_texts.append(f"Document {i+1}:\n{text}")
+            doc_texts.append(f"Document {i + 1}:\n{text}")
 
         doc_content = "\n\n---\n\n".join(doc_texts)
 
         system_prompt = f"""You are a research quality assessor. Evaluate if the provided documents are sufficient to answer the query.
 
-Purpose: {step_purpose or 'Answer the research question'}
+Purpose: {step_purpose or "Answer the research question"}
 
 Respond in JSON format:
 {{
@@ -115,7 +117,7 @@ Guidelines:
             import json
             import re
 
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
@@ -156,9 +158,22 @@ class AgenticRAGMode(BaseRAGMode):
         super().__init__(config)
         self.quality_assessor: DocumentQualityAssessor | None = None
         self.early_exit_confidence = getattr(
-            getattr(config.rag_modes, 'agentic', None), 'early_exit_confidence', 0.85
+            getattr(config.rag_modes, "agentic", None), "early_exit_confidence", 0.85
         )
         self.max_consecutive_failures = 2
+
+        # Hybrid retrieval settings
+        rag_settings = getattr(config.rag_modes, "agentic", None)
+        if rag_settings is None:
+            rag_settings = {}
+        elif hasattr(rag_settings, "model_dump"):
+            rag_settings = rag_settings.model_dump()
+        elif hasattr(rag_settings, "dict"):
+            rag_settings = rag_settings.dict()
+
+        self.use_hybrid = rag_settings.get("use_hybrid", True)
+        self.initial_docs = 30
+        self.final_max_docs = 5
 
     async def execute(
         self,
@@ -172,9 +187,9 @@ class AgenticRAGMode(BaseRAGMode):
         Execute agentic RAG with full tool use and self-reflection.
         """
         self.quality_assessor = DocumentQualityAssessor(llm)
-        
+
         max_iterations = request.max_iterations or getattr(
-            getattr(self.config.rag_modes, 'agentic', None), 'max_iterations', 3
+            getattr(self.config.rag_modes, "agentic", None), "max_iterations", 3
         )
 
         logger.info("agentic_rag_start", query=request.query, max_iterations=max_iterations)
@@ -188,10 +203,9 @@ class AgenticRAGMode(BaseRAGMode):
 
             # Create research plan (possibly incorporating previous findings)
             prev_findings = [
-                {"summary": it.summary, "missing": it.missing_info}
-                for it in iterations
+                {"summary": it.summary, "missing": it.missing_info} for it in iterations
             ]
-            
+
             plan_result = await self._create_research_plan(
                 request.query, llm, request, prev_findings
             )
@@ -217,7 +231,7 @@ class AgenticRAGMode(BaseRAGMode):
                     tools=tools,
                     request=request,
                 )
-                
+
                 iteration.steps.append(step)
                 all_documents.extend(step.documents)
 
@@ -225,7 +239,7 @@ class AgenticRAGMode(BaseRAGMode):
                 is_answered, confidence = await self._is_question_answered(
                     iteration.steps, request.query, llm
                 )
-                
+
                 if is_answered and confidence >= self.early_exit_confidence:
                     logger.info("early_exit_triggered", confidence=confidence)
                     iteration.question_answered = True
@@ -233,9 +247,7 @@ class AgenticRAGMode(BaseRAGMode):
                     break
 
             # Create iteration summary
-            summary = await self._create_iteration_summary(
-                request.query, iteration.steps, llm
-            )
+            summary = await self._create_iteration_summary(request.query, iteration.steps, llm)
             iteration.summary = summary.get("findings", "")
             iteration.missing_info = summary.get("missing", [])
             iteration.should_continue = summary.get("should_continue", False)
@@ -255,15 +267,13 @@ class AgenticRAGMode(BaseRAGMode):
                     iteration.steps,
                     llm,
                 )
-                
+
                 # If evaluation says to stop, break
                 if adjusted.get("should_complete"):
                     break
 
         # Generate final answer
-        answer = await self._generate_final_answer(
-            request.query, iterations, llm, request
-        )
+        answer = await self._generate_final_answer(request.query, iterations, llm, request)
 
         # Deduplicate and prepare sources
         sources = self._prepare_sources(all_documents)
@@ -293,27 +303,44 @@ class AgenticRAGMode(BaseRAGMode):
         step = AgentStep(query=query, purpose=purpose)
 
         # Stage 1: Try KB search first
-        logger.debug("step_kb_search", query=query)
-        
+        logger.debug("step_kb_search", query=query, use_hybrid=self.use_hybrid)
+
         try:
             query_embedding = await embedding_provider.embed([query])
             kb_results = await vector_store.search(
                 collection=chroma_collection_name_for_kb(request.kb_name),
                 query_embedding=query_embedding[0],
-                top_k=10,
+                top_k=self.initial_docs,
             )
-            
+
+            # Apply hybrid retrieval if enabled
+            if self.use_hybrid and kb_results and llm is not None:
+                try:
+                    logger.debug("step_applying_hybrid", query=query[:100])
+                    vector_scores = [getattr(r, "score", 0.5) for r in kb_results]
+                    hybrid_results = await hybrid_retrieval(
+                        query=query,
+                        documents=kb_results,
+                        vector_scores=vector_scores,
+                        use_llm_weights=True,
+                        llm=llm,
+                    )
+                    kb_results = [doc for doc, _ in hybrid_results]
+                    logger.debug("step_hybrid_applied", num_results=len(kb_results))
+                except Exception as e:
+                    logger.warning("step_hybrid_error", error=str(e))
+
             # Assess document quality
             is_sufficient, missing, confidence = await self.quality_assessor.assess(
                 query, kb_results, purpose
             )
-            
+
             if is_sufficient and confidence >= 0.7:
                 step.documents = kb_results
                 step.success = True
                 step.confidence = confidence
                 step.tool_used = "kb_search"
-                
+
                 # Analyze documents
                 analysis = await self._analyze_documents(
                     query, kb_results, purpose, original_query, llm
@@ -321,45 +348,48 @@ class AgenticRAGMode(BaseRAGMode):
                 step.analysis = analysis.get("analysis", "")
                 step.key_points = analysis.get("key_points", [])
                 step.missing_aspects = analysis.get("missing_aspects", [])
-                
+
                 return step
-                
+
         except Exception as e:
             logger.warning("kb_search_error", error=str(e))
 
         # Stage 2: Use web search if KB insufficient and tool available
         if "web_search" in tools.list_tools():
             logger.debug("step_web_search", query=query)
-            
+
             try:
                 web_tool = tools.get("web_search")
                 web_result = await web_tool.execute(query=query, max_results=5)
-                
+
                 step.tool_used = "web_search"
                 step.tool_output = web_result
-                
+
                 # For web search, we need to fetch PDFs if available
                 if "fetch_pdf" in tools.list_tools():
                     # Try to extract URLs and fetch PDFs
                     import re
+
                     urls = re.findall(r'https?://[^\s<>"{}|\\^`[\]]+', web_result)
-                    
+
                     for url in urls[:2]:  # Limit to first 2
                         try:
                             pdf_tool = tools.get("fetch_pdf")
                             pdf_content = await pdf_tool.execute(url=url)
-                            step.documents.append({
-                                "source": "web_pdf",
-                                "url": url,
-                                "content": pdf_content,
-                            })
+                            step.documents.append(
+                                {
+                                    "source": "web_pdf",
+                                    "url": url,
+                                    "content": pdf_content,
+                                }
+                            )
                         except Exception:
                             pass
-                
+
                 if step.documents:
                     step.success = True
                     step.confidence = 0.6  # Lower confidence for web sources
-                    
+
             except Exception as e:
                 logger.warning("web_search_error", error=str(e))
 
@@ -374,7 +404,7 @@ class AgenticRAGMode(BaseRAGMode):
         llm: Any,
     ) -> dict:
         """Analyze documents for relevance and extract key information."""
-        
+
         if not documents:
             return {
                 "analysis": "No documents to analyze",
@@ -389,13 +419,13 @@ class AgenticRAGMode(BaseRAGMode):
         # Format documents
         doc_texts = []
         for i, doc in enumerate(documents[:5]):
-            if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'text'):
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
                 text = doc.chunk.text[:800]
-            elif hasattr(doc, 'content'):
+            elif hasattr(doc, "content"):
                 text = str(doc.content)[:800]
             else:
                 text = str(doc)[:800]
-            doc_texts.append(f"[Document {i+1}]\n{text}")
+            doc_texts.append(f"[Document {i + 1}]\n{text}")
 
         doc_content = "\n\n---\n\n".join(doc_texts)
 
@@ -428,7 +458,7 @@ Respond in JSON format:
             import json
             import re
 
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
             return json.loads(response)
@@ -453,7 +483,7 @@ Respond in JSON format:
     ) -> tuple[bool, float]:
         """
         Evaluate if the original question is sufficiently answered.
-        
+
         Returns:
             Tuple of (is_answered, confidence)
         """
@@ -461,12 +491,12 @@ Respond in JSON format:
             return False, 0.0
 
         # Format step information
-        steps_info = "\n\n".join([
-            f"Step: {step.purpose}\n"
-            f"Success: {step.success}\n"
-            f"Analysis: {step.analysis[:300]}..."
-            for step in steps
-        ])
+        steps_info = "\n\n".join(
+            [
+                f"Step: {step.purpose}\nSuccess: {step.success}\nAnalysis: {step.analysis[:300]}..."
+                for step in steps
+            ]
+        )
 
         system_prompt = """Evaluate whether the completed research steps collectively answer the original question.
 
@@ -484,7 +514,10 @@ Respond in JSON format:
             response = await llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Question: {original_question}\n\nResearch:\n{steps_info}"},
+                    {
+                        "role": "user",
+                        "content": f"Question: {original_question}\n\nResearch:\n{steps_info}",
+                    },
                 ],
                 temperature=0.0,
                 max_tokens=300,
@@ -493,7 +526,7 @@ Respond in JSON format:
             import json
             import re
 
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
@@ -516,7 +549,7 @@ Respond in JSON format:
         previous_findings: list[dict] | None = None,
     ) -> dict:
         """Create a research plan with specific steps and queries."""
-        
+
         context = {
             "question": question,
             "previous_findings": previous_findings or [],
@@ -556,7 +589,7 @@ Guidelines:
             import json
             import re
 
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
@@ -584,13 +617,13 @@ Guidelines:
         llm: Any,
     ) -> dict:
         """Create summary of current research iteration."""
-        
-        steps_summary = "\n\n".join([
-            f"Step: {step.query}\n"
-            f"Purpose: {step.purpose}\n"
-            f"Analysis: {step.analysis}"
-            for step in steps
-        ])
+
+        steps_summary = "\n\n".join(
+            [
+                f"Step: {step.query}\nPurpose: {step.purpose}\nAnalysis: {step.analysis}"
+                for step in steps
+            ]
+        )
 
         system_prompt = """Review the research steps and their findings to determine:
 1. What we've learned that directly addresses the original question
@@ -620,7 +653,7 @@ Be selective - include only high-quality, directly relevant findings."""
             import json
             import re
 
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
             return json.loads(response)
@@ -643,14 +676,16 @@ Be selective - include only high-quality, directly relevant findings."""
         llm: Any,
     ) -> dict:
         """Review and adjust the research plan based on results."""
-        
-        completed_info = "\n\n".join([
-            f"Step: {step.purpose}\n"
-            f"Query: {step.query}\n"
-            f"Success: {step.success}\n"
-            f"Analysis: {step.analysis[:400]}"
-            for step in completed_steps
-        ])
+
+        completed_info = "\n\n".join(
+            [
+                f"Step: {step.purpose}\n"
+                f"Query: {step.query}\n"
+                f"Success: {step.success}\n"
+                f"Analysis: {step.analysis[:400]}"
+                for step in completed_steps
+            ]
+        )
 
         system_prompt = """Evaluate the research progress and determine the best course of action.
 
@@ -673,7 +708,10 @@ Respond in JSON format:
             response = await llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Question: {original_question}\n\nCompleted:\n{completed_info}"},
+                    {
+                        "role": "user",
+                        "content": f"Question: {original_question}\n\nCompleted:\n{completed_info}",
+                    },
                 ],
                 temperature=0.3,
                 max_tokens=400,
@@ -682,7 +720,7 @@ Respond in JSON format:
             import json
             import re
 
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
             else:
@@ -709,13 +747,15 @@ Respond in JSON format:
         request: RAGRequest,
     ) -> str:
         """Generate final answer based on all iterations."""
-        
-        iterations_summary = "\n\n".join([
-            f"Iteration {it.iteration_num}:\n"
-            f"Findings: {it.summary}\n"
-            f"Missing: {', '.join(it.missing_info)}"
-            for it in iterations
-        ])
+
+        iterations_summary = "\n\n".join(
+            [
+                f"Iteration {it.iteration_num}:\n"
+                f"Findings: {it.summary}\n"
+                f"Missing: {', '.join(it.missing_info)}"
+                for it in iterations
+            ]
+        )
 
         system_prompt = """Review all research iterations and generate a comprehensive final answer.
 
@@ -732,7 +772,10 @@ If the research does not provide enough information, clearly state this."""
             response = await llm.complete(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Question: {question}\n\nResearch History:\n{iterations_summary}"},
+                    {
+                        "role": "user",
+                        "content": f"Question: {question}\n\nResearch History:\n{iterations_summary}",
+                    },
                 ],
                 model=request.model,
                 provider=request.provider,
@@ -748,16 +791,16 @@ If the research does not provide enough information, clearly state this."""
         """Deduplicate and prepare sources from documents."""
         seen = set()
         sources = []
-        
+
         for doc in documents:
             # Extract metadata
-            if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'metadata'):
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "metadata"):
                 meta = doc.chunk.metadata
-                title = getattr(meta, 'title', 'Untitled')
-                authors = getattr(meta, 'authors', [])
-                year = getattr(meta, 'year', None)
-            elif hasattr(doc, 'content') and isinstance(doc, dict):
-                title = doc.get('source', 'Web source')
+                title = getattr(meta, "title", "Untitled")
+                authors = getattr(meta, "authors", [])
+                year = getattr(meta, "year", None)
+            elif hasattr(doc, "content") and isinstance(doc, dict):
+                title = doc.get("source", "Web source")
                 authors = []
                 year = None
             else:
@@ -768,12 +811,14 @@ If the research does not provide enough information, clearly state this."""
                 continue
             seen.add(title)
 
-            sources.append(SourceReference(
-                title=title,
-                authors=authors,
-                year=year,
-                relevance_score=getattr(doc, 'score', 0.0),
-            ))
+            sources.append(
+                SourceReference(
+                    title=title,
+                    authors=authors,
+                    year=year,
+                    relevance_score=getattr(doc, "score", 0.0),
+                )
+            )
 
         # Sort by relevance
         sources.sort(key=lambda x: x.relevance_score or 0, reverse=True)
@@ -785,25 +830,158 @@ If the research does not provide enough information, clearly state this."""
         llm: Any,
         vector_store: Any,
         embedding_provider: Any,
-        tools: ToolRegistry,
+        tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute agentic RAG with streaming output."""
+        import json
+
         yield StreamEvent.status("Initializing agentic research...")
-        
-        # For now, delegate to non-streaming version
-        response = await self.execute(
-            request, llm, vector_store, embedding_provider, tools
+
+        self.quality_assessor = DocumentQualityAssessor(llm)
+
+        max_iterations = request.max_iterations or getattr(
+            getattr(self.config.rag_modes, "agentic", None), "max_iterations", 3
         )
-        
-        yield StreamEvent.status("Research complete, generating answer...")
-        
-        # Stream the answer
-        for chunk in response.answer.split():
-            yield StreamEvent.content(chunk + " ")
-        
+
+        iterations: list[ResearchIteration] = []
+        all_documents: list[Any] = []
+
+        # Main research loop
+        for cycle in range(max_iterations):
+            yield StreamEvent.status(f"Agentic RAG: Research cycle {cycle + 1}/{max_iterations}...")
+
+            # Create research plan
+            prev_findings = [
+                {"summary": it.summary, "missing": it.missing_info} for it in iterations
+            ]
+
+            plan_result = await self._create_research_plan(
+                request.query, llm, request, prev_findings
+            )
+
+            iteration = ResearchIteration(
+                iteration_num=cycle + 1,
+                plan=plan_result["plan"],
+                steps=[],
+            )
+
+            # Execute each step
+            for step_idx, (step_desc, step_query) in enumerate(
+                zip(plan_result["plan"], plan_result["queries"])
+            ):
+                yield StreamEvent.status(
+                    f"Agentic RAG: Executing step {step_idx + 1}: {step_desc[:50]}..."
+                )
+
+                step = await self._execute_step(
+                    query=step_query,
+                    purpose=step_desc,
+                    original_query=request.query,
+                    llm=llm,
+                    vector_store=vector_store,
+                    embedding_provider=embedding_provider,
+                    tools=tools,
+                    request=request,
+                )
+
+                iteration.steps.append(step)
+                all_documents.extend(step.documents)
+
+                if step.success:
+                    yield StreamEvent.status(
+                        f"Agentic RAG: Step {step_idx + 1} complete - found {len(step.documents)} documents"
+                    )
+
+                # Check for early exit
+                is_answered, confidence = await self._is_question_answered(
+                    iteration.steps, request.query, llm
+                )
+
+                if is_answered and confidence >= self.early_exit_confidence:
+                    yield StreamEvent.status(
+                        f"Agentic RAG: Early exit triggered (confidence: {confidence:.2f})"
+                    )
+                    iteration.question_answered = True
+                    iteration.should_continue = False
+                    break
+
+            # Create iteration summary
+            summary = await self._create_iteration_summary(request.query, iteration.steps, llm)
+            iteration.summary = summary.get("findings", "")
+            iteration.missing_info = summary.get("missing", [])
+            iterations.append(iteration)
+
+            if not iteration.should_continue:
+                break
+
+            # Review and adjust plan
+            if cycle < max_iterations - 1:
+                adjusted = await self._review_and_adjust_plan(
+                    request.query,
+                    plan_result["plan"],
+                    plan_result["queries"],
+                    iteration.steps,
+                    llm,
+                )
+
+                if adjusted.get("should_complete"):
+                    yield StreamEvent.status("Agentic RAG: Research complete based on review")
+                    break
+
+        # Stream final answer generation
+        yield StreamEvent.status("Agentic RAG: Synthesizing final answer...")
+
+        # Prepare sources
+        sources = self._prepare_sources(all_documents)
+        for source in sources:
+            yield StreamEvent.source(source)
+
+        # Build context for final answer
+        iterations_summary = "\n\n".join(
+            [
+                f"Iteration {it.iteration_num}:\n"
+                f"Findings: {it.summary}\n"
+                f"Missing: {', '.join(it.missing_info)}"
+                for it in iterations
+            ]
+        )
+
+        system_prompt = """Review all research iterations and generate a comprehensive final answer.
+
+Your answer should:
+1. Directly address the original question
+2. Prioritize the most relevant findings
+3. Maintain scientific precision and accuracy
+4. Be clear and direct
+5. Acknowledge limitations rather than speculating
+
+If the research does not provide enough information, clearly state this."""
+
+        # Stream the LLM response
+        try:
+            async for chunk in llm.stream(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": f"Question: {request.query}\n\nResearch History:\n{iterations_summary}",
+                    },
+                ],
+                model=request.model,
+                provider=request.provider,
+                max_tokens=2000,
+                temperature=0.3,
+            ):
+                yield StreamEvent.content(chunk)
+        except Exception as e:
+            logger.error("agentic_streaming_error", error=str(e))
+            # Fall back to non-streaming
+            answer = await self._generate_final_answer(request.query, iterations, llm, request)
+            yield StreamEvent.content(answer)
+
         yield StreamEvent.done(
             conversation_id="",
             tokens_used=0,
             mode="agentic",
-            iterations=getattr(response, 'iterations', 1),
+            iterations=len(iterations),
         )
