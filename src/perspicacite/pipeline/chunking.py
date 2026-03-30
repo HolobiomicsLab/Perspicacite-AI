@@ -1,4 +1,8 @@
-"""Text chunking for document processing."""
+"""Text chunking for document processing.
+
+This module provides basic chunking strategies. For advanced strategies
+(semantic, agentic with LLM), use chunking_advanced module.
+"""
 
 import re
 from typing import Literal

@@ -11,7 +11,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 ### Duplication to Fix
 - [x] Unify BibTeX parsing (CLI uses bibtexparser, Web UI uses regex)
 - [x] Clarify PDF download logic (`get_pdf_with_fallback` vs `get_content_with_fallback`) - both needed, documented
-- [ ] Consolidate chunking systems (`pipeline/chunking.py` vs `rag/chunking.py`)
+- [x] Consolidate chunking systems - Created `chunking_advanced.py` with v1 strategies (semantic, section-aware)
 - [ ] Pick one agentic path (orchestrator vs `RAGEngine` + `AgenticRAGMode`)
 
 ### Unused/Dead Code to Clean Up, make sure to double check that it is really not used.
