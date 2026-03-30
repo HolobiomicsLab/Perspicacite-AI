@@ -107,7 +107,10 @@ class ChatResponse(BaseModel):
     session_id: Optional[str] = None
 
 
-# Global state
+# =============================================================================
+# SECTION 2: Application State
+# =============================================================================
+
 class AppState:
     """Application state with agentic orchestrator and RAG engine."""
 
@@ -212,6 +215,10 @@ class AppState:
 app_state = AppState()
 
 
+# =============================================================================
+# SECTION 3: Helper Functions
+# =============================================================================
+
 def _get_pdf_fallback_kwargs(pdf_config) -> dict:
     """Build keyword args for get_pdf_with_fallback from PDFDownloadConfig."""
     if not pdf_config:
@@ -238,6 +245,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Perspicacité v2 - True Agentic RAG", lifespan=lifespan)
 
 
+# =============================================================================
+# SECTION 4: Web UI Route
+# =============================================================================
+
 @app.get("/", response_class=HTMLResponse)
 async def get_chat_interface():
     """Serve the chat interface."""
@@ -248,6 +259,10 @@ async def get_chat_interface():
         content = "<h1>Perspicacité v2</h1><p>Template not found. Please ensure templates/index.html exists.</p>"
     return HTMLResponse(content=content)
 
+
+# =============================================================================
+# SECTION 5: Chat API Routes
+# =============================================================================
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -457,6 +472,10 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
+# =============================================================================
+# SECTION 6: Health & System Routes
+# =============================================================================
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -479,6 +498,10 @@ async def health_check():
 
 # ── Conversation routes ─────────────────────────────────────────────
 
+
+# =============================================================================
+# SECTION 7: Conversation Management Routes
+# =============================================================================
 
 @app.get("/api/conversations")
 async def list_conversations(session_id: Optional[str] = None):
@@ -578,8 +601,35 @@ async def add_message(conv_id: str, request: dict):
     return {"status": "ok"}
 
 
+@app.delete("/api/conversations/{conv_id}")
+async def delete_conversation(conv_id: str):
+    """Delete a conversation and all its messages."""
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="Session store not available")
+
+    success = await app_state.session_store.delete_conversation(conv_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return {"status": "deleted", "conversation_id": conv_id}
+
+
+@app.delete("/api/conversations")
+async def delete_all_conversations():
+    """Delete all conversations for the current user."""
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="Session store not available")
+
+    count = await app_state.session_store.delete_all_conversations()
+    return {"status": "deleted", "count": count}
+
+
 # ── KB CRUD routes ──────────────────────────────────────────────────
 
+
+# =============================================================================
+# SECTION 8: Knowledge Base Routes
+# =============================================================================
 
 @app.get("/api/kb")
 async def list_knowledge_bases():
@@ -968,6 +1018,10 @@ async def add_bibtex_to_kb(name: str, request: Request):
 
 
 
+
+# =============================================================================
+# SECTION 9: Main Entry Point
+# =============================================================================
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

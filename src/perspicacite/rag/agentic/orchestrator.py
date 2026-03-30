@@ -127,6 +127,9 @@ class AgenticOrchestrator:
         session.kb_name = kb_name
         logger.info(f"Session messages count: {len(session.messages)}")
 
+        # Clear accumulated papers from previous requests
+        self._found_papers = []
+
         # Step 1: Classify intent
         yield {"type": "thinking", "message": "Analyzing your query..."}
 
@@ -278,11 +281,41 @@ class AgenticOrchestrator:
         logger.info(f"Completed {len(completed_steps)} steps")
         logger.info(f"Step results keys: {list(step_results.keys())}")
 
-        # Step 4: Generate final answer
+        # Step 4: Extract and process papers with progress updates
+        yield {"type": "thinking", "message": "Extracting papers from search results..."}
+        papers = self._extract_papers_from_results(step_results)
+        logger.info(f"Extracted {len(papers)} papers from search results")
+        
+        # Score papers for relevance
+        yield {"type": "thinking", "message": f"Scoring {len(papers)} papers for relevance..."}
+        papers = await self._score_papers_for_relevance(query, papers, min_score=3)
+        included_count = len([p for p in papers if p.get("relevance_score", 3) >= 3])
+        yield {"type": "thinking", "message": f"Relevance filtering: {included_count}/{len(papers)} papers included"}
+        
+        # Download full text for top relevant papers (up to 5)
+        max_download = 5
+        download_candidates = [p for p in papers if p.get("relevance_score", 3) >= 3][:max_download]
+        if download_candidates:
+            yield {"type": "thinking", "message": f"Attempting to download {len(download_candidates)} papers for full text..."}
+            
+            downloaded_count = 0
+            for i, paper in enumerate(download_candidates, 1):
+                title = paper.get('title', 'Unknown')[:50]
+                yield {"type": "thinking", "message": f"Downloading paper {i}/{len(download_candidates)}: {title}..."}
+                
+                enriched = await self._download_single_paper(paper)
+                if enriched.get("pdf_downloaded"):
+                    downloaded_count += 1
+                    yield {"type": "thinking", "message": f"✓ Downloaded paper {i}: {title}"}
+                else:
+                    yield {"type": "thinking", "message": f"✗ Paper {i} not available: {title}"}
+            
+            yield {"type": "thinking", "message": f"Downloaded {downloaded_count}/{len(download_candidates)} papers successfully"}
+        
+        # Generate final answer
         yield {"type": "thinking", "message": "Synthesizing answer..."}
-
         answer = await self._generate_answer(
-            query=query, plan=plan, step_results=step_results, session=session
+            query=query, plan=plan, step_results=step_results, session=session, papers=papers
         )
 
         session.add_message(
@@ -298,9 +331,10 @@ class AgenticOrchestrator:
         yield {"type": "answer", "content": answer, "session_id": session.session_id}
 
         # Yield found papers so the UI can offer "Add to KB"
-        found_papers = self._extract_papers_from_results(step_results)
-        if found_papers:
-            yield {"type": "papers_found", "papers": found_papers}
+        # Only include papers that passed relevance filtering (score >= 3)
+        relevant_papers = [p for p in papers if p.get("relevance_score", 3) >= 3]
+        if relevant_papers:
+            yield {"type": "papers_found", "papers": relevant_papers}
 
     def _get_next_step(
         self, plan: Plan, completed: List[Step], results: Dict[str, Any]
@@ -431,6 +465,16 @@ class AgenticOrchestrator:
                             logger.warning(
                                 f"KB_SEARCH: hybrid retrieval failed: {e}", exc_info=True
                             )
+                    
+                    # Filter results by minimum relevance score (0.5 = medium relevance)
+                    min_relevance_threshold = 0.5
+                    filtered_results = [r for r in results if r.get("score", 0) >= min_relevance_threshold]
+                    if len(filtered_results) < len(results):
+                        logger.info(
+                            f"KB_SEARCH: filtered {len(results) - len(filtered_results)} low-relevance results "
+                            f"(score < {min_relevance_threshold}), kept {len(filtered_results)}"
+                        )
+                        results = filtered_results
                     for j, r in enumerate(results, 1):
                         meta = r.get("metadata")
                         pid = (
@@ -488,7 +532,7 @@ class AgenticOrchestrator:
                                     f"KB_SEARCH: Hit {i} has EMPTY text content for '{title}'"
                                 )
 
-                            formatted_parts.append(f"\n{i}. {title} (relevance: {score:.2f})")
+                            formatted_parts.append(f"\n- {title} (relevance: {score:.2f})")
                             if authors:
                                 formatted_parts.append(f"   Authors: {authors}")
                             if year:
@@ -501,6 +545,19 @@ class AgenticOrchestrator:
                                     formatted_parts.append("   [... content truncated ...]")
                             else:
                                 formatted_parts.append("   Content: [No text content available]")
+                            
+                            # Add to _found_papers for reference list generation
+                            if hasattr(self, "_found_papers"):
+                                self._found_papers.append({
+                                    "title": title,
+                                    "authors": [a.strip() for a in authors.split(",")] if authors else [],
+                                    "year": year,
+                                    "doi": doi,
+                                    "abstract": text_content[:500] if text_content else "",
+                                    "source": "kb_search",
+                                    "relevance_score": 4,  # KB papers are considered relevant by default
+                                })
+                        
                         out = "\n".join(formatted_parts)
                         logger.info(f"KB_SEARCH: formatted tool result length={len(out)} chars")
                         return out
@@ -569,13 +626,16 @@ class AgenticOrchestrator:
             "Reply with ONLY a single JSON object, no markdown fences: "
             '{"sufficient": true or false, "reason": "short phrase"}\n\n'
             "Guidelines:\n"
-            "- sufficient=true if the snippets clearly address the question (definitions, how a method works, "
-            "mechanisms, workflow). Multiple on-topic abstracts or summaries count.\n"
-            "- sufficient=false only if retrieval is off-topic, empty of usable facts, or missing the core "
-            "concept the question asks about.\n"
-            "- Do NOT set sufficient=false just to fetch extra redundant papers on the same topic from the web; "
-            "duplicate OpenAlex hits are not a reason to continue.\n"
-            "- When unsure, prefer sufficient=true if any retrieved chunk is substantively on-topic."
+            "- sufficient=true ONLY if retrieved papers DIRECTLY address the user's specific query. "
+            "The papers must be on the EXACT topic asked, not just related keywords.\n"
+            "- sufficient=false if: (a) papers are off-topic, (b) papers only mention keywords but don't "
+            "address the core question, (c) relevance scores are low (<0.6), (d) no paper actually "
+            "answers the specific question asked.\n"
+            "- Example: Query 'FBMN on tea extract' with papers about 'Bifidobacterium peptides' or "
+            "'fermented bean paste' → sufficient=false (wrong topic entirely).\n"
+            "- Example: Query 'FBMN on tea extract' with paper about 'EGCG fermentation metabolites' → "
+            "sufficient=false (mentions tea compound but not FBMN application to tea extract).\n"
+            "- Be STRICT: prefer sufficient=false when papers are tangential or use loose keyword matching."
         )
 
         try:
@@ -607,14 +667,15 @@ class AgenticOrchestrator:
         last_result = step_results.get(last_step.id)
         last_str = str(last_result) if last_result is not None else ""
 
-        # KB-first: LLM judges whether retrieved content is enough (not string length).
-        if last_step.type == StepType.KB_SEARCH:
-            if await self._llm_judge_kb_sufficiency(query, last_str):
-                return "answer"
-            return "continue"
+        # In agentic mode: execute ALL planned steps, don't skip based on KB results.
+        # The planner already decided what sources are needed - trust the plan.
+        # Only skip to answer if there are no more steps to execute.
+        remaining_steps = [s for s in plan.steps if s.id not in {cs.id for cs in completed_steps}]
+        if not remaining_steps:
+            return "answer"
 
-        # After other search tools: stop once we have substantial results from 2+ search steps
-        # (legacy behavior so e.g. two OpenAlex refinements can still terminate early).
+        # After search tools: check if we should stop early only when we've completed
+        # substantial work and have results from multiple sources
         has_substantial_results = False
         for result in step_results.values():
             result_str = str(result)
@@ -622,7 +683,8 @@ class AgenticOrchestrator:
                 has_substantial_results = True
                 break
 
-        if has_substantial_results and len(completed_steps) >= 2:
+        # Only suggest early termination if we have 3+ completed steps with results
+        if has_substantial_results and len(completed_steps) >= 3:
             return "answer"
 
         return "continue"
@@ -681,7 +743,8 @@ Provide a synthesized summary that combines the key insights from all sources.""
         return await self.llm.complete(prompt, temperature=0.3)
 
     async def _generate_answer(
-        self, query: str, plan: Plan, step_results: Dict[str, Any], session: AgentSession
+        self, query: str, plan: Plan, step_results: Dict[str, Any], session: AgentSession,
+        papers: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """Generate final answer using all results."""
 
@@ -689,9 +752,11 @@ Provide a synthesized summary that combines the key insights from all sources.""
         logger.info(f"Query: {query}")
         logger.info(f"Step results available: {list(step_results.keys())}")
 
-        # Extract papers and score for relevance
-        papers = self._extract_papers_from_results(step_results)
-        papers = await self._score_papers_for_relevance(query, papers, min_score=3)
+        # Use pre-processed papers if provided, otherwise extract from results
+        if papers is None:
+            papers = self._extract_papers_from_results(step_results)
+            papers = await self._score_papers_for_relevance(query, papers, min_score=3)
+        
         numbered_paper_list = self._build_numbered_paper_list(papers)
 
         # Build context from step results
@@ -708,6 +773,19 @@ Provide a synthesized summary that combines the key insights from all sources.""
                 result_str = str(result)
                 logger.info(f"Step {step_id} result length: {len(result_str)} chars")
                 context_parts.append(f"{step_id}:\n{result_str[:3000]}")
+
+        # Add full text from downloaded papers to context
+        full_text_parts = []
+        for i, paper in enumerate(papers, 1):
+            if paper.get("full_text"):
+                full_text_parts.append(
+                    f"[Paper {i}: {paper.get('title', 'Unknown')[:80]}...]\n"
+                    f"Full text excerpt:\n{paper['full_text'][:8000]}..."
+                )
+        
+        if full_text_parts:
+            context_parts.append("\n\n---\n\nDownloaded Full Text:\n" + "\n\n---\n\n".join(full_text_parts))
+            logger.info(f"Added {len(full_text_parts)} full text documents to context")
 
         context = "\n\n".join(context_parts)
         logger.info(f"Total context length: {len(context)} chars")
@@ -734,7 +812,10 @@ Answer Generation Guidelines:
 1. Focus on answering the SPECIFIC question asked - avoid tangential information
 2. Prioritize the most relevant findings from the research results
 3. Maintain scientific precision and technical accuracy
-4. **MANDATORY CITATION FORMAT**: When referencing any paper, you MUST use the bracket format [N] where N is the paper number from the numbered list above (e.g., [1], [2], [3]). ALWAYS use this format for paper citations - do NOT use author-year or other citation styles.
+4. **MANDATORY CITATION FORMAT**: Use ONLY the bracket format [N] where N is the paper number from the NUMBERED PAPER LIST section above (e.g., [1], [2], [3]). 
+   - IGNORE any numbers you see in the Research Results section (like bullet points or dashes)
+   - ONLY cite papers using the [N] format from the numbered list at the end
+   - If a paper is not in the numbered list, do NOT cite it with a number
 5. Be clear and direct in your language
 6. If the research results are insufficient to answer the question, clearly state this rather than speculating
 7. Structure your answer logically with clear sections if appropriate
@@ -779,6 +860,7 @@ Generate your answer:"""
             year = paper.get("year", "n.d.")
             doi = paper.get("doi", "")
             abstract = paper.get("abstract", "") or ""
+            has_full_text = paper.get("pdf_downloaded", False)
 
             # Format author string
             if len(authors) == 0:
@@ -794,7 +876,8 @@ Generate your answer:"""
             if len(abstract) > max_abstract_chars:
                 abstract = abstract[:max_abstract_chars].rsplit(" ", 1)[0] + "..."
 
-            lines.append(f"[{i}] {title}")
+            full_text_indicator = " [FULL TEXT DOWNLOADED]" if has_full_text else ""
+            lines.append(f"[{i}] {title}{full_text_indicator}")
             lines.append(f"    Authors: {author_str}")
             lines.append(f"    Year: {year}")
             if doi:
@@ -929,6 +1012,7 @@ Generate your answer:"""
             "search": search_terms,
             "per_page": max_results,
             "mailto": "perspicacite@example.com",
+            "select": "id,display_name,authorships,publication_year,cited_by_count,abstract_inverted_index,doi,open_access",
         }
 
         try:
@@ -938,6 +1022,9 @@ Generate your answer:"""
 
                 papers = []
                 for result in data.get("results", []):
+                    # Reconstruct abstract from inverted index
+                    abstract = self._reconstruct_abstract(result.get("abstract_inverted_index"))
+                    
                     paper = {
                         "id": result.get("id", ""),
                         "title": result.get("display_name", "Untitled"),
@@ -947,10 +1034,9 @@ Generate your answer:"""
                         ],
                         "year": result.get("publication_year"),
                         "cited_by_count": result.get("cited_by_count", 0),
-                        "abstract": result.get("abstract", "")[:500]
-                        if result.get("abstract")
-                        else "",
+                        "abstract": abstract[:800] if abstract else "",
                         "doi": result.get("doi", ""),
+                        "open_access": result.get("open_access", {}),
                     }
                     papers.append(paper)
 
@@ -1098,3 +1184,107 @@ Generate your answer:"""
         if not hasattr(self, "_found_papers") or not self._found_papers:
             return []
         return self._dedupe_paper_dicts(list(self._found_papers))
+
+    @staticmethod
+    def _reconstruct_abstract(inverted_index: dict | None) -> str:
+        """Reconstruct abstract text from OpenAlex inverted index format.
+        
+        OpenAlex stores abstracts as {"word": [positions]} to save space.
+        This reconstructs the original text.
+        """
+        if not inverted_index:
+            return ""
+        
+        # Build position -> word mapping
+        position_words = {}
+        for word, positions in inverted_index.items():
+            for pos in positions:
+                position_words[pos] = word
+        
+        # Sort by position and join
+        if not position_words:
+            return ""
+        
+        max_pos = max(position_words.keys())
+        words = []
+        for i in range(max_pos + 1):
+            words.append(position_words.get(i, ""))
+        
+        return " ".join(words).strip()
+
+    async def _download_single_paper(self, paper: Dict[str, Any]) -> Dict[str, Any]:
+        """Download and parse a single paper's PDF.
+        
+        Args:
+            paper: Paper dict with at least 'doi' and 'title'
+            
+        Returns:
+            Enriched paper dict with 'full_text' and 'pdf_downloaded' fields
+        """
+        from perspicacite.pipeline.download import get_pdf_with_fallback
+        from perspicacite.pipeline.parsers.pdf import PDFParser
+        
+        doi = paper.get("doi", "")
+        if not doi:
+            paper["pdf_downloaded"] = False
+            return paper
+        
+        parser = PDFParser()
+        
+        try:
+            pdf_bytes = await get_pdf_with_fallback(
+                doi=doi,
+                unpaywall_email="perspicacite@example.com",
+            )
+            
+            if pdf_bytes:
+                parsed = await parser.parse_bytes(pdf_bytes)
+                # Limit full text to avoid token overload
+                paper["full_text"] = parsed.text[:15000] if parsed.text else ""
+                paper["pdf_downloaded"] = True
+            else:
+                paper["pdf_downloaded"] = False
+                
+        except Exception as e:
+            logger.warning(f"Failed to download/parse PDF for {doi}: {e}")
+            paper["pdf_downloaded"] = False
+        
+        return paper
+
+    async def _download_and_enrich_papers(
+        self, 
+        papers: List[Dict[str, Any]], 
+        max_papers: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Download PDFs for relevant papers and extract full text.
+        
+        Args:
+            papers: List of paper dicts with DOI
+            max_papers: Maximum papers to download (default 5)
+            
+        Returns:
+            Papers with added 'full_text' field where download succeeded
+        """
+        # Only try to download for papers with DOI, prioritize open access
+        download_candidates = [
+            p for p in papers[:max_papers] 
+            if p.get("doi") and p.get("open_access", {}).get("is_oa", False)
+        ]
+        
+        if not download_candidates:
+            # If no OA papers, try the top relevant papers anyway
+            download_candidates = [p for p in papers[:max_papers] if p.get("doi")]
+        
+        logger.info(f"Attempting to download {len(download_candidates)} papers for full text enrichment")
+        
+        enriched = []
+        for paper in papers:
+            doi = paper.get("doi", "")
+            if not doi or paper not in download_candidates:
+                enriched.append(paper)
+                continue
+            
+            enriched_paper = await self._download_single_paper(paper)
+            enriched.append(enriched_paper)
+        
+        return enriched

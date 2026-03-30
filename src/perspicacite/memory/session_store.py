@@ -270,3 +270,46 @@ class SessionStore:
                 )
                 for r in rows
             ]
+
+    async def delete_conversation(self, conv_id: str) -> bool:
+        """Delete a conversation and all its messages.
+        
+        Returns True if conversation was found and deleted, False otherwise.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            # Check if conversation exists
+            row = await db.execute_fetchall(
+                "SELECT id FROM conversations WHERE id = ?",
+                (conv_id,),
+            )
+            if not row:
+                return False
+
+            # Delete conversation (messages will be cascade deleted)
+            await db.execute(
+                "DELETE FROM conversations WHERE id = ?",
+                (conv_id,),
+            )
+            await db.commit()
+
+        logger.info("conversation_deleted", conversation_id=conv_id)
+        return True
+
+    async def delete_all_conversations(self) -> int:
+        """Delete all conversations and their messages.
+        
+        Returns the number of conversations deleted.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            # Get count before deletion
+            row = await db.execute_fetchall(
+                "SELECT COUNT(*) as count FROM conversations"
+            )
+            count = row[0]["count"] if row else 0
+
+            # Delete all conversations (messages will be cascade deleted)
+            await db.execute("DELETE FROM conversations")
+            await db.commit()
+
+        logger.info("all_conversations_deleted", count=count)
+        return count

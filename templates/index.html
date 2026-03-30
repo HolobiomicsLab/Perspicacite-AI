@@ -592,6 +592,38 @@
         }
         .kb-create-form.visible { display: block; }
 
+        .kb-create-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 10px;
+        }
+        .kb-tab {
+            flex: 1;
+            padding: 6px 10px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 12px;
+            cursor: pointer;
+            color: var(--text-muted);
+        }
+        .kb-tab.active {
+            background: var(--secondary);
+            color: white;
+            border-color: var(--secondary);
+        }
+        .kb-tab-content textarea {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: var(--radius);
+            font-size: 12px;
+            min-height: 120px;
+            font-family: monospace;
+            resize: vertical;
+            margin-bottom: 8px;
+        }
+
         .kb-create-form input {
             width: 100%;
             padding: 8px 10px;
@@ -687,6 +719,22 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+
+        /* Clear History Button */
+        .clear-history-btn {
+            background: transparent;
+            border: none;
+            font-size: 14px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: var(--radius);
+            opacity: 0.6;
+            transition: opacity 0.2s, background 0.2s;
+        }
+        .clear-history-btn:hover {
+            opacity: 1;
+            background: rgba(239, 68, 68, 0.1);
         }
 
         /* KB Section */
@@ -933,6 +981,12 @@
             background: rgba(255, 255, 255, 0.05);
         }
 
+        [data-theme="dark"] .kb-tab-content textarea {
+            background: #1e293b;
+            color: var(--text-main);
+            border-color: #475569;
+        }
+
         [data-theme="dark"] .chat-history-item:hover {
             background: rgba(255, 255, 255, 0.05);
         }
@@ -967,7 +1021,10 @@
                 
                 <!-- Chat History -->
                 <div class="chat-history-section">
-                    <h3>💬 Chat History</h3>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h3 style="margin: 0;">💬 Chat History</h3>
+                        <button class="clear-history-btn" onclick="showClearHistoryDialog()" title="Clear all history">🗑️</button>
+                    </div>
                     <div id="chat-history-list" class="chat-history-list">
                         <div class="chat-history-item active" data-session="" data-kb="" data-created-at="">
                             <span class="chat-title">Current Chat</span>
@@ -989,9 +1046,31 @@
                         <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
                     </div>
                     <div id="kb-create-form" class="kb-create-form">
-                        <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
-                        <input id="kb-desc-input" type="text" placeholder="Description (optional)">
-                        <button onclick="createKB()">Create</button>
+                        <div class="kb-create-tabs">
+                            <button class="kb-tab active" onclick="switchKBTab('simple')" id="kb-tab-simple">Simple</button>
+                            <button class="kb-tab" onclick="switchKBTab('bibtex')" id="kb-tab-bibtex">From BibTeX</button>
+                        </div>
+                        <div id="kb-create-simple" class="kb-tab-content">
+                            <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
+                            <input id="kb-desc-input" type="text" placeholder="Description (optional)">
+                            <button onclick="createKB()">Create</button>
+                        </div>
+                        <div id="kb-create-bibtex" class="kb-tab-content" style="display:none;">
+                            <input id="kb-bibtex-name-input" type="text" placeholder="KB Name (e.g. FBMN papers)">
+                            <textarea id="kb-bibtex-content" placeholder="Paste BibTeX content here...
+
+@article{key1,
+  title = {Paper Title},
+  author = {Author Name},
+  year = {2024},
+  doi = {10.xxxx/xxxxx}
+}
+
+@article{key2,
+  ...
+}"></textarea>
+                            <button onclick="createKBFromBibtex()">Create from BibTeX</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1484,6 +1563,102 @@
                 showToast('Error creating KB: ' + e.message);
             }
         }
+
+        function switchKBTab(tab) {
+            document.querySelectorAll('.kb-tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('kb-tab-' + tab).classList.add('active');
+            
+            document.querySelectorAll('.kb-tab-content').forEach(c => c.style.display = 'none');
+            document.getElementById('kb-create-' + tab).style.display = 'block';
+        }
+
+        async function createKBFromBibtex() {
+            const name = document.getElementById('kb-bibtex-name-input').value.trim();
+            const bibtex = document.getElementById('kb-bibtex-content').value.trim();
+            
+            if (!name) {
+                showToast('Please enter a KB name');
+                return;
+            }
+            if (!bibtex) {
+                showToast('Please paste BibTeX content');
+                return;
+            }
+            
+            try {
+                // First create the KB
+                const resp = await fetch('/api/kb', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name, description: 'Created from BibTeX' })
+                });
+                
+                if (!resp.ok) {
+                    const data = await resp.json();
+                    const msg = data.detail
+                        ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
+                        : (data.error || 'Unknown error');
+                    showToast('Error: ' + msg);
+                    return;
+                }
+                
+                // Then add BibTeX content
+                const bibtexResp = await fetch('/api/kb/' + encodeURIComponent(name) + '/bibtex', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ bibtex })
+                });
+                
+                const bibtexData = await bibtexResp.json();
+                if (!bibtexResp.ok || bibtexData.error) {
+                    showToast('Error adding papers: ' + (bibtexData.error || 'Unknown error'));
+                    return;
+                }
+                
+                showToast('KB "' + name + '" created with ' + (bibtexData.papers_added || 0) + ' papers');
+                document.getElementById('kb-bibtex-name-input').value = '';
+                document.getElementById('kb-bibtex-content').value = '';
+                document.getElementById('kb-create-form').classList.remove('visible');
+                await loadKBs();
+                document.getElementById('kb-select').value = name;
+                selectKB(name);
+            } catch (e) {
+                showToast('Error creating KB from BibTeX: ' + e.message);
+            }
+        }
+
+        // Clear History Functions
+        function showClearHistoryDialog() {
+            document.getElementById('clear-history-dialog').style.display = 'flex';
+        }
+
+        function hideClearHistoryDialog() {
+            document.getElementById('clear-history-dialog').style.display = 'none';
+        }
+
+        async function confirmClearHistory() {
+            try {
+                const resp = await fetch('/api/conversations', { method: 'DELETE' });
+                if (resp.ok) {
+                    showToast('All chat history cleared');
+                    // Reset UI
+                    document.getElementById('chat-history-list').innerHTML = `
+                        <div class="chat-history-item active" data-session="" data-kb="" data-created-at="">
+                            <span class="chat-title">Current Chat</span>
+                            <span class="chat-kb">Web Search</span>
+                            <span class="chat-date">Now</span>
+                        </div>
+                    `;
+                    conversationId = null;
+                    newChat();
+                } else {
+                    showToast('Error clearing history');
+                }
+            } catch (e) {
+                showToast('Error: ' + e.message);
+            }
+            hideClearHistoryDialog();
+        }
         
         function decodeUtf8FromBase64(b64) {
             try {
@@ -1967,6 +2142,18 @@
             <div class="modal-buttons">
                 <button class="modal-cancel" onclick="hideDeleteKBDialog()">Cancel</button>
                 <button class="modal-confirm" id="delete-kb-confirm" onclick="confirmDeleteKB()" disabled>Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Clear History Confirmation Modal -->
+    <div id="clear-history-dialog" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <h3>Clear Chat History</h3>
+            <p>This will permanently delete <strong>all</strong> your chat conversations. This cannot be undone.</p>
+            <div class="modal-buttons">
+                <button class="modal-cancel" onclick="hideClearHistoryDialog()">Cancel</button>
+                <button class="modal-confirm" onclick="confirmClearHistory()">Clear All</button>
             </div>
         </div>
     </div>
