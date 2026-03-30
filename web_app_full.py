@@ -212,6 +212,20 @@ class AppState:
 app_state = AppState()
 
 
+def _get_pdf_fallback_kwargs(pdf_config) -> dict:
+    """Build keyword args for get_pdf_with_fallback from PDFDownloadConfig."""
+    if not pdf_config:
+        return {}
+    return {
+        "alternative_endpoint": pdf_config.alternative_endpoint,
+        "unpaywall_email": pdf_config.unpaywall_email,
+        "wiley_tdm_token": pdf_config.wiley_tdm_token,
+        "aaas_api_key": pdf_config.aaas_api_key,
+        "rsc_api_key": pdf_config.rsc_api_key,
+        "springer_api_key": pdf_config.springer_api_key,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -687,10 +701,8 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     skipped_duplicates = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0}
 
-    # Get PDF download config
     pdf_config = app_state.config.pdf_download if app_state.config else None
-    alt_endpoint = pdf_config.alternative_endpoint if pdf_config else None
-    unpaywall_email = pdf_config.unpaywall_email if pdf_config else None
+    pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
 
     for pd in request.papers:
         import hashlib
@@ -729,9 +741,7 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
             download_stats["attempted"] += 1
             try:
                 # Try Unpaywall first, then alternative endpoint
-                pdf_bytes = await get_pdf_with_fallback(
-                    pd.doi, alternative_endpoint=alt_endpoint, unpaywall_email=unpaywall_email
-                )
+                pdf_bytes = await get_pdf_with_fallback(pd.doi, **pdf_kw)
                 if pdf_bytes and len(pdf_bytes) > 1000:
                     parsed = await app_state.pdf_parser.parse(pdf_bytes)
                     if parsed and parsed.text:
@@ -877,10 +887,8 @@ async def add_bibtex_to_kb(name: str, request: Request):
     papers_to_add = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0}
 
-    # Get PDF download config
     pdf_config = app_state.config.pdf_download if app_state.config else None
-    alt_endpoint = pdf_config.alternative_endpoint if pdf_config else None
-    unpaywall_email = pdf_config.unpaywall_email if pdf_config else None
+    pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
 
     for entry in parsed_entries:
         import hashlib
@@ -913,9 +921,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
             download_stats["attempted"] += 1
             try:
                 # Try Unpaywall first, then alternative endpoint
-                pdf_bytes = await get_pdf_with_fallback(
-                    entry["doi"], alternative_endpoint=alt_endpoint, unpaywall_email=unpaywall_email
-                )
+                pdf_bytes = await get_pdf_with_fallback(entry["doi"], **pdf_kw)
                 if pdf_bytes and len(pdf_bytes) > 1000:
                     parsed = await app_state.pdf_parser.parse(pdf_bytes)
                     if parsed and parsed.text:

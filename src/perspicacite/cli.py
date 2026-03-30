@@ -141,13 +141,19 @@ def serve(
     "--from-bibtex",
     "-b",
     type=click.Path(exists=True, path_type=Path),
-    help="Create from BibTeX file",
+    help="Create from BibTeX file (.bib)",
 )
 @click.option(
-    "--embedding-model",
-    "-e",
-    default="text-embedding-3-small",
-    help="Embedding model to use",
+    "--session-db",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="SQLite DB for KB metadata (default: data/perspicacite.db, same as web app)",
+)
+@click.option(
+    "--chroma-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Chroma persist directory (default: from config database.chroma_path)",
 )
 @click.pass_context
 def create_kb(
@@ -155,18 +161,59 @@ def create_kb(
     name: str,
     description: str | None,
     from_bibtex: Path | None,
-    embedding_model: str,
+    session_db: Path | None,
+    chroma_dir: Path | None,
 ) -> None:
-    """Create a new knowledge base."""
+    """Create a new knowledge base (from BibTeX when --from-bibtex is set)."""
     config = ctx.obj["config"]
 
-    click.echo(f"Creating knowledge base '{name}'...")
+    if not from_bibtex:
+        click.echo(
+            "Creating an empty KB from the CLI is not implemented yet.\n"
+            "Use: perspicacite create-kb NAME --from-bibtex path/to/file.bib",
+            err=True,
+        )
+        sys.exit(1)
 
-    if from_bibtex:
-        click.echo(f"  From BibTeX: {from_bibtex}")
+    session_db = session_db or Path("data/perspicacite.db")
+    chroma_dir = chroma_dir or config.database.chroma_path
 
-    click.echo(f"  Embedding model: {embedding_model}")
-    click.echo("\n✅ Knowledge base created (not implemented yet)")
+    click.echo(f"Creating knowledge base '{name}' from {from_bibtex}...")
+    click.echo(f"  Session DB: {session_db}")
+    click.echo(f"  Chroma: {chroma_dir}")
+    click.echo(f"  Embedding model (from config): {config.knowledge_base.embedding_model}")
+
+    try:
+        result = asyncio.run(
+            _create_kb_from_bibtex(
+                config=config,
+                kb_name=name,
+                bib_path=from_bibtex,
+                description=description,
+                session_db=session_db,
+                chroma_dir=chroma_dir,
+            )
+        )
+    except FileExistsError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        logger.exception("create_kb_failed", error=str(e))
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo("\n✅ Knowledge base created")
+    click.echo(f"   Name (sanitized): {result['name']}")
+    click.echo(f"   Chroma collection: {result['collection_name']}")
+    click.echo(f"   Papers: {result['papers']}, chunks: {result['chunks_added']}")
+    st = result["pdf_stats"]
+    click.echo(
+        f"   PDF download: attempted={st['attempted']} success={st['success']} "
+        f"failed={st['failed']} no_doi={st['skipped_no_doi']}"
+    )
 
 
 @cli.command()
@@ -221,6 +268,27 @@ def query(
 
     # Run async query
     asyncio.run(_run_query(config, query, kb, mode, provider, model))
+
+
+async def _create_kb_from_bibtex(
+    config: Any,
+    *,
+    kb_name: str,
+    bib_path: Path,
+    description: str | None,
+    session_db: Path,
+    chroma_dir: Path,
+) -> dict[str, Any]:
+    from perspicacite.pipeline.bibtex_kb import create_kb_from_bibtex
+
+    return await create_kb_from_bibtex(
+        config,
+        kb_name=kb_name,
+        bib_path=bib_path,
+        description=description,
+        session_db=session_db,
+        chroma_dir=chroma_dir,
+    )
 
 
 async def _run_query(

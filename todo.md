@@ -9,7 +9,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [x] UI tune to be more like modern AI chatbot interface
 - [x] publisher api download
 - [x] properly test publisher api (see `tests/test_publisher_api_live.py`, run `pytest -m live`)
-- [ ] tool to create KB from bibtex file
+- [x] tool to create KB from bibtex file (`perspicacite create-kb NAME --from-bibtex file.bib`)
 
 ## Medium Term
 - [ ] MCP support
