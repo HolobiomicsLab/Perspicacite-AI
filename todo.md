@@ -3,6 +3,31 @@
 ## Available Resource
 packages_to_use/Perspicacite-AI-release Contains previous version. We should search there first for methods to adapt to the new version
 
+## Codebase Assessment (from CODEBASE_ASSESSMENT.md)
+
+### Critical (Fixed)
+- [x] Fix broken CLI server entry point (`perspicacite serve`)
+
+### Duplication to Fix
+- [ ] Unify BibTeX parsing (CLI uses bibtexparser, Web UI uses regex)
+- [ ] Collapse PDF download logic (`get_pdf_with_fallback` vs `get_content_with_fallback`)
+- [ ] Consolidate chunking systems (`pipeline/chunking.py` vs `rag/chunking.py`)
+- [ ] Pick one agentic path (orchestrator vs `RAGEngine` + `AgenticRAGMode`)
+
+### Unused/Dead Code to Clean Up
+- [ ] Remove or wire up `get_content_with_fallback`
+- [ ] Remove `KBBuilder` or make it used
+- [ ] Remove `PaperAssessor`, `QueryRefiner`, `RelevanceAssessment`
+- [ ] Remove `resolve_doi` / `resolve_dois_batch` if unused
+- [ ] Remove stub tools (`WebSearchTool`, `FetchPDFTool`, `CitationNetworkTool`)
+- [ ] Delete `unified_agentic.py.bak`
+- [ ] Remove or implement `GoogleScholarSearch`
+
+### Integration Gaps
+- [ ] Wire Elsevier API into actual KB enrichment path
+- [ ] Fix MCP server (currently returns placeholders)
+- [ ] Fix bare `except:` in `agentic_chat_stream`
+
 ## Short Term
 
 - [x] Alternative endpoint scihub
