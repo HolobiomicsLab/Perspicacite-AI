@@ -12,7 +12,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [x] Unify BibTeX parsing (CLI uses bibtexparser, Web UI uses regex)
 - [x] Clarify PDF download logic (`get_pdf_with_fallback` vs `get_content_with_fallback`) - both needed, documented
 - [x] Consolidate chunking systems - Created `chunking_advanced.py` with v1 strategies (semantic, section-aware)
-- [ ] Pick one agentic path (orchestrator vs `RAGEngine` + `AgenticRAGMode`)
+- [x] Pick one agentic path (orchestrator vs `RAGEngine` + `AgenticRAGMode`)
 
 ### Unused/Dead Code to Clean Up, make sure to double check that it is really not used.
 - [x] ~~Remove or wire up `get_content_with_fallback`~~ - Kept both, clarified documentation
@@ -29,7 +29,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [ ] Fix bare `except:` in `agentic_chat_stream`
 
 ## Short Term
-- [ ] the remove chat history button in UI removes all the history. The should be a way to choose what to remove
+- [x] the remove chat history button in UI removes all the history. The should be a way to choose what to remove
 - [ ] Complete agentic chunking implementation using LLM client (currently falls back to semantic)
 - [ ] test semantic chunking
 - [x] Alternative endpoint scihub
