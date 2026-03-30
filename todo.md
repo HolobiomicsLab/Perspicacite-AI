@@ -16,12 +16,12 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 
 ### Unused/Dead Code to Clean Up, make sure to double check that it is really not used.
 - [x] ~~Remove or wire up `get_content_with_fallback`~~ - Kept both, clarified documentation
-- [ ] Remove `KBBuilder` or make it used
-- [ ] Remove `PaperAssessor`, `QueryRefiner`, `RelevanceAssessment`
-- [ ] Remove `resolve_doi` / `resolve_dois_batch` if unused
-- [ ] Remove stub tools (`WebSearchTool`, `FetchPDFTool`, `CitationNetworkTool`)
-- [ ] Delete `unified_agentic.py.bak`
-- [ ] Remove or implement `GoogleScholarSearch`
+- [x] Remove `KBBuilder` - Deleted (was not used anywhere)
+- [x] Remove `PaperAssessor`, `QueryRefiner`, `RelevanceAssessment` - Deleted (were not used anywhere)
+- [x] Remove stub tools (`WebSearchTool`, `FetchPDFTool`, `CitationNetworkTool`) - Deleted
+- [x] Delete `unified_agentic.py.bak` - Deleted
+- [ ] Remove or implement `GoogleScholarSearch` - Kept (functional with SciLEx fallback, may be useful)
+- [ ] Remove or implement `resolve_doi` / `resolve_dois_batch` - Kept (functional CrossRef resolver, may be useful)
 
 ### Integration Gaps
 - [ ] Wire Elsevier API into actual KB enrichment path
@@ -45,6 +45,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 ## Medium Term
 - [ ] MCP support
 - [ ] the webapp is monolithic, maybe break it down to multiple files for better readability
+- [ ] add hovering function to chat history, which shows three dots. When clicking on it, show functions such as pin, delete, edit title etc.
 
 ## Long Term
 

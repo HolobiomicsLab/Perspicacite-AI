@@ -85,54 +85,9 @@ class KBSearchTool:
         return "\n".join(lines)
 
 
-class WebSearchTool:
-    """Tool to search the web."""
-
-    name = "web_search"
-    description = "Search academic databases on the web"
-
-    async def execute(
-        self,
-        query: str,
-        max_results: int = 10,
-    ) -> str:
-        """Execute web search."""
-        # Placeholder - would integrate with SciLEx
-        return f"Web search for '{query}' found {max_results} results."
-
-
-class FetchPDFTool:
-    """Tool to fetch and parse PDF."""
-
-    name = "fetch_pdf"
-    description = "Download and parse a PDF from URL"
-
-    async def execute(self, url: str) -> str:
-        """Fetch and parse PDF."""
-        return f"Fetched PDF from {url}"
-
-
-class CitationNetworkTool:
-    """Tool to get citation network."""
-
-    name = "citation_network"
-    description = "Get papers citing or cited by a given paper"
-
-    async def execute(
-        self,
-        paper_id: str,
-        direction: str = "both",
-    ) -> str:
-        """Get citation network."""
-        return f"Citation network for {paper_id} ({direction})"
-
-
 __all__ = [
     "Tool",
     "ToolRegistry",
     "KBSearchTool",
-    "WebSearchTool",
-    "FetchPDFTool",
-    "CitationNetworkTool",
     "LotusSearchTool",
 ]

@@ -18,6 +18,7 @@ from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
     MANDATORY_PROMPT,
+    get_mandatory_prompt,
     FORMAT_PROMPT,
     GENERATE_SIMILAR_QUERIES_PROMPT,
     EVALUATE_RESPONSE_PROMPT,
@@ -450,7 +451,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         llm: Any,
         request: RAGRequest,
     ) -> str:
-        """Generate response with optional relevancy optimization."""
+        """Generate response with optional relevancy optimization using v1 prompts."""
 
         if not documents:
             return "No relevant documents found to answer your question."
@@ -458,8 +459,17 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         # Format context using utility function
         context = format_documents_for_prompt(documents)
 
+        # Use KB-specific mandatory prompt if KB info available (v1 compatibility)
+        kb_title = getattr(request, "kb_name", "Perspicacité")
+        kb_scope = getattr(request, "kb_scope", "scientific research and education")
+        
+        if kb_title and kb_scope:
+            mandatory = get_mandatory_prompt(kb_title, kb_scope)
+        else:
+            mandatory = MANDATORY_PROMPT
+
         # Use exact prompts from release package
-        combined_prompt = MANDATORY_PROMPT + "\n" + DEFAULT_SYSTEM_PROMPT
+        combined_prompt = mandatory + "\n" + DEFAULT_SYSTEM_PROMPT
 
         # Add focus instructions (from relevancy optimization in original)
         combined_prompt = combined_prompt + "\n" + FOCUS_INSTRUCTIONS_PROMPT
@@ -542,37 +552,52 @@ Provide a comprehensive answer based on the documents above."""
         documents: list[Any],
         llm: Any,
     ) -> dict:
-        """Evaluate response quality."""
+        """Evaluate response quality using v1 EVALUATE_RESPONSE_PROMPT."""
 
-        system_prompt = """Evaluate the response based on:
-1. Relevance - Does it address the query?
-2. Accuracy - Is it factually correct based on documents?
-3. Completeness - Does it cover key points?
-4. Faithfulness - Does it stick to document content?
+        # Format documents for context (v1 style)
+        doc_texts = []
+        for i, doc in enumerate(documents[:3]):
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
+                text = doc.chunk.text[:400]
+                citation = get_doc_citation(doc)
+            else:
+                text = str(doc)[:400]
+                citation = "Unknown"
+            doc_texts.append(f"[Citation: {citation}]\n{text}")
+        
+        doc_content = "\n\n---\n\n".join(doc_texts) if doc_texts else "No documents"
 
-Respond in JSON format:
-{
-    "overall_score": 0-10,
-    "relevance": {"score": 0-10, "feedback": "..."},
-    "accuracy": {"score": 0-10, "feedback": "..."},
-    "completeness": {"score": 0-10, "feedback": "...", "missing_key_points": [...]},
-    "faithfulness": {"score": 0-10, "feedback": "...", "unfaithful_statements": [...]}
-}"""
+        user_message = f"""Response to evaluate:
+{response}
+
+Original query:
+{query}
+
+Source documents:
+{doc_content}
+
+Evaluate the response according to the criteria and return a valid JSON."""
 
         try:
             result = await llm.complete(
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Query: {query}\n\nResponse: {response}"},
+                    {"role": "system", "content": EVALUATE_RESPONSE_PROMPT},
+                    {"role": "user", "content": user_message},
                 ],
                 temperature=0.0,
-                max_tokens=500,
+                max_tokens=800,
             )
 
             import json
             import re
 
-            # Extract JSON
+            # Extract JSON (handle markdown code blocks)
+            result = result.strip()
+            if result.startswith("```json"):
+                result = result.split("```json")[1]
+            if result.endswith("```"):
+                result = result.rsplit("```", 1)[0]
+            
             json_match = re.search(r"\{.*\}", result, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
@@ -591,39 +616,42 @@ Respond in JSON format:
         llm: Any,
         request: RAGRequest,
     ) -> str:
-        """Generate improved response based on feedback."""
+        """Generate improved response based on feedback using v1 format."""
 
-        system_prompt = """You are an expert at improving responses based on evaluation feedback.
-
-Prioritize fixing these issues in order:
-1. Faithfulness issues - Remove unsupported content
-2. Relevance issues - Ensure direct query addressing
-3. Accuracy issues - Fix factual errors
-4. Completeness - Add missing information from sources
-
-Do not invent information not present in the sources."""
+        # Format document summaries for context (v1 style)
+        doc_summaries = []
+        for i, doc in enumerate(documents[:3]):
+            excerpt = self._get_doc_excerpt(doc, max_len=300)
+            doc_summaries.append(f"Document {i+1}: {excerpt}")
+        doc_context = "\n\n".join(doc_summaries)
 
         user_message = f"""Original query: {query}
 
 Previous response:
 {response}
 
-Feedback:
-- Overall score: {feedback.get("overall_score")}
-- Relevance: {feedback.get("relevance", {}).get("feedback")}
-- Accuracy: {feedback.get("accuracy", {}).get("feedback")}
-- Completeness: {feedback.get("completeness", {}).get("feedback")}
-- Missing points: {feedback.get("completeness", {}).get("missing_key_points", [])}
-- Faithfulness: {feedback.get("faithfulness", {}).get("feedback")}
-- Unfaithful statements: {feedback.get("faithfulness", {}).get("unfaithful_statements", [])}
+Feedback from evaluator:
+- Overall score: {feedback.get('overall_score', 'Not provided')}
+- Relevance: {feedback.get('relevance', {}).get('feedback', 'Not provided')}
+- Accuracy: {feedback.get('accuracy', {}).get('feedback', 'Not provided')}
+- Completeness: {feedback.get('completeness', {}).get('feedback', 'Not provided')}
+- Entities Recall: {feedback.get('entities_recall', {}).get('feedback', 'Not provided')}
+- Faithfulness: {feedback.get('faithfulness', {}).get('feedback', 'Not provided')}
 
-Provide an improved response."""
+Missing key points: {', '.join(feedback.get('completeness', {}).get('missing_key_points', ['None provided']))}
+Missing entities: {', '.join(feedback.get('entities_recall', {}).get('missing_entities', ['None provided']))}
+Unfaithful statements: {', '.join(feedback.get('faithfulness', {}).get('unfaithful_statements', ['None provided']))}
+
+Source documents contain the following information:
+{doc_context}
+
+Provide an improved response that addresses all the feedback points while staying strictly faithful to the source documents."""
 
         try:
             return await llm.complete(
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "system", "content": REFINE_RESPONSE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message + REFINE_RESPONSE_HUMAN_PROMPT_SUFFIX},
                 ],
                 model=request.model,
                 provider=request.provider,

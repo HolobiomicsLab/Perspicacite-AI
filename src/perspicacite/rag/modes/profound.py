@@ -607,9 +607,12 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         kb_name: str,
     ) -> ResearchStep:
         """
-        Execute a single research step with optional WRRF and hybrid retrieval.
+        Execute a single research step with v1's 3-stage fallback:
+        Stage 1: Basic RAG (single query retrieval)
+        Stage 2: Advanced RAG with contextual queries (WRRF with rephrased queries)
+        Stage 3: Web search (if enabled)
 
-        Ported from: core/profonde.py - step execution logic
+        Ported from: core/core.py + core/profonde.py
         """
         step = ResearchStep(
             step_purpose=step_info.purpose,
@@ -621,84 +624,130 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             step=step_info.step_number,
             purpose=step_info.purpose,
             query=step_info.query[:100],
-            use_wrrf=self.use_wrrf,
-            use_hybrid=self.use_hybrid,
         )
 
-        # Try KB search first
+        # ========================================================================
+        # STAGE 1: Basic RAG (single query retrieval with hybrid option)
+        # ========================================================================
+        logger.debug("profound_stage_1_basic_rag")
         try:
-            if self.use_wrrf:
-                # Use WRRF with multiple query variations
-                logger.debug("profound_using_wrrf", query=step_info.query[:100])
-                queries = await self._generate_similar_queries(
-                    step_info.query, llm, self.wrrf_rephrases
+            query_embedding = await embedding_provider.embed([step_info.query])
+            basic_results = await vector_store.search(
+                collection=kb_name,
+                query_embedding=query_embedding[0],
+                top_k=self.initial_docs,
+            )
+            
+            # Optional hybrid re-ranking for stage 1
+            if self.use_hybrid and basic_results and llm is not None:
+                try:
+                    vector_scores = [getattr(r, "score", 0.5) for r in basic_results]
+                    hybrid_results = await hybrid_retrieval(
+                        query=step_info.query,
+                        documents=basic_results,
+                        vector_scores=vector_scores,
+                        use_llm_weights=True,
+                        llm=llm,
+                    )
+                    basic_results = [doc for doc, _ in hybrid_results]
+                except Exception as e:
+                    logger.warning("profound_stage1_hybrid_error", error=str(e))
+
+            # Assess document quality
+            is_sufficient, missing_aspects, confidence = await self._assess_documents(
+                query=step_info.query,
+                documents=basic_results,
+                purpose=step_info.purpose,
+                llm=llm,
+            )
+
+            if is_sufficient and basic_results:
+                step.documents = basic_results[: self.final_max_docs]
+                step.success = True
+                step.key_findings = [f"Stage 1 (Basic): Found {len(basic_results)} relevant documents"]
+                step.missing_info = missing_aspects
+
+                analysis = await self._analyze_step_documents(
+                    step_info=step_info,
+                    documents=basic_results,
+                    llm=llm,
                 )
-                kb_results = await self._wrrf_retrieval(
-                    queries=queries,
+                step.analysis = analysis
+
+                logger.debug("profound_stage_1_success", docs=len(step.documents), confidence=confidence)
+                return step
+
+            logger.debug("profound_stage_1_insufficient", missing=missing_aspects)
+
+        except Exception as e:
+            logger.warning("profound_stage_1_error", error=str(e))
+            basic_results = []
+            missing_aspects = []
+
+        # ========================================================================
+        # STAGE 2: Advanced RAG with contextual queries (WRRF)
+        # ========================================================================
+        logger.debug("profound_stage_2_advanced_rag")
+        try:
+            # Generate contextual queries based on initial results and missing aspects
+            contextual_queries = await self._generate_contextual_queries(
+                original_query=step_info.query,
+                initial_documents=basic_results,
+                missing_aspects=missing_aspects,
+                llm=llm,
+            )
+
+            if contextual_queries:
+                # Use WRRF with original + contextual queries
+                all_queries = [step_info.query] + contextual_queries
+                wrrf_results = await self._wrrf_retrieval(
+                    queries=all_queries,
                     vector_store=vector_store,
                     embedding_provider=embedding_provider,
                     kb_name=kb_name,
                     llm=llm,
                 )
-            else:
-                # Simple vector search with optional hybrid
-                query_embedding = await embedding_provider.embed([step_info.query])
-                kb_results = await vector_store.search(
-                    collection=kb_name,
-                    query_embedding=query_embedding[0],
-                    top_k=self.initial_docs,
-                )
-                if self.use_hybrid and kb_results and llm is not None:
-                    try:
-                        vector_scores = [getattr(r, "score", 0.5) for r in kb_results]
-                        hybrid_results = await hybrid_retrieval(
-                            query=step_info.query,
-                            documents=kb_results,
-                            vector_scores=vector_scores,
-                            use_llm_weights=True,
-                            llm=llm,
-                        )
-                        kb_results = [doc for doc, _ in hybrid_results]
-                    except Exception as e:
-                        logger.warning("profound_hybrid_error", error=str(e))
 
-            # Assess document quality
-            is_sufficient, missing_aspects, confidence = await self._assess_documents(
-                query=step_info.query,
-                documents=kb_results,
-                purpose=step_info.purpose,
-                llm=llm,
-            )
-
-            if is_sufficient and kb_results:
-                step.documents = kb_results[: self.final_max_docs]
-                step.success = True
-                step.key_findings = [f"Found {len(kb_results)} relevant documents"]
-                step.missing_info = missing_aspects
-
-                # Analyze documents
-                analysis = await self._analyze_step_documents(
-                    step_info=step_info,
-                    documents=kb_results,
+                # Assess document quality from Stage 2
+                is_sufficient, missing_aspects_2, confidence = await self._assess_documents(
+                    query=step_info.query,
+                    documents=wrrf_results,
+                    purpose=step_info.purpose,
                     llm=llm,
                 )
-                step.analysis = analysis
 
-                logger.debug(
-                    "profound_step_kb_success", docs=len(step.documents), confidence=confidence
-                )
-                return step
+                if is_sufficient and wrrf_results:
+                    step.documents = wrrf_results[: self.final_max_docs]
+                    step.success = True
+                    step.key_findings = [
+                        f"Stage 2 (Advanced): Found {len(wrrf_results)} documents via WRRF with {len(contextual_queries)} contextual queries"
+                    ]
+                    step.missing_info = missing_aspects_2
+
+                    analysis = await self._analyze_step_documents(
+                        step_info=step_info,
+                        documents=wrrf_results,
+                        llm=llm,
+                    )
+                    step.analysis = analysis
+
+                    logger.debug("profound_stage_2_success", docs=len(step.documents), confidence=confidence)
+                    return step
+
+                logger.debug("profound_stage_2_insufficient", missing=missing_aspects_2)
 
         except Exception as e:
-            logger.warning("profound_kb_search_error", error=str(e))
+            logger.warning("profound_stage_2_error", error=str(e))
 
-        # Try web search if KB insufficient and enabled
+        # ========================================================================
+        # STAGE 3: Web search (if enabled and KB results insufficient)
+        # ========================================================================
         if self.use_websearch and "web_search" in tools.list_tools():
+            logger.debug("profound_stage_3_web_search")
             try:
                 web_tool = tools.get("web_search")
                 web_result = await web_tool.execute(query=step_info.query, max_results=3)
 
-                # Create document from web result
                 if web_result:
                     step.documents.append(
                         {
@@ -708,21 +757,101 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                         }
                     )
                     step.success = True
-                    step.key_findings = ["Information from web search"]
+                    step.key_findings = ["Stage 3 (Web): Information from web search"]
                     step.analysis = web_result[:500]
 
-                    logger.debug("profound_step_web_success")
+                    logger.debug("profound_stage_3_success")
                     return step
 
             except Exception as e:
-                logger.warning("profound_web_search_error", error=str(e))
+                logger.warning("profound_stage_3_error", error=str(e))
 
-        # Step failed to find sufficient information
+        # All stages failed
         step.success = False
         step.missing_info = [f"Could not find sufficient information for: {step_info.purpose}"]
-
-        logger.debug("profound_step_failed", purpose=step_info.purpose)
+        logger.debug("profound_all_stages_failed", purpose=step_info.purpose)
         return step
+
+    async def _generate_contextual_queries(
+        self,
+        original_query: str,
+        initial_documents: list[Any],
+        missing_aspects: list[str],
+        llm: Any,
+    ) -> list[str]:
+        """
+        Generate contextual queries based on initial results and missing aspects.
+        
+        Ported from: core/core.py - contextual query generation for advanced retrieval
+        """
+        if not missing_aspects:
+            # Fall back to similar queries if no missing aspects identified
+            return await self._generate_similar_queries(original_query, llm, self.wrrf_rephrases)
+
+        # Format document snippets for context
+        doc_snippets = []
+        for i, doc in enumerate(initial_documents[:3]):
+            if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
+                text = doc.chunk.text[:300]
+            else:
+                text = str(doc)[:300]
+            doc_snippets.append(f"Doc {i + 1}: {text}")
+        
+        doc_context = "\n".join(doc_snippets) if doc_snippets else "No documents retrieved"
+        missing = ", ".join(missing_aspects)
+
+        system_prompt = """Generate targeted search queries to fill gaps in the information found.
+
+Consider:
+1. What specific information is still needed based on the missing aspects
+2. What alternative phrasings or related concepts might yield better results
+3. How to make queries more specific and technical
+
+Respond in JSON format:
+{
+    "queries": ["query1", "query2", "query3"],
+    "reasoning": "brief explanation"
+}
+
+Guidelines:
+- Generate 2-4 queries
+- Focus on the missing aspects
+- Use scientific/technical terminology
+- Be specific and concise"""
+
+        user_message = f"""Original query: {original_query}
+
+Documents found:
+{doc_context}
+
+Missing aspects: {missing}
+
+Generate contextual queries to find the missing information."""
+
+        try:
+            response = await llm.complete(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.3,
+                max_tokens=300,
+            )
+
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = json.loads(response)
+
+            queries = result.get("queries", [])
+            logger.debug("profound_contextual_queries_generated", queries=queries)
+            return queries[:4]  # Max 4 queries
+
+        except Exception as e:
+            logger.warning("profound_contextual_queries_error", error=str(e))
+            # Fall back to similar queries
+            return await self._generate_similar_queries(original_query, llm, self.wrrf_rephrases)
 
     async def _assess_documents(
         self,
@@ -963,7 +1092,7 @@ Guidelines:
         request: RAGRequest,
         exited_early: bool,
     ) -> RAGResponse:
-        """Generate final response based on all research."""
+        """Generate final response based on all research using v1 prompts."""
 
         # Format research summary
         research_summary = []
@@ -972,34 +1101,23 @@ Guidelines:
                 f"Step: {step.step_purpose}\n"
                 f"Query: {step.query}\n"
                 f"Success: {step.success}\n"
+                f"Key Findings: {', '.join(step.key_findings[:3])}\n"
                 f"Analysis: {step.analysis[:300]}..."
             )
 
         research_text = "\n\n---\n\n".join(research_summary)
 
-        system_prompt = """Generate a comprehensive answer based on the research conducted.
-
-Your answer should:
-1. Directly address the original question
-2. Synthesize findings from all research steps
-3. Maintain scientific accuracy
-4. Acknowledge any information gaps
-5. Be clear and well-structured
-
-If the research did not find sufficient information, clearly state this."""
-
-        user_message = f"""Original question: {query}
+        # Stage 1: Generate comprehensive answer using v1 prompt
+        try:
+            answer = await llm.complete(
+                messages=[
+                    {"role": "system", "content": PROFOUND_FINAL_ANSWER_IMPROVED_PROMPT},
+                    {"role": "user", "content": f"""Original question: {query}
 
 Research conducted ({self.iterations} cycles):
 {research_text}
 
-Generate a final answer."""
-
-        try:
-            answer = await llm.complete(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+Generate a final answer."""},
                 ],
                 model=request.model,
                 provider=request.provider,
@@ -1010,11 +1128,28 @@ Generate a final answer."""
             logger.error("profound_final_answer_error", error=str(e))
             answer = f"Error generating response: {e}"
 
+        # Stage 2: Format the answer using v1 format prompt
+        try:
+            formatted_answer = await llm.complete(
+                messages=[
+                    {"role": "system", "content": PROFOUND_FORMAT_ANSWER_PROMPT},
+                    {"role": "user", "content": f"Format this research answer:\n\n{answer}"},
+                ],
+                model=request.model,
+                provider=request.provider,
+                max_tokens=2500,
+                temperature=0.2,
+            )
+            answer = formatted_answer
+        except Exception as e:
+            logger.warning("profound_format_error", error=str(e))
+            # Continue with unformatted answer
+
         # Prepare sources
         sources = self._prepare_sources(documents)
 
-        # Append references section to answer
-        if sources:
+        # Append references section to answer (if not already included by formatter)
+        if sources and "### ✨ Perspicacite Profonde findings" not in answer:
             references = self._format_references(sources)
             answer = answer.strip() + "\n\n" + references
 
@@ -1037,7 +1172,7 @@ Generate a final answer."""
         request: RAGRequest,
         exited_early: bool,
     ) -> AsyncIterator[StreamEvent]:
-        """Stream final response generation."""
+        """Stream final response generation using v1 prompts."""
 
         # Format research summary
         research_summary = []
@@ -1046,40 +1181,28 @@ Generate a final answer."""
                 f"Step: {step.step_purpose}\n"
                 f"Query: {step.query}\n"
                 f"Success: {step.success}\n"
+                f"Key Findings: {', '.join(step.key_findings[:3])}\n"
                 f"Analysis: {step.analysis[:300]}..."
             )
 
         research_text = "\n\n---\n\n".join(research_summary)
-
-        system_prompt = """Generate a comprehensive answer based on the research conducted.
-
-Your answer should:
-1. Directly address the original question
-2. Synthesize findings from all research steps
-3. Maintain scientific accuracy
-4. Acknowledge any information gaps
-5. Be clear and well-structured
-
-If the research did not find sufficient information, clearly state this."""
-
-        user_message = f"""Original question: {query}
-
-Research conducted ({self.iterations} cycles):
-{research_text}
-
-Generate a final answer."""
 
         # Prepare sources
         sources = self._prepare_sources(documents)
         for source in sources:
             yield StreamEvent.source(source)
 
-        # Stream the LLM response
+        # Stream the LLM response using v1 improved prompt
         try:
             async for chunk in llm.stream(
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "system", "content": PROFOUND_FINAL_ANSWER_IMPROVED_PROMPT},
+                    {"role": "user", "content": f"""Original question: {query}
+
+Research conducted ({self.iterations} cycles):
+{research_text}
+
+Generate a final answer."""},
                 ],
                 model=request.model,
                 provider=request.provider,
@@ -1092,8 +1215,13 @@ Generate a final answer."""
             # Fall back to non-streaming
             answer = await llm.complete(
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
+                    {"role": "system", "content": PROFOUND_FINAL_ANSWER_IMPROVED_PROMPT},
+                    {"role": "user", "content": f"""Original question: {query}
+
+Research conducted ({self.iterations} cycles):
+{research_text}
+
+Generate a final answer."""},
                 ],
                 model=request.model,
                 provider=request.provider,

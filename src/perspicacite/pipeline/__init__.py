@@ -1,12 +1,9 @@
 """Document processing pipeline."""
 
-__all__ = ["KBBuilder", "PDFDownloader", "DownloadResult", "ContentResult"]
+__all__ = ["PDFDownloader", "DownloadResult", "ContentResult"]
 
 # Lazy imports
 def __getattr__(name):
-    if name == "KBBuilder":
-        from perspicacite.pipeline.kb_builder import KBBuilder
-        return KBBuilder
     if name == "PDFDownloader":
         from perspicacite.pipeline.download.base import PDFDownloader
         return PDFDownloader

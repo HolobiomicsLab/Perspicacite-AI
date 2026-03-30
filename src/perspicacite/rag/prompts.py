@@ -11,10 +11,13 @@ These prompts are copied verbatim from:
 # =============================================================================
 
 # Default system prompt for response generation (Basic/Advanced modes)
-DEFAULT_SYSTEM_PROMPT = """Please introduce relevant concepts and facts through interdisciplinary lens, being deep, concise and precise on answering the question while shortly exploring other perspectives of the asked question. Encourage students and researchers to articulate their reasoning, thereby deepening their conceptual understanding."""
+# NOTE: "Encoura" is intentional - matches v1 release package exactly
+DEFAULT_SYSTEM_PROMPT = """Please introduce relevant concepts and facts through interdisciplinary lens, being deep, concise and precise on answering the question while shortly exploring other perspectives of the asked question. Encoura students and researchers to articulate their reasoning, thereby deepening their conceptual understanding."""
 
 # Mandatory prompt that defines the AI assistant's role and constraints
-MANDATORY_PROMPT = """You are a scientific AI-assistant for a RAG Mechanism to help science students and researchers.
+# For v1 compatibility, use get_mandatory_prompt(kb_title, scope) to format with KB-specific values
+MANDATORY_PROMPT_TEMPLATE = """You are {kb_title}, an LLM-based AI-assistant for a RAG Mechanism to help science students and researchers.
+Use this scope to base your answers: {scope}.
 You will have access to pieces of texts that will complement your previous knowledge in the question asked. There is no need to base your question entirely in the texts provided, but rather to complement your knowledge.
 If needed for better explaining, provide examples. 
 If the texts provide information that is conflicting with your knowledge, please discuss the topic in the answer.
@@ -27,7 +30,18 @@ If the question any topics related to hate speech, offensive language, discrimin
 Guidelines for your answers:
 Don't generate question's yourself. Don't cite articles or provide links. Do not engage in Q/A or FAQ. If there are format inconsistencies in the text, fix them.
 Do not include links in your response. Do not format text as code blocks unless specifically asked for. Use UTF-8 for the characters encoding.
-If the texts you received are just citations of other articles, please nuance your answer to include this detail in the answer."""
+If the texts you received are just citations of other articles, please nuance your answer to include this detail in the asnwer."""
+
+# Generic fallback mandatory prompt (when KB info not available)
+MANDATORY_PROMPT = MANDATORY_PROMPT_TEMPLATE.format(
+    kb_title="a scientific AI-assistant",
+    scope="scientific research and education"
+)
+
+
+def get_mandatory_prompt(kb_title: str, scope: str) -> str:
+    """Get the mandatory prompt formatted with KB-specific title and scope (v1 compatibility)."""
+    return MANDATORY_PROMPT_TEMPLATE.format(kb_title=kb_title, scope=scope)
 
 # Format prompt for response formatting (from get_response)
 FORMAT_PROMPT = """You are a scientific writing assistant helping to format a research summary or report. Follow these instructions carefully:
@@ -81,20 +95,25 @@ DO NOT include any text outside the JSON structure.
 DO NOT use any line breaks within the analysis text.
 Always include all fields, even if some are empty lists or default values."""
 
-# Prompt for generating contextual queries
-GENERATE_CONTEXTUAL_QUERIES_PROMPT = """Generate targeted search queries based on the original query, initial documents, and identified gaps.
-The queries should:
-1. Focus on missing aspects
-2. Use technical terminology from documents
-3. Be specific and concise
-4. Avoid redundancy with original query
-5. Use alternative phrasings or related concepts
+# Prompt for generating contextual queries (v1 Profound mode)
+GENERATE_CONTEXTUAL_QUERIES_PROMPT = """Generate targeted search queries to fill gaps in the information found.
+
+Consider:
+1. What specific information is still needed based on the missing aspects
+2. What alternative phrasings or related concepts might yield better results
+3. How to make queries more specific and technical
 
 Format response as JSON:
 {
-    "queries": ["query1", "query2", ...],
-    "reasoning": "explanation of query generation strategy"
-}"""
+    "queries": ["query1", "query2", "query3"],
+    "reasoning": "brief explanation"
+}
+
+Guidelines:
+- Generate 2-4 queries
+- Focus on the missing aspects
+- Use scientific/technical terminology
+- Be specific and concise"""
 
 # Prompt for refining responses (Advanced mode)
 REFINE_RESPONSE_SYSTEM_PROMPT = """You are an expert at improving responses based on specific evaluation feedback. 
@@ -133,7 +152,7 @@ Important guidance:
 
 Please provide an improved response that addresses all the feedback points while staying strictly faithful to the source documents."""
 
-# Prompt for evaluating responses
+# Prompt for evaluating responses (exact v1 format from core/core.py)
 EVALUATE_RESPONSE_PROMPT = """You are a critical evaluator of scientific responses.
 Analyze the provided response to the query based on:
 1. Relevance - Does it directly address the question?
@@ -155,41 +174,44 @@ Analyze the provided response to the query based on:
 5. Faithfulness - How well does the response stay true to the source documents?
    - No addition of information not present in sources
    - No distortion or misrepresentation of source information
+   - Proper handling of uncertainties and limitations from sources
+   - Clear distinction between facts from sources and any interpretation
+   - No extrapolation beyond what the sources support
 
-IMPORTANT: When evaluating faithfulness, carefully verify that every fact, claim, and entity in the response is actually present in the source documents. Flag any information that appears to be fabricated, hallucinated, or not directly supported by the sources.
+Provide specific, actionable feedback for improvement.
 
-Scoring guidelines:
-- 0-3: Poor - Major issues present
-- 4-6: Fair - Some issues but generally acceptable
-- 7-8: Good - Minor issues only
-- 9-10: Excellent - Meets all criteria
-
-YOU MUST RESPOND WITH VALID JSON IN THIS EXACT FORMAT:
+Format response as JSON:
 {
-    "overall_score": 0-10,
+    "overall_score": 0-10 rating,
     "relevance": {
-        "score": 0-10,
-        "feedback": "specific feedback"
+        "score": 0-10 rating,
+        "feedback": "detailed feedback on relevance",
+        "suggestions": ["suggestion1", "suggestion2"]
     },
     "accuracy": {
-        "score": 0-10,
-        "feedback": "specific feedback"
+        "score": 0-10 rating,
+        "feedback": "detailed feedback on accuracy",
+        "suggestions": ["suggestion1", "suggestion2"]
     },
     "completeness": {
-        "score": 0-10,
-        "feedback": "specific feedback",
+        "score": 0-10 rating,
+        "feedback": "detailed feedback on completeness",
+        "suggestions": ["suggestion1", "suggestion2"],
         "missing_key_points": ["point1", "point2"]
     },
     "entities_recall": {
-        "score": 0-10,
-        "feedback": "specific feedback",
-        "missing_entities": ["entity1", "entity2"]
+        "score": 0-10 rating,
+        "feedback": "detailed feedback on entities recall",
+        "suggestions": ["suggestion1", "suggestion2"],
+        "missing_entities": ["entity1", "entity2", "numerical value X"]
     },
     "faithfulness": {
-        "score": 0-10,
-        "feedback": "specific feedback - be extremely vigilant about hallucinations and unsupported claims",
+        "score": 0-10 rating,
+        "feedback": "detailed feedback on faithfulness to sources",
+        "suggestions": ["suggestion1", "suggestion2"],
         "unfaithful_statements": ["statement1", "statement2"]
-    }
+    },
+    "summary": "overall summary of the response quality"
 }
 
 Guidelines for scoring:
@@ -197,6 +219,8 @@ Guidelines for scoring:
 - faithfulness: If ANY hallucinations are present, score must be ≤3
 - entities_recall: Deduct points for each important missing entity
 - completeness: List specific key points from sources that were omitted
+
+IMPORTANT: When evaluating faithfulness, carefully verify that every fact, claim, and entity in the response is actually present in the source documents. Flag any information that appears to be fabricated, hallucinated, or not directly supported by the sources.
 
 Be critical and thorough in your evaluation. A response with hallucinations should never score above 3 in faithfulness, regardless of other qualities."""
 
