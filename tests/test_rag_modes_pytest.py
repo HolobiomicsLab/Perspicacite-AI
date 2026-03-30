@@ -36,7 +36,7 @@ class TestRAGModesStructure:
         ('basic.py', ['execute', 'execute_stream', '_generate_response']),
         ('advanced.py', ['execute', 'execute_stream', '_generate_similar_queries', '_wrrf_retrieval']),
         ('profound.py', ['execute', 'execute_stream', '_create_plan', '_execute_step']),
-        ('agentic.py', ['execute', 'execute_stream', '_create_research_plan', '_execute_step']),
+        ('agentic.py', ['execute', 'execute_stream']),  # Now a wrapper around AgenticOrchestrator
     ])
     def test_mode_has_required_methods(self, modes_dir, file, methods):
         """Test that each mode has required methods."""

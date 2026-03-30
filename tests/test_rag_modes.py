@@ -40,7 +40,7 @@ def test_mode_class_structure():
         'basic.py': ['execute', 'execute_stream', '_generate_response'],
         'advanced.py': ['execute', 'execute_stream', '_generate_similar_queries', '_wrrf_retrieval'],
         'profound.py': ['execute', 'execute_stream', '_create_plan', '_execute_step'],
-        'agentic.py': ['execute', 'execute_stream', '_create_research_plan', '_execute_step'],
+        'agentic.py': ['execute', 'execute_stream'],  # Now a wrapper around AgenticOrchestrator
     }
     
     for file, methods in expected_methods.items():
@@ -196,14 +196,51 @@ def test_mode_parameters():
     assert 'early_exit_confidence' in profound_content
     print("    ✅ ProfoundRAGMode has cycle and exit settings")
     
-    # Agentic mode
+    # Agentic mode (now a wrapper around AgenticOrchestrator)
     with open(os.path.join(modes_dir, 'agentic.py'), 'r') as f:
         agentic_content = f.read()
     assert 'max_iterations' in agentic_content
     assert 'early_exit_confidence' in agentic_content
-    print("    ✅ AgenticRAGMode has iteration settings")
+    assert 'AgenticOrchestrator' in agentic_content  # Delegates to orchestrator
+    print("    ✅ AgenticRAGMode (wrapper) has iteration settings and delegates to orchestrator")
     
     print("✅ All modes have expected parameters\n")
+
+
+def test_agentic_orchestrator_consolidation():
+    """Test that AgenticOrchestrator has consolidated features from both implementations."""
+    orchestrator_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'perspicacite', 'rag', 'agentic', 'orchestrator.py')
+    
+    with open(orchestrator_path, 'r') as f:
+        content = f.read()
+    
+    print("  Checking AgenticOrchestrator consolidation...")
+    
+    # Check for features from AgenticOrchestrator (original)
+    assert 'IntentClassifier' in content, "Missing IntentClassifier"
+    print("    ✅ Has IntentClassifier (intent classification)")
+    
+    assert 'ResearchPlanner' in content, "Missing ResearchPlanner"
+    print("    ✅ Has ResearchPlanner (dynamic planning)")
+    
+    assert 'AgentSession' in content, "Missing AgentSession"
+    print("    ✅ Has AgentSession (session management)")
+    
+    # Check for features ported from AgenticRAGMode
+    assert 'DocumentQualityAssessor' in content, "Missing DocumentQualityAssessor"
+    print("    ✅ Has DocumentQualityAssessor (quality assessment)")
+    
+    assert 'early_exit_confidence' in content, "Missing early_exit_confidence"
+    print("    ✅ Has early_exit_confidence (early exit)")
+    
+    assert '_extract_documents_from_result' in content, "Missing document extraction"
+    print("    ✅ Has document extraction for quality assessment")
+    
+    # Check that it's unified
+    assert 'Unified implementation consolidating' in content, "Missing consolidation comment"
+    print("    ✅ Marked as unified implementation")
+    
+    print("✅ AgenticOrchestrator has all consolidated features\n")
 
 
 if __name__ == "__main__":
@@ -219,6 +256,7 @@ if __name__ == "__main__":
     test_engine_imports_all_modes()
     test_rag_model_enum()
     test_mode_parameters()
+    test_agentic_orchestrator_consolidation()
     
     print("="*50)
     print("All RAG mode tests passed!")

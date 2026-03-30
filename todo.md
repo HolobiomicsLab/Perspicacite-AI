@@ -29,8 +29,9 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [ ] Fix bare `except:` in `agentic_chat_stream`
 
 ## Short Term
-
+- [ ] the remove chat history button in UI removes all the history. The should be a way to choose what to remove
 - [ ] Complete agentic chunking implementation using LLM client (currently falls back to semantic)
+- [ ] test semantic chunking
 - [x] Alternative endpoint scihub
 - [x] UI tune to be more like modern AI chatbot interface
 - [x] publisher api download

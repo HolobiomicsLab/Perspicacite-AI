@@ -58,9 +58,97 @@ class AgentSession:
         return "\n".join(context)
 
 
+class DocumentQualityAssessor:
+    """Assess if retrieved documents are sufficient to answer a query.
+    
+    Ported from AgenticRAGMode to enable early exit and quality-aware retrieval.
+    """
+
+    def __init__(self, llm: Any):
+        self.llm = llm
+
+    async def assess(
+        self,
+        query: str,
+        documents: List[Any],
+        step_purpose: str = "",
+    ) -> tuple[bool, List[str], float]:
+        """
+        Assess document quality and sufficiency.
+
+        Returns:
+            Tuple of (is_sufficient, missing_aspects, confidence_score)
+        """
+        if not documents:
+            return False, ["No documents retrieved"], 0.0
+
+        # Format documents for assessment
+        doc_texts = []
+        for i, doc in enumerate(documents[:5]):  # Limit to top 5
+            if hasattr(doc, "chunk"):
+                text = doc.chunk.text[:500] if hasattr(doc.chunk, "text") else str(doc.chunk)[:500]
+            elif isinstance(doc, dict):
+                text = doc.get("text", doc.get("content", str(doc)))[:500]
+            else:
+                text = str(doc)[:500]
+            doc_texts.append(f"Document {i + 1}:\n{text}")
+
+        doc_content = "\n\n---\n\n".join(doc_texts)
+
+        system_prompt = f"""You are a research quality assessor. Evaluate if the provided documents are sufficient to answer the query.
+
+Purpose: {step_purpose or "Answer the research question"}
+
+Respond in JSON format:
+{{
+    "is_sufficient": true/false,
+    "missing_aspects": ["aspect1", "aspect2"],
+    "confidence": 0.0-1.0,
+    "reasoning": "brief explanation"
+}}
+
+Guidelines:
+- is_sufficient: Do documents contain enough relevant information?
+- missing_aspects: What key information is still needed?
+- confidence: How confident are you in this assessment?"""
+
+        try:
+            # Build prompt for LLMAdapter interface (simple prompt string, not messages)
+            prompt = f"{system_prompt}\n\nQuery: {query}\n\nDocuments:\n{doc_content}"
+            response = await self.llm.complete(
+                prompt=prompt,
+                temperature=0.0,
+                max_tokens=300,
+            )
+
+            # Parse JSON response
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                result = json.loads(response)
+
+            return (
+                result.get("is_sufficient", False),
+                result.get("missing_aspects", []),
+                result.get("confidence", 0.5),
+            )
+
+        except Exception as e:
+            logger.warning(f"Quality assessment error: {e}")
+            # Conservative default - assume insufficient
+            return False, ["Assessment error"], 0.0
+
+
 class AgenticOrchestrator:
     """
     True agentic orchestrator with LLM-driven planning and execution.
+    
+    Unified implementation consolidating:
+    - Intent classification and dynamic planning
+    - Document quality assessment and early exit
+    - Session management and streaming
+    - Multi-source tool execution
     """
 
     def __init__(
@@ -71,6 +159,7 @@ class AgenticOrchestrator:
         vector_store,
         max_iterations: int = 5,
         use_hybrid: bool = True,
+        early_exit_confidence: float = 0.85,
     ):
         self.llm = llm_client
         self.tools = tool_registry
@@ -78,9 +167,11 @@ class AgenticOrchestrator:
         self.vector_store = vector_store
         self.max_iterations = max_iterations
         self.use_hybrid = use_hybrid
+        self.early_exit_confidence = early_exit_confidence
 
         self.intent_classifier = IntentClassifier(llm_client)
         self.planner = ResearchPlanner(llm_client)
+        self.quality_assessor = DocumentQualityAssessor(llm_client)
 
         # Session management
         self.sessions: Dict[str, AgentSession] = {}
@@ -331,8 +422,13 @@ class AgenticOrchestrator:
         yield {"type": "answer", "content": answer, "session_id": session.session_id}
 
         # Yield found papers so the UI can offer "Add to KB"
-        # Only include papers that passed relevance filtering (score >= 3)
-        relevant_papers = [p for p in papers if p.get("relevance_score", 3) >= 3]
+        # Only include papers that:
+        # 1. Passed relevance filtering (score >= 3)
+        # 2. Are NOT already in the KB (source != "kb_search")
+        relevant_papers = [
+            p for p in papers 
+            if p.get("relevance_score", 3) >= 3 and p.get("source") != "kb_search"
+        ]
         if relevant_papers:
             yield {"type": "papers_found", "papers": relevant_papers}
 
@@ -662,20 +758,49 @@ class AgenticOrchestrator:
     async def _evaluate_progress(
         self, query: str, plan: Plan, completed_steps: List[Step], step_results: Dict[str, Any]
     ) -> str:
-        """Evaluate if we should continue, replan, or answer."""
+        """Evaluate if we should continue, replan, or answer.
+        
+        Uses document quality assessment for intelligent early exit decisions.
+        Ported from AgenticRAGMode.
+        """
         last_step = completed_steps[-1]
         last_result = step_results.get(last_step.id)
         last_str = str(last_result) if last_result is not None else ""
 
-        # In agentic mode: execute ALL planned steps, don't skip based on KB results.
-        # The planner already decided what sources are needed - trust the plan.
-        # Only skip to answer if there are no more steps to execute.
+        # Check if no more steps remaining
         remaining_steps = [s for s in plan.steps if s.id not in {cs.id for cs in completed_steps}]
         if not remaining_steps:
             return "answer"
 
-        # After search tools: check if we should stop early only when we've completed
-        # substantial work and have results from multiple sources
+        # After search tools: use quality assessment for early exit decision
+        if last_step.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH):
+            # Extract documents from result for quality assessment
+            documents = self._extract_documents_from_result(last_result)
+            
+            if documents:
+                # Use quality assessor for intelligent early exit
+                is_sufficient, missing_aspects, confidence = await self.quality_assessor.assess(
+                    query=query,
+                    documents=documents,
+                    step_purpose=last_step.description,
+                )
+                
+                logger.info(
+                    f"Quality assessment: sufficient={is_sufficient}, "
+                    f"confidence={confidence:.2f}, missing={len(missing_aspects)} aspects"
+                )
+                
+                # Early exit if quality is high and confidence meets threshold
+                if is_sufficient and confidence >= self.early_exit_confidence:
+                    logger.info(f"Early exit triggered: confidence {confidence:.2f} >= {self.early_exit_confidence}")
+                    return "answer"
+                
+                # Replan if quality is low and we have missing aspects
+                if not is_sufficient and missing_aspects and len(completed_steps) < 2:
+                    logger.info(f"Quality insufficient, continuing with plan: {missing_aspects[:3]}")
+                    return "replan"
+
+        # Fallback: check for substantial results after multiple steps
         has_substantial_results = False
         for result in step_results.values():
             result_str = str(result)
@@ -683,11 +808,62 @@ class AgenticOrchestrator:
                 has_substantial_results = True
                 break
 
-        # Only suggest early termination if we have 3+ completed steps with results
+        # Suggest termination if we have 3+ completed steps with results
         if has_substantial_results and len(completed_steps) >= 3:
             return "answer"
 
         return "continue"
+
+    def _extract_documents_from_result(self, result: Any) -> List[Dict[str, Any]]:
+        """Extract document list from search result for quality assessment."""
+        documents = []
+        
+        if not result:
+            return documents
+            
+        result_str = str(result)
+        
+        # Check for common "no results" patterns
+        result_lower = result_str.lower()
+        if any(phrase in result_lower for phrase in [
+            "no relevant documents", 
+            "no results", 
+            "not found",
+            "search failed"
+        ]):
+            return documents
+        
+        # Try to parse documents from structured results
+        # Format 1: List of paper dicts from OpenAlex
+        if isinstance(result, list):
+            for item in result[:5]:  # Limit to top 5
+                if isinstance(item, dict):
+                    documents.append({
+                        "title": item.get("title", "Unknown"),
+                        "content": item.get("abstract", str(item)[:500]),
+                        "source": "openalex",
+                    })
+        
+        # Format 2: KB search results - extract from formatted string
+        if "Found" in result_str and "documents" in result_str:
+            # Extract document sections from KB result format
+            lines = result_str.split("\n")
+            current_doc = None
+            
+            for line in lines:
+                if line.startswith("- ") and "(relevance:" in line:
+                    # New document
+                    if current_doc:
+                        documents.append(current_doc)
+                    title = line.split("(relevance:")[0].replace("- ", "").strip()
+                    current_doc = {"title": title, "content": "", "source": "kb"}
+                elif current_doc and line.strip().startswith("Content:"):
+                    current_doc["content"] = line.replace("Content:", "").strip()[:500]
+            
+            if current_doc:
+                documents.append(current_doc)
+        
+        return documents[:5]  # Return top 5 documents
 
     async def _analyze_results(self, query: str, step_results: Dict[str, Any]) -> str:
         """Have LLM analyze the results."""
@@ -813,13 +989,15 @@ Answer Generation Guidelines:
 2. Prioritize the most relevant findings from the research results
 3. Maintain scientific precision and technical accuracy
 4. **MANDATORY CITATION FORMAT**: Use ONLY the bracket format [N] where N is the paper number from the NUMBERED PAPER LIST section above (e.g., [1], [2], [3]). 
-   - IGNORE any numbers you see in the Research Results section (like bullet points or dashes)
-   - ONLY cite papers using the [N] format from the numbered list at the end
-   - If a paper is not in the numbered list, do NOT cite it with a number
+   - **CRITICAL**: IGNORE ALL numbers in the Research Results section (like "1.", "2." in "Found X papers:") - these are NOT citation numbers
+   - **ONLY** cite papers using the [N] format from the NUMBERED PAPER LIST at the end of this prompt
+   - The NUMBERED PAPER LIST uses [1], [2], [3], etc. - these are your ONLY valid citation numbers
+   - If a paper is not in the NUMBERED PAPER LIST, do NOT cite it with a number
 5. Be clear and direct in your language
 6. If the research results are insufficient to answer the question, clearly state this rather than speculating
 7. Structure your answer logically with clear sections if appropriate
 8. Cite using [N] from the numbered list only for sources you actually use; you do not need to mention every listed paper if some are redundant.
+9. **DO NOT include a Citations or References section at the end of your answer** - a properly formatted references section will be automatically appended separately.
 
 Important: Do not provide an answer if the question contains hate speech, offensive language, discriminatory remarks, or harmful content.
 
@@ -1164,14 +1342,21 @@ Generate your answer:"""
         )
 
     def _dedupe_paper_dicts(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Merge duplicates (same DOI or same normalized title, e.g. preprint + journal)."""
+        """Merge duplicates (same DOI or same normalized title, e.g. preprint + journal).
+        
+        Keeps the highest quality version of each paper (more abstract, more citations, newer).
+        The winning paper retains its original source (kb_search or literature_search).
+        """
         best: Dict[str, Dict[str, Any]] = {}
+        
         for p in papers:
             k = self._paper_dedupe_key(p)
             if k.startswith("unknown:") and not p.get("title"):
                 continue
+            
             if k not in best or self._paper_quality_tuple(p) > self._paper_quality_tuple(best[k]):
                 best[k] = p
+        
         out = list(best.values())
         if len(out) < len(papers):
             logger.info(
@@ -1179,10 +1364,33 @@ Generate your answer:"""
             )
         return out
 
+    @staticmethod
+    def _normalize_authors(authors: Any) -> List[str]:
+        """Normalize authors to a list of strings.
+        
+        Handles various input formats:
+        - List of strings: ["Author One", "Author Two"]
+        - Comma-separated string: "Author One, Author Two"
+        - Single string: "Author One"
+        - None/empty: []
+        """
+        if not authors:
+            return []
+        if isinstance(authors, list):
+            return [str(a).strip() for a in authors if a]
+        if isinstance(authors, str):
+            return [a.strip() for a in authors.split(",") if a.strip()]
+        return []
+
     def _extract_papers_from_results(self, step_results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract deduplicated paper list from accumulated found papers."""
         if not hasattr(self, "_found_papers") or not self._found_papers:
             return []
+        
+        # Normalize authors for all papers before deduplication
+        for paper in self._found_papers:
+            paper["authors"] = self._normalize_authors(paper.get("authors"))
+        
         return self._dedupe_paper_dicts(list(self._found_papers))
 
     @staticmethod

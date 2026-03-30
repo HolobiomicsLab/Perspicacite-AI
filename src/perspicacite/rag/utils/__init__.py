@@ -197,7 +197,21 @@ def format_references_academic(papers: List[dict]) -> str:
         authors = paper.get("authors", [])
         year = paper.get("year", "n.d.")
         doi = paper.get("doi", "")
+        
+        # Normalize DOI - remove existing URL prefix if present
+        if doi:
+            doi = doi.strip()
+            for prefix in ("https://doi.org/", "http://dx.doi.org/", "doi:"):
+                if doi.lower().startswith(prefix.lower()):
+                    doi = doi[len(prefix):].strip()
+        
         url = f"https://doi.org/{doi}" if doi else ""
+
+        # Normalize authors to list (handle both list and comma-separated string)
+        if isinstance(authors, str):
+            authors = [a.strip() for a in authors.split(",") if a.strip()]
+        elif not isinstance(authors, list):
+            authors = []
 
         # Format authors: "FirstAuthor et al." if >2 authors
         if len(authors) == 0:

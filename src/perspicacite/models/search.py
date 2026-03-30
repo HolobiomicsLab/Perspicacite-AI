@@ -45,6 +45,8 @@ class SearchFilters(BaseModel):
 class RetrievedChunk(BaseModel):
     """A retrieved chunk with its relevance score."""
 
+    model_config = {"extra": "allow"}  # Allow extra fields like wrrf_score
+
     chunk: DocumentChunk
     score: float = Field(le=1.0)
     retrieval_method: Literal["vector", "bm25", "hybrid"] = "vector"

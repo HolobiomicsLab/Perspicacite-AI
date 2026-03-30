@@ -141,6 +141,9 @@ DOI: {paper.doi or 'Unknown'}
 Abstract:
 {paper.abstract or 'No abstract available'}"""
 
+        # Format authors as comma-separated string for metadata
+        authors_str = ", ".join(str(a) for a in paper.authors) if paper.authors else None
+        
         chunks.append(DocumentChunk(
             id=f"{paper.id}_metadata",
             text=metadata_text,
@@ -149,6 +152,7 @@ Abstract:
                 chunk_index=0,
                 source=paper.source,
                 title=paper.title,
+                authors=authors_str,
                 year=paper.year,
                 doi=paper.doi,
             ),
@@ -171,6 +175,7 @@ Abstract:
                         chunk_index=i + 1,  # +1 because metadata is chunk 0
                         source=paper.source,
                         title=paper.title,
+                        authors=authors_str,
                         year=paper.year,
                         doi=paper.doi,
                     ),

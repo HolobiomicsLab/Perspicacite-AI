@@ -260,6 +260,11 @@ class BasicRAGMode(BaseRAGMode):
             yield StreamEvent.content(answer)
             full_response = answer
 
+        # Append references section after streaming completes
+        if sources:
+            references = format_references(sources)
+            yield StreamEvent.content("\n\n" + references)
+
         yield StreamEvent.done(
             conversation_id="",
             tokens_used=0,
