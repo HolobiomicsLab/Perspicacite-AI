@@ -48,12 +48,12 @@ def setup_logging(config: LoggingConfig) -> None:
         )
         return
 
-    # Configure structlog
+    # Configure structlog (avoid stdlib.filter_by_level: it requires a stdlib
+    # Logger; PrintLoggerFactory yields PrintLogger without .disabled).
     processors = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.stdlib.filter_by_level,
     ]
 
     if config.format == "json":
