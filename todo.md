@@ -30,6 +30,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 
 ## Short Term
 
+- [ ] Complete agentic chunking implementation using LLM client (currently falls back to semantic)
 - [x] Alternative endpoint scihub
 - [x] UI tune to be more like modern AI chatbot interface
 - [x] publisher api download
