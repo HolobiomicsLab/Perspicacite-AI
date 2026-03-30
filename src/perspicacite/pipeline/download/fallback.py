@@ -1,10 +1,14 @@
 """Main fallback orchestrator for PDF/content download.
 
 Tries multiple sources in order:
-1. Unpaywall (open access)
-2. arXiv (open access, no API key needed)
-3. Publisher APIs (Wiley, Elsevier, AAAS, ACS, RSC, etc.)
-4. Alternative endpoints (e.g., Sci-Hub)
+1. Unpaywall (open access; needs contact email)
+2. arXiv (open access, no API key)
+3. Publisher-specific direct / API routes (ACS, RSC, AAAS, Springer, …)
+4. OpenAlex OA PDF URLs (no key; optional ``OPENALEX_MAILTO`` / ``UNPAYWALL_EMAIL``)
+5. Europe PMC PDF when the work is in PMC OA (no key)
+6. Wiley ``/doi/pdf/`` without TDM token (OA or institutional IP; 10.1002/ DOIs)
+7. Wiley TDM API (if token provided)
+8. Alternative endpoints (e.g., Sci-Hub)
 """
 
 from typing import Any
@@ -15,7 +19,9 @@ from perspicacite.logging import get_logger
 from .base import logger, DownloadResult, ContentResult
 from .unpaywall import download_from_unpaywall
 from .arxiv import download_from_arxiv, is_arxiv_doi, is_arxiv_url
-from .wiley import download_from_wiley_tdm
+from .wiley import download_from_wiley_tdm, download_from_wiley_direct
+from .openalex_oa import download_pdf_from_openalex_oa
+from .europepmc import download_pdf_from_europepmc
 from .elsevier import get_content_from_elsevier
 from .aaas import download_from_aaas, is_aaas_doi
 from .acs import download_from_acs, is_acs_doi
@@ -41,10 +47,10 @@ async def get_pdf_with_fallback(
     Sources (in order):
     1. Unpaywall (open access)
     2. arXiv (open access, no API key)
-    3. ACS (check if OA or institutional access)
-    4. RSC (check if OA or institutional access)
-    5. AAAS/Science (check if OA or institutional access)
-    6. Springer Nature (check if OA or institutional access)
+    3. ACS / RSC / AAAS / Springer (direct or keyed)
+    4. OpenAlex OA PDF (no key)
+    5. Europe PMC PDF (no key, PMC OA subset)
+    6. Wiley direct ``/doi/pdf/`` for typical Wiley DOIs (no TDM token)
     7. Wiley TDM API (if token provided)
     8. Alternative endpoint (e.g., Sci-Hub)
 
@@ -105,6 +111,24 @@ async def get_pdf_with_fallback(
             if pdf_bytes:
                 return pdf_bytes
 
+        # Keyless OA / public web fallbacks (no publisher API keys)
+        logger.info("pdf_download_trying_openalex_oa", doi=doi)
+        pdf_bytes = await download_pdf_from_openalex_oa(doi, client)
+        if pdf_bytes:
+            return pdf_bytes
+
+        logger.info("pdf_download_trying_europepmc", doi=doi)
+        pdf_bytes = await download_pdf_from_europepmc(doi, client)
+        if pdf_bytes:
+            return pdf_bytes
+
+        # Typical Wiley Online Library DOI prefix — try direct PDF (OA / campus IP)
+        if doi and doi.lower().startswith("10.1002/"):
+            logger.info("pdf_download_trying_wiley_direct", doi=doi)
+            pdf_bytes = await download_from_wiley_direct(doi, client)
+            if pdf_bytes:
+                return pdf_bytes
+
         # 7. Try Wiley TDM API if token is available
         if wiley_tdm_token:
             logger.info("pdf_download_trying_wiley", doi=doi)
@@ -148,11 +172,11 @@ async def get_content_with_fallback(
     Sources (in order):
     1. Unpaywall (PDF)
     2. arXiv (PDF)
-    3. ACS (PDF)
-    4. RSC (PDF)
-    5. AAAS/Science (PDF)
-    6. Springer Nature (PDF)
-    7. Wiley TDM API (PDF, if token provided)
+    3. ACS / RSC / AAAS / Springer (PDF)
+    4. OpenAlex OA PDF
+    5. Europe PMC PDF
+    6. Wiley direct PDF (10.1002/…)
+    7. Wiley TDM API (if token provided)
     8. Elsevier API (text, if key provided)
     9. Alternative endpoint (PDF)
 
@@ -243,6 +267,37 @@ async def get_content_with_fallback(
                     content=pdf_bytes,
                     content_type="pdf",
                     source="springer",
+                )
+
+        logger.info("content_download_trying_openalex_oa", doi=doi)
+        pdf_bytes = await download_pdf_from_openalex_oa(doi, client)
+        if pdf_bytes:
+            return ContentResult(
+                success=True,
+                content=pdf_bytes,
+                content_type="pdf",
+                source="openalex_oa",
+            )
+
+        logger.info("content_download_trying_europepmc", doi=doi)
+        pdf_bytes = await download_pdf_from_europepmc(doi, client)
+        if pdf_bytes:
+            return ContentResult(
+                success=True,
+                content=pdf_bytes,
+                content_type="pdf",
+                source="europepmc",
+            )
+
+        if doi and doi.lower().startswith("10.1002/"):
+            logger.info("content_download_trying_wiley_direct", doi=doi)
+            pdf_bytes = await download_from_wiley_direct(doi, client)
+            if pdf_bytes:
+                return ContentResult(
+                    success=True,
+                    content=pdf_bytes,
+                    content_type="pdf",
+                    source="wiley_direct",
                 )
 
         # 7. Try Wiley TDM API if token is available (PDF)

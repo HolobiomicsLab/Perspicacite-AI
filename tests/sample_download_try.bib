@@ -1,0 +1,54 @@
+% Sample BibTeX for exercising PDF download / KB-from-bibtex flows.
+% DOIs are chosen to be commonly open access or widely indexed (OpenAlex, PMC).
+%
+% Quick DOI list:
+%   10.48550/arXiv.1706.03762  -> arXiv (no keys)
+%   10.1371/journal.pone.0005723 -> PLOS ONE OA (OpenAlex / Unpaywall / PMC)
+%   10.1371/journal.pbio.0020212 -> PLOS Biology OA
+%   10.1186/s12864-015-1648-2   -> BMC Genomics OA (Springer Nature family)
+%
+% Run a one-off download test (from repo root, with venv):
+%   uv run python -c "
+%   import asyncio, httpx
+%   from perspicacite.pipeline.download import get_pdf_with_fallback
+%   async def t():
+%       async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as c:
+%           for d in ['10.48550/arXiv.1706.03762','10.1371/journal.pone.0005723']:
+%               pdf = await get_pdf_with_fallback(d, http_client=c, unpaywall_email=None)
+%               print(d, 'OK' if pdf and pdf[:4]==b'%PDF' else 'fail')
+%   asyncio.run(t())
+%   "
+
+@article{vaswani2017attention,
+  title   = {Attention Is All You Need},
+  author  = {Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N. and Kaiser, Lukasz and Polosukhin, Illia},
+  journal = {Advances in Neural Information Processing Systems},
+  year    = {2017},
+  note    = {arXiv:1706.03762},
+  doi     = {10.48550/arXiv.1706.03762},
+}
+
+@article{plosone2007oa,
+  title   = {PLOS ONE sample (PMC-linked; good for OpenAlex / Europe PMC tests)},
+  journal = {PLOS ONE},
+  year    = {2007},
+  doi     = {10.1371/journal.pone.0005723},
+}
+
+@article{plosbiology2004oa,
+  title   = {PLOS Biology open-access sample},
+  journal = {PLOS Biology},
+  year    = {2004},
+  doi     = {10.1371/journal.pbio.0020212},
+}
+
+@article{bmcgenomics2015oa,
+  title   = {The first draft of the {Mycobacterium abscessus} genome},
+  author  = {Ripoll, Fabienne and Pasek, Sophie and Schenowitz, Chantal and others},
+  journal = {BMC Genomics},
+  year    = {2015},
+  volume  = {16},
+  number  = {1},
+  pages   = {392},
+  doi     = {10.1186/s12864-015-1648-2},
+}

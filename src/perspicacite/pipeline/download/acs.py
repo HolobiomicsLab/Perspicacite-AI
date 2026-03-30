@@ -6,6 +6,9 @@ Access typically requires institutional subscription.
 Some articles are open access (ACS AuthorChoice, ACS Central Science).
 
 Website: https://pubs.acs.org/
+
+This uses the public PDF URL pattern ``https://pubs.acs.org/doi/pdf/{article_id}``
+(website delivery, not a separate documented API contract like Elsevier’s).
 """
 
 import httpx

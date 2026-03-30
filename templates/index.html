@@ -1532,6 +1532,10 @@
             // Clear previous thinking
             clearThinking();
             
+            // Show immediate feedback so user knows something is happening
+            const modeLabel = currentMode.charAt(0).toUpperCase() + currentMode.slice(1);
+            addThinkingStep(`${modeLabel} mode — Sending query...`, 'analyzing');
+            
             try {
                 const response = await fetch('/api/chat', {
                     method: 'POST',

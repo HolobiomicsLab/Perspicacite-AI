@@ -1,9 +1,16 @@
-"""Elsevier ScienceDirect API.
+"""Elsevier ScienceDirect Article (Full Text) Retrieval API.
 
-Register at: https://dev.elsevier.com/
+Official documentation:
+https://dev.elsevier.com/documentation/ArticleRetrievalAPI.wadl
 
-Note: Elsevier API returns XML/text content, not PDF. The content is
-extracted from the XML and returned as text.
+We call ``GET https://api.elsevier.com/content/article/doi/{doi}`` with
+``X-ELS-APIKey`` and ``Accept: text/xml``. The API defaults to ``view=META``;
+we pass ``view=FULL`` so responses include full-text XML when entitled.
+
+Optional headers (not set here) from the same spec: ``Authorization`` (OAuth),
+``X-ELS-Authtoken``, ``X-ELS-Insttoken`` for user/institution entitlements.
+
+``Accept: application/pdf`` is also supported by Elsevier for direct PDF bytes.
 """
 
 from typing import Any
@@ -34,7 +41,9 @@ async def get_content_from_elsevier(
     should_close = http_client is None
 
     try:
-        url = f"https://api.elsevier.com/content/article/doi/{doi}"
+        # view=FULL required for full article body; default view is META only.
+        # See Article Retrieval API query param "view" (META | FULL | ...).
+        url = f"https://api.elsevier.com/content/article/doi/{doi}?view=FULL"
 
         logger.info("elsevier_api_attempt", doi=doi, url=url)
 

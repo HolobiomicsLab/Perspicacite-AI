@@ -6,7 +6,13 @@ Some articles are open access (RSC Gold, Chemical Science is fully OA).
 Access to others requires institutional subscription.
 
 Website: https://pubs.rsc.org/
-API Docs: https://api.rsc.org/
+Developer portal: https://developer.rsc.org/ (register for API keys and confirm
+endpoint paths; RSC may change API versions.)
+
+When an API key is set we call ``GET https://api.rsc.org/articles/{doi}/pdf``
+with header ``apikey`` as used in common RSC API examples—validate against your
+contract. The direct ``pubs.rsc.org`` PDF URL is a **website** pattern, not
+necessarily stable for automation; prefer the official API when you have a key.
 """
 
 import httpx

@@ -1,9 +1,13 @@
-"""AAAS (American Association for the Advancement of Science) / Science journals.
+"""AAAS / Science family journals — PDF via website URLs.
 
-Supports Science, Science Advances, Science Immunology, Science Robotics, etc.
+There is no well-documented public REST API in the same style as Elsevier or
+Wiley TDM. This module uses ``https://www.science.org/doi/pdf/{doi}``, which is
+the same PDF route as the browser. An optional ``Authorization: Bearer …``
+header is sent when ``api_key`` is set; that pattern is **not** verified against
+published AAAS API documentation—confirm with AAAS / institutional licensing if
+you rely on it.
 
-API access requires institutional subscription or personal API key.
-Register at: https://www.science.org/content/page/about-science-licenses-and-permissions
+Licensing and permissions: https://www.science.org/content/page/about-science-licenses-and-permissions
 """
 
 import httpx

@@ -1,9 +1,11 @@
 """PDF and content download from multiple sources.
 
 This package provides download functionality from various sources:
-- Unpaywall (open access)
+- Unpaywall (open access; requires contact email)
 - arXiv (open access)
-- Publisher APIs (Wiley, Elsevier, AAAS, ACS, RSC, etc.)
+- Publisher routes (ACS, RSC, AAAS, Springer, Wiley TDM, …)
+- OpenAlex OA PDF URLs and Europe PMC PDFs (no API keys)
+- Wiley ``/doi/pdf/`` for typical ``10.1002/`` DOIs without a TDM token
 - Alternative endpoints (Sci-Hub mirrors)
 
 Usage:
@@ -18,6 +20,8 @@ Usage:
 
 from .fallback import get_pdf_with_fallback, get_content_with_fallback
 from .base import DownloadResult, ContentResult, PDFDownloader
+from .unpaywall import get_open_access_url
+from .alternative import download_from_alternative_endpoint as get_pdf_from_alternative_endpoint
 
 # Publisher-specific modules (for direct access)
 from . import unpaywall
@@ -29,10 +33,14 @@ from . import acs
 from . import rsc
 from . import springer
 from . import alternative
+from . import openalex_oa
+from . import europepmc
 
 __all__ = [
     "get_pdf_with_fallback",
     "get_content_with_fallback",
+    "get_open_access_url",
+    "get_pdf_from_alternative_endpoint",
     "DownloadResult",
     "ContentResult",
     "PDFDownloader",
@@ -46,4 +54,6 @@ __all__ = [
     "rsc",
     "springer",
     "alternative",
+    "openalex_oa",
+    "europepmc",
 ]

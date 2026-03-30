@@ -7,7 +7,8 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 
 - [x] Alternative endpoint scihub
 - [x] UI tune to be more like modern AI chatbot interface
-- [ ] publisher api download
+- [x] publisher api download
+- [x] properly test publisher api (see `tests/test_publisher_api_live.py`, run `pytest -m live`)
 - [ ] tool to create KB from bibtex file
 
 ## Medium Term

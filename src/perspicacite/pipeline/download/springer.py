@@ -5,8 +5,15 @@ Supports Springer journals, Nature journals, BioMed Central, etc.
 API access requires a key. Some content is open access.
 Register at: https://dev.springernature.com/
 
-Note: Springer API primarily returns metadata and links.
-For PDF access, institutional subscription is typically required.
+Meta API (metadata + PDF URLs when present) is documented at:
+https://dev.springernature.com/docs/api-endpoints/meta-api/
+
+We use ``GET https://api.springernature.com/meta/v2/json`` with ``q=doi:...``
+and ``api_key=...`` as in the official examples (HTTPS required).
+
+Note: PDF URLs from metadata may still require institutional access to fetch.
+``link.springer.com/content/pdf/{doi}.pdf`` matches many Springer articles;
+Nature / BMC may use other host patterns—fallback direct URL can fail for those.
 """
 
 import httpx
@@ -91,7 +98,10 @@ async def download_from_springer(
         
         # Try API if key provided to get metadata and PDF URL
         if api_key:
-            api_url = f"http://api.springernature.com/meta/v2/json?q=doi:{clean_doi}&api_key={api_key}"
+            api_url = (
+                f"https://api.springernature.com/meta/v2/json"
+                f"?q=doi:{clean_doi}&api_key={api_key}"
+            )
             
             logger.info("springer_trying_api", doi=clean_doi)
             response = await client.get(api_url)
@@ -179,7 +189,10 @@ async def check_springer_open_access(
         
         # Try API if key provided
         if api_key:
-            api_url = f"http://api.springernature.com/meta/v2/json?q=doi:{clean_doi}&api_key={api_key}"
+            api_url = (
+                f"https://api.springernature.com/meta/v2/json"
+                f"?q=doi:{clean_doi}&api_key={api_key}"
+            )
             response = await client.get(api_url)
             
             if response.status_code == 200:
@@ -250,7 +263,10 @@ async def get_springer_metadata(
     
     try:
         clean_doi = doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
-        api_url = f"http://api.springernature.com/meta/v2/json?q=doi:{clean_doi}&api_key={api_key}"
+        api_url = (
+            f"https://api.springernature.com/meta/v2/json"
+            f"?q=doi:{clean_doi}&api_key={api_key}"
+        )
         
         response = await client.get(api_url)
         response.raise_for_status()
