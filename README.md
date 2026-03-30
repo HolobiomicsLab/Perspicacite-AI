@@ -324,11 +324,14 @@ Perspicacité is open source! If you find bugs or want to suggest features:
    - What happened instead
    - Your operating system and Python version
 
+For contribution workflow and contributor agreement details, see `CONTRIBUTING.md`.
+
 ---
 
 ## License
 
-MIT License - Free to use, modify, and distribute.
+This repository is distributed under the Apache License 2.0.
+See `LICENSE` for the full license text and `NOTICE` for attribution information.
 
 ---
 
