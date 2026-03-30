@@ -9,12 +9,12 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [x] Fix broken CLI server entry point (`perspicacite serve`)
 
 ### Duplication to Fix
-- [ ] Unify BibTeX parsing (CLI uses bibtexparser, Web UI uses regex)
+- [x] Unify BibTeX parsing (CLI uses bibtexparser, Web UI uses regex)
 - [ ] Collapse PDF download logic (`get_pdf_with_fallback` vs `get_content_with_fallback`)
 - [ ] Consolidate chunking systems (`pipeline/chunking.py` vs `rag/chunking.py`)
 - [ ] Pick one agentic path (orchestrator vs `RAGEngine` + `AgenticRAGMode`)
 
-### Unused/Dead Code to Clean Up
+### Unused/Dead Code to Clean Up, make sure to double check that it is really not used.
 - [ ] Remove or wire up `get_content_with_fallback`
 - [ ] Remove `KBBuilder` or make it used
 - [ ] Remove `PaperAssessor`, `QueryRefiner`, `RelevanceAssessment`

@@ -867,121 +867,63 @@ async def add_bibtex_to_kb(name: str, request: Request):
     if not bibtex_content.strip():
         return {"error": "BibTeX content is empty"}
 
-    # Parse BibTeX entries
+    # Parse BibTeX entries using bibtexparser (same as CLI)
     from perspicacite.models.papers import Paper, Author, PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
     from perspicacite.pipeline.download import get_pdf_with_fallback
-    import re
+    from perspicacite.pipeline.bibtex_kb import (
+        load_bibtex_entries,
+        entries_to_papers,
+        ALLOWED_ENTRY_TYPES,
+    )
+    import io
 
-    def parse_bibtex_entry(entry: str) -> dict | None:
-        """Parse a single BibTeX entry."""
-        # Extract entry type and key
-        type_key_match = re.match(r"@(\w+)\s*\{\s*([^,]+),", entry)
-        if not type_key_match:
-            return None
+    # Use bibtexparser to parse the BibTeX content
+    try:
+        bibtex_file = io.StringIO(bibtex_content)
+        bibtex_file.path = None  # type: ignore
+        entries = load_bibtex_entries(bibtex_file)  # type: ignore
+        papers = entries_to_papers(entries)
+    except Exception as e:
+        logger.error(f"BibTeX parsing failed: {e}")
+        return {"error": f"Failed to parse BibTeX: {str(e)}"}
 
-        entry_type = type_key_match.group(1).lower()
-        if entry_type != "article" and entry_type != "inproceedings" and entry_type != "book":
-            return None
-
-        parsed = {
-            "title": "",
-            "authors": [],
-            "year": None,
-            "doi": "",
-            "abstract": "",
-        }
-
-        # Extract fields
-        fields = {
-            "title": r"title\s*=\s*\{([^}]+)\}",
-            "author": r"author\s*=\s*\{([^}]+)\}",
-            "year": r"year\s*=\s*\{([^}]+)\}",
-            "doi": r"doi\s*=\s*\{([^}]+)\}",
-            "abstract": r"abstract\s*=\s*\{([^}]+)\}",
-        }
-
-        for field, pattern in fields.items():
-            match = re.search(pattern, entry, re.DOTALL)
-            if match:
-                value = match.group(1).strip()
-                if field == "author":
-                    # Parse authors - BibTeX uses "and" to separate authors
-                    parsed["authors"] = [a.strip() for a in value.split(" and ")]
-                elif field == "year":
-                    try:
-                        parsed["year"] = int(value)
-                    except ValueError:
-                        pass
-                else:
-                    parsed[field] = value
-
-        # Clean title of LaTeX braces
-        parsed["title"] = parsed["title"].replace("{", "").replace("}", "")
-
-        return parsed if parsed["title"] else None
-
-    # Split BibTeX into entries and parse each
-    entries = re.split(r"\n(?=@)", bibtex_content)
-    parsed_entries = []
-    for entry in entries:
-        if entry.strip():
-            parsed = parse_bibtex_entry(entry)
-            if parsed:
-                parsed_entries.append(parsed)
-
-    if not parsed_entries:
+    if not papers:
         return {"error": "No valid paper entries found in BibTeX file"}
 
-    # Convert to Paper models with PDF download
+    # Process papers with deduplication and PDF download
     papers_to_add = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0}
 
     pdf_config = app_state.config.pdf_download if app_state.config else None
     pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
 
-    for entry in parsed_entries:
-        import hashlib
-
-        paper_id = (
-            entry["doi"]
-            if entry["doi"]
-            else f"generated:{hashlib.md5(entry['title'].encode()).hexdigest()[:12]}"
-        )
+    for paper in papers:
+        # Use DOI as ID if available, otherwise generate from title
+        paper_id = paper.doi if paper.doi else paper.id
 
         # Check if paper already exists
         exists = await app_state.vector_store.paper_exists(kb.collection_name, paper_id)
         if exists:
             continue
 
-        authors = [Author(name=a) for a in entry["authors"]]
-        paper = Paper(
-            id=paper_id,
-            title=entry["title"],
-            authors=authors,
-            year=entry["year"],
-            doi=entry["doi"],
-            abstract=entry["abstract"],
-            source=PaperSource.BIBTEX,
-        )
+        # Ensure source is set to BIBTEX
+        paper.source = PaperSource.BIBTEX
 
         # Try to download full text if DOI available
-        full_text = None
-        if entry["doi"] and app_state.pdf_downloader and app_state.pdf_parser:
+        if paper.doi and app_state.pdf_downloader and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
-                # Try Unpaywall first, then alternative endpoint
-                pdf_bytes = await get_pdf_with_fallback(entry["doi"], **pdf_kw)
+                pdf_bytes = await get_pdf_with_fallback(paper.doi, **pdf_kw)
                 if pdf_bytes and len(pdf_bytes) > 1000:
                     parsed = await app_state.pdf_parser.parse(pdf_bytes)
                     if parsed and parsed.text:
-                        full_text = parsed.text
+                        paper.full_text = parsed.text
                         download_stats["success"] += 1
             except Exception as e:
-                logger.warning(f"PDF download failed for {entry['title'][:50]}: {e}")
+                logger.warning(f"PDF download failed for {paper.title[:50]}: {e}")
                 download_stats["failed"] += 1
 
-        paper.full_text = full_text
         papers_to_add.append(paper)
 
     if not papers_to_add:
