@@ -11,7 +11,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [x] properly test publisher api (see `tests/test_publisher_api_live.py`, run `pytest -m live`)
 - [x] tool to create KB from bibtex file (`perspicacite create-kb NAME --from-bibtex file.bib`)
     - [x] link KB creation tool to UI
-- [ ] Comprehensive readme to guide users who doesn't have a lot of computer knowledge.
+- [x] Comprehensive readme to guide users who doesn't have a lot of computer knowledge.
 - [x] a way do delete chat history in UI
 ## Medium Term
 - [ ] MCP support
