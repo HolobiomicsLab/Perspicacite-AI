@@ -44,6 +44,13 @@ async def get_pdf_with_fallback(
     """
     Get PDF for DOI, trying multiple sources in order.
 
+    PREFERRED FOR: Simple PDF download when you just need the document bytes.
+    
+    NOTE: For structure-aware chunking or when PDF parsing fails, consider using
+    get_content_with_fallback() instead. It can return structured XML/text from
+    Elsevier API which preserves document structure (sections, headings, etc.)
+    better than raw PDF text extraction.
+
     Sources (in order):
     1. Unpaywall (open access)
     2. arXiv (open access, no API key)
@@ -166,9 +173,18 @@ async def get_content_with_fallback(
     """
     Get content (PDF or text) for DOI, trying multiple sources.
 
-    This function is more flexible than get_pdf_with_fallback as it can
-    return text content from Elsevier API when PDF is not available.
-
+    PREFERRED FOR: Structure-aware chunking and text extraction
+    
+    Unlike get_pdf_with_fallback which returns raw PDF bytes, this function
+    returns a ContentResult that may contain:
+    - PDF bytes (from open access sources)
+    - Structured XML/text (from Elsevier API with full document structure)
+    
+    The structured text from Elsevier is particularly valuable for:
+    - Structure-aware chunking (preserving sections, headings, paragraphs)
+    - Better semantic understanding (knowing if text is from abstract vs methods)
+    - Avoiding PDF parsing errors
+    
     Sources (in order):
     1. Unpaywall (PDF)
     2. arXiv (PDF)
@@ -177,7 +193,7 @@ async def get_content_with_fallback(
     5. Europe PMC PDF
     6. Wiley direct PDF (10.1002/…)
     7. Wiley TDM API (if token provided)
-    8. Elsevier API (text, if key provided)
+    8. Elsevier API (structured XML/text, if key provided)
     9. Alternative endpoint (PDF)
 
     Args:
@@ -187,7 +203,7 @@ async def get_content_with_fallback(
         http_client: Optional HTTP client
         unpaywall_email: Email for Unpaywall API
         wiley_tdm_token: Wiley TDM API token
-        elsevier_api_key: Elsevier API key
+        elsevier_api_key: Elsevier API key (for structured text)
         aaas_api_key: AAAS API key
         rsc_api_key: RSC API key
         springer_api_key: Springer API key

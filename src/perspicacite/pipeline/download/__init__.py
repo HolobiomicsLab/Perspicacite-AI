@@ -6,16 +6,43 @@ This package provides download functionality from various sources:
 - Publisher routes (ACS, RSC, AAAS, Springer, Wiley TDM, …)
 - OpenAlex OA PDF URLs and Europe PMC PDFs (no API keys)
 - Wiley ``/doi/pdf/`` for typical ``10.1002/`` DOIs without a TDM token
+- Elsevier API (structured XML/text, requires API key)
 - Alternative endpoints (Sci-Hub mirrors)
 
-Usage:
-    from perspicacite.pipeline.download import get_pdf_with_fallback
-    
-    pdf_bytes = await get_pdf_with_fallback(
-        doi="10.1002/xxx",
-        unpaywall_email="user@example.com",
-        wiley_tdm_token="...",
-    )
+Two main functions are provided:
+
+1. get_pdf_with_fallback() - Returns raw PDF bytes
+   Best for: Simple PDF downloads
+   
+   Usage:
+       from perspicacite.pipeline.download import get_pdf_with_fallback
+       
+       pdf_bytes = await get_pdf_with_fallback(
+           doi="10.1002/xxx",
+           unpaywall_email="user@example.com",
+           wiley_tdm_token="...",
+       )
+
+2. get_content_with_fallback() - Returns ContentResult (PDF or structured text)
+   Best for: Structure-aware chunking, when PDF parsing fails, or when you need
+   document structure (sections, headings) preserved.
+   
+   This function can return structured XML from Elsevier API which is better
+   for chunking than raw PDF text extraction.
+   
+   Usage:
+       from perspicacite.pipeline.download import get_content_with_fallback
+       
+       result = await get_content_with_fallback(
+           doi="10.1016/xxx",
+           elsevier_api_key="your-key",
+       )
+       if result.content_type == "text":
+           # Structured text from Elsevier XML
+           structured_text = result.content
+       elif result.content_type == "pdf":
+           # PDF bytes from other sources
+           pdf_bytes = result.content
 """
 
 from .fallback import get_pdf_with_fallback, get_content_with_fallback
