@@ -13,6 +13,8 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
     - [x] link KB creation tool to UI
 - [x] Comprehensive readme to guide users who doesn't have a lot of computer knowledge.
 - [x] a way do delete chat history in UI
+- [ ] make sure I can use scilex to search, now we are using alternative openalex search
+- [ ] make sure the advanced and profond works exactly as in v1
 ## Medium Term
 - [ ] MCP support
 - [ ] the webapp is monolithic, maybe break it down to multiple files for better readability
