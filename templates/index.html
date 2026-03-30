@@ -720,8 +720,72 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .chat-history-item .delete-chat-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: var(--radius);
+            opacity: 0;
+            transition: opacity 0.2s, background 0.2s;
+            color: var(--text-muted);
+        }
+        .chat-history-item:hover .delete-chat-btn {
+            opacity: 0.6;
+        }
+        .chat-history-item .delete-chat-btn:hover {
+            opacity: 1 !important;
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+        .chat-history-item .chat-select-checkbox {
+            position: absolute;
+            left: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: var(--secondary);
+        }
+        .chat-history-item.select-mode {
+            padding-left: 32px;
+        }
+        .chat-history-item.select-mode .chat-title {
+            max-width: calc(100% - 60px);
+        }
 
-        /* Clear History Button */
+        /* History Action Buttons */
+        .history-actions {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+        .history-action-btn {
+            background: transparent;
+            border: none;
+            font-size: 13px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: var(--radius);
+            opacity: 0.6;
+            transition: opacity 0.2s, background 0.2s;
+            color: var(--text-muted);
+        }
+        .history-action-btn:hover {
+            opacity: 1;
+            background: var(--bg-tertiary);
+        }
+        .history-action-btn.select-mode-active {
+            background: var(--secondary);
+            color: white;
+            opacity: 1;
+        }
         .clear-history-btn {
             background: transparent;
             border: none;
@@ -1023,13 +1087,17 @@
                 <div class="chat-history-section">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                         <h3 style="margin: 0;">💬 Chat History</h3>
-                        <button class="clear-history-btn" onclick="showClearHistoryDialog()" title="Clear all history">🗑️</button>
+                        <div class="history-actions">
+                            <button class="history-action-btn" id="select-mode-btn" onclick="toggleSelectMode()" title="Select multiple">☑️</button>
+                            <button class="clear-history-btn" onclick="isSelectMode ? showClearHistoryDialog('selected') : showClearHistoryDialog('all')" title="Clear history">🗑️</button>
+                        </div>
                     </div>
                     <div id="chat-history-list" class="chat-history-list">
-                        <div class="chat-history-item active" data-session="" data-kb="" data-created-at="">
+                        <div class="chat-history-item active" data-session="" data-kb="" data-created-at="" data-conv-id="">
                             <span class="chat-title">Current Chat</span>
                             <span class="chat-kb">Web Search</span>
                             <span class="chat-date">Now</span>
+                            <button class="delete-chat-btn" onclick="deleteChatItem(this, event)" title="Delete this chat">×</button>
                         </div>
                     </div>
                 </div>
@@ -1239,6 +1307,7 @@
                 <span class="chat-title">${title}</span>
                 <span class="chat-kb">${kbName === 'default' ? 'Web Search' : kbName}</span>
                 <span class="chat-date">${dateStr}</span>
+                <button class="delete-chat-btn" onclick="deleteChatItem(this, event)" title="Delete this chat">×</button>
             `;
             item.onclick = function() { loadChatFromHistory(this); };
             historyList.insertBefore(item, historyList.firstChild);
@@ -1455,6 +1524,7 @@
                         <span class="chat-title">${title}</span>
                         <span class="chat-kb">${kbDisplay}</span>
                         <span class="chat-date">${dateStr}</span>
+                        <button class="delete-chat-btn" onclick="deleteChatItem(this, event)" title="Delete this chat">×</button>
                     `;
                     item.onclick = function() { loadChatFromHistory(this); };
                     historyList.appendChild(item);
@@ -1628,25 +1698,174 @@
         }
 
         // Clear History Functions
-        function showClearHistoryDialog() {
+        let isSelectMode = false;
+        let deleteMode = 'all'; // 'all', 'selected', or 'single'
+        let singleDeleteTarget = null;
+
+        function toggleSelectMode() {
+            isSelectMode = !isSelectMode;
+            const btn = document.getElementById('select-mode-btn');
+            const historyList = document.getElementById('chat-history-list');
+            
+            if (isSelectMode) {
+                btn.classList.add('select-mode-active');
+                btn.title = 'Cancel selection';
+                // Add checkboxes to all items with conversation IDs
+                historyList.querySelectorAll('.chat-history-item').forEach(item => {
+                    const convId = item.dataset.convId;
+                    if (convId) {
+                        item.classList.add('select-mode');
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'chat-select-checkbox';
+                        checkbox.dataset.convId = convId;
+                        item.insertBefore(checkbox, item.firstChild);
+                    }
+                });
+                showToast('Select chats to delete, then click 🗑️');
+            } else {
+                btn.classList.remove('select-mode-active');
+                btn.title = 'Select multiple';
+                // Remove checkboxes
+                historyList.querySelectorAll('.chat-select-checkbox').forEach(cb => cb.remove());
+                historyList.querySelectorAll('.chat-history-item.select-mode').forEach(item => {
+                    item.classList.remove('select-mode');
+                });
+            }
+        }
+
+        function showClearHistoryDialog(mode = 'all') {
+            deleteMode = mode;
+            const title = document.getElementById('clear-history-title');
+            const message = document.getElementById('clear-history-message');
+            const confirmBtn = document.getElementById('clear-history-confirm-btn');
+            
+            if (mode === 'selected') {
+                const selected = document.querySelectorAll('.chat-select-checkbox:checked');
+                const count = selected.length;
+                if (count === 0) {
+                    showToast('No chats selected');
+                    return;
+                }
+                title.textContent = 'Delete Selected Chats';
+                message.innerHTML = `This will permanently delete <strong>${count}</strong> selected chat${count > 1 ? 's' : ''}. This cannot be undone.`;
+                confirmBtn.textContent = 'Delete Selected';
+            } else if (mode === 'single') {
+                title.textContent = 'Delete Chat';
+                message.innerHTML = 'This will permanently delete this chat. This cannot be undone.';
+                confirmBtn.textContent = 'Delete';
+            } else {
+                title.textContent = 'Clear Chat History';
+                message.innerHTML = 'This will permanently delete <strong>all</strong> your chat conversations. This cannot be undone.';
+                confirmBtn.textContent = 'Clear All';
+            }
+            
             document.getElementById('clear-history-dialog').style.display = 'flex';
         }
 
         function hideClearHistoryDialog() {
             document.getElementById('clear-history-dialog').style.display = 'none';
+            singleDeleteTarget = null;
+        }
+
+        async function deleteChatItem(btn, event) {
+            event.stopPropagation(); // Prevent chat loading
+            const item = btn.closest('.chat-history-item');
+            const convId = item.dataset.convId;
+            
+            if (!convId) {
+                // This is the current/new chat, just clear it
+                newChat();
+                return;
+            }
+            
+            singleDeleteTarget = item;
+            showClearHistoryDialog('single');
+        }
+
+        async function deleteSelectedChats() {
+            const checkboxes = document.querySelectorAll('.chat-select-checkbox:checked');
+            const convIds = Array.from(checkboxes).map(cb => cb.dataset.convId);
+            
+            let deleted = 0;
+            let failed = 0;
+            
+            for (const convId of convIds) {
+                try {
+                    const resp = await fetch(`/api/conversations/${convId}`, { method: 'DELETE' });
+                    if (resp.ok) {
+                        deleted++;
+                        // Remove from UI
+                        const item = document.querySelector(`.chat-history-item[data-conv-id="${convId}"]`);
+                        if (item) item.remove();
+                    } else {
+                        failed++;
+                    }
+                } catch (e) {
+                    failed++;
+                    console.error('Error deleting chat:', e);
+                }
+            }
+            
+            // Exit select mode
+            toggleSelectMode();
+            
+            if (failed > 0) {
+                showToast(`Deleted ${deleted} chats, ${failed} failed`);
+            } else {
+                showToast(`Deleted ${deleted} chat${deleted > 1 ? 's' : ''}`);
+            }
+            
+            // If we deleted the active chat, start a new one
+            if (conversationId && convIds.includes(conversationId)) {
+                conversationId = null;
+                newChat();
+            }
         }
 
         async function confirmClearHistory() {
+            if (deleteMode === 'selected') {
+                await deleteSelectedChats();
+                hideClearHistoryDialog();
+                return;
+            }
+            
+            if (deleteMode === 'single' && singleDeleteTarget) {
+                const convId = singleDeleteTarget.dataset.convId;
+                if (convId) {
+                    try {
+                        const resp = await fetch(`/api/conversations/${convId}`, { method: 'DELETE' });
+                        if (resp.ok) {
+                            singleDeleteTarget.remove();
+                            showToast('Chat deleted');
+                            // If we deleted the active chat, start a new one
+                            if (conversationId === convId) {
+                                conversationId = null;
+                                newChat();
+                            }
+                        } else {
+                            showToast('Error deleting chat');
+                        }
+                    } catch (e) {
+                        showToast('Error: ' + e.message);
+                    }
+                }
+                hideClearHistoryDialog();
+                return;
+            }
+            
+            // Default: delete all
             try {
                 const resp = await fetch('/api/conversations', { method: 'DELETE' });
                 if (resp.ok) {
                     showToast('All chat history cleared');
                     // Reset UI
                     document.getElementById('chat-history-list').innerHTML = `
-                        <div class="chat-history-item active" data-session="" data-kb="" data-created-at="">
+                        <div class="chat-history-item active" data-session="" data-kb="" data-created-at="" data-conv-id="">
                             <span class="chat-title">Current Chat</span>
                             <span class="chat-kb">Web Search</span>
                             <span class="chat-date">Now</span>
+                            <button class="delete-chat-btn" onclick="deleteChatItem(this, event)" title="Delete this chat">×</button>
                         </div>
                     `;
                     conversationId = null;
@@ -2149,11 +2368,11 @@
     <!-- Clear History Confirmation Modal -->
     <div id="clear-history-dialog" class="modal-overlay" style="display: none;">
         <div class="modal">
-            <h3>Clear Chat History</h3>
-            <p>This will permanently delete <strong>all</strong> your chat conversations. This cannot be undone.</p>
+            <h3 id="clear-history-title">Clear Chat History</h3>
+            <p id="clear-history-message">This will permanently delete <strong>all</strong> your chat conversations. This cannot be undone.</p>
             <div class="modal-buttons">
                 <button class="modal-cancel" onclick="hideClearHistoryDialog()">Cancel</button>
-                <button class="modal-confirm" onclick="confirmClearHistory()">Clear All</button>
+                <button class="modal-confirm" id="clear-history-confirm-btn" onclick="confirmClearHistory()">Clear All</button>
             </div>
         </div>
     </div>
