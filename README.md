@@ -26,10 +26,11 @@ You need **Python 3.12** installed on your computer. Then:
 git clone <repository-url>
 cd perspicacite_v2
 
-# Install dependencies
+# Install dependencies using uv (recommended)
 uv sync --dev
 
-# Or if you don't have uv:
+# Or if you don't have uv, use pip:
+# The ".[dev]" means "install this package with development dependencies"
 pip install -e ".[dev]"
 ```
 
@@ -53,6 +54,12 @@ Edit `.env` and add at least one of these:
 
 ### Step 3: Start the Web App
 
+If you used **uv** in Step 1:
+```bash
+uv run python web_app_full.py
+```
+
+If you used **pip** in Step 1:
 ```bash
 python web_app_full.py
 ```
@@ -281,10 +288,29 @@ Click the 🌙/☀️ button in the top right to toggle between light and dark m
 **Solution**: Check that port 8000 isn't already in use, or change it in `config.yml`
 
 **Problem**: "Module not found" errors  
-**Solution**: Make sure you ran `uv sync --dev` or `pip install -e ".[dev]"`
+**Solution**: 
+- If you used `uv`: Run with `uv run python web_app_full.py` (not just `python`)
+- If you used `pip`: Make sure you ran `pip install -e ".[dev]"`
+
+**Problem**: "command not found: uv"  
+**Solution**: Install uv from https://github.com/astral-sh/uv or use pip instead
 
 **Problem**: AI responses are slow  
 **Solution**: Try a different mode (Basic is fastest) or check your internet connection
+
+### uv vs pip - What's the Difference?
+
+**uv** is a modern Python package manager that's faster than pip:
+- It automatically creates a virtual environment
+- You run commands with `uv run python ...`
+- Recommended for new users
+
+**pip** is the traditional Python installer:
+- You need to manage virtual environments yourself
+- You run commands with `python ...`
+- Works everywhere, good if you have issues with uv
+
+Both work fine - use whichever you prefer!
 
 ---
 
