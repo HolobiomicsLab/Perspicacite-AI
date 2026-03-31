@@ -66,7 +66,13 @@ class ChatRequest(BaseModel):
     kb_name: Optional[str] = Field(default=None, description="Knowledge base to search first")
     mode: str = Field(default="basic", description="RAG mode: basic, advanced, profound, agentic")
     stream: bool = Field(default=True, description="Stream the response")
-    max_papers: int = Field(default=3, ge=1, le=10)
+    max_papers: int = Field(default=3, ge=1, le=10, description="Maximum papers to display in results")
+    max_papers_to_download: int = Field(
+        default=10, 
+        ge=1, 
+        le=50, 
+        description="Maximum papers to download for full-text analysis (Agentic mode). Higher = more comprehensive but slower"
+    )
 
 
 class KBCreateRequest(BaseModel):
@@ -382,7 +388,11 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
 async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] = None):
     """Stream using AgenticOrchestrator."""
     async for event in app_state.orchestrator.chat(
-        query=request.query, session_id=request.session_id, kb_name=request.kb_name, stream=True
+        query=request.query, 
+        session_id=request.session_id, 
+        kb_name=request.kb_name, 
+        stream=True,
+        max_papers_to_download=request.max_papers_to_download
     ):
         # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
         # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.

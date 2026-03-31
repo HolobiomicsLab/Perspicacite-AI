@@ -43,6 +43,9 @@ class AgentSession:
     kb_name: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
+    
+    # User preferences for research depth (can be set per query)
+    max_papers_to_download: Optional[int] = None  # Override orchestrator default
 
     def add_message(self, role: str, content: str, metadata: Optional[dict] = None):
         """Add a message to the session."""
@@ -213,9 +216,17 @@ class AgenticOrchestrator:
         session_id: Optional[str] = None,
         kb_name: Optional[str] = None,
         stream: bool = True,
+        max_papers_to_download: Optional[int] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Main chat entry point with true agentic behavior.
+
+        Args:
+            query: User's research question
+            session_id: Optional session ID for persistence
+            kb_name: Optional knowledge base to search first
+            stream: Whether to stream responses
+            max_papers_to_download: Override default max papers to download (for user preference)
 
         Yields:
             Dict with type: "thinking", "tool_call", "tool_result", "answer", "papers_found"
@@ -225,11 +236,17 @@ class AgenticOrchestrator:
         logger.info(f"Query: {query}")
         logger.info(f"Session ID (client): {session_id!r}")
         logger.info(f"KB: {kb_name or 'none'}")
+        logger.info(f"Max papers to download: {max_papers_to_download or self.max_papers_to_download}")
 
         session = self.get_or_create_session(session_id)
         logger.info(f"Resolved session_id: {session.session_id}")
         session.add_message("user", query)
         session.kb_name = kb_name
+        
+        # Store user preference for download cap in session
+        if max_papers_to_download is not None:
+            session.max_papers_to_download = max_papers_to_download
+        
         logger.info(f"Session messages count: {len(session.messages)}")
 
         # Clear accumulated papers from previous requests
@@ -400,10 +417,13 @@ class AgenticOrchestrator:
         # Download full text for relevant papers (threshold-based, not hard limit)
         # For literature surveys, comprehensive coverage is important - download ALL relevant papers
         # up to a safety cap. Configurable via relevance_threshold and max_papers_to_download.
+        # Use session-specific limit if user provided it, otherwise use orchestrator default
+        max_download = session.max_papers_to_download or self.max_papers_to_download
+        
         download_candidates = [
             p for p in papers 
             if p.get("relevance_score", 0) >= self.relevance_threshold
-        ][:self.max_papers_to_download]
+        ][:max_download]
         
         if download_candidates:
             yield {"type": "thinking", "message": f"Attempting to download {len(download_candidates)} relevant papers for full text analysis..."}

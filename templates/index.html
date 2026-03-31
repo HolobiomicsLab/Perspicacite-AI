@@ -304,6 +304,37 @@
             background: rgba(27, 68, 121, 0.08);
         }
 
+        .download-cap-control {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            padding: 4px 10px;
+            background: rgba(27, 68, 121, 0.05);
+            border-radius: 6px;
+        }
+
+        .download-cap-control.visible {
+            display: flex;
+        }
+
+        .download-cap-control label {
+            white-space: nowrap;
+        }
+
+        .download-cap-control input[type="range"] {
+            width: 80px;
+            cursor: pointer;
+        }
+
+        .download-cap-control .value-display {
+            min-width: 20px;
+            text-align: center;
+            font-weight: 500;
+            color: var(--primary);
+        }
+
         .send-btn {
             width: 32px;
             height: 32px;
@@ -1190,6 +1221,11 @@
                             <option value="profound">🔬 Deep Research</option>
                             <option value="agentic">🤖 Perspicacité Agentic</option>
                         </select>
+                        <div id="download-cap-control" class="download-cap-control" title="Maximum papers to download for full-text analysis">
+                            <label>📄 Max papers:</label>
+                            <input type="range" id="download-cap-slider" min="1" max="20" value="10" oninput="updateDownloadCapDisplay(this.value)">
+                            <span class="value-display" id="download-cap-value">10</span>
+                        </div>
                         <button id="send-btn" class="send-btn" onclick="sendQuery()" disabled>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -1246,6 +1282,18 @@
         function setMode(mode) {
             currentMode = mode;
             console.log('RAG Mode set to:', mode);
+            
+            // Show/hide download cap control for agentic mode
+            const downloadCapControl = document.getElementById('download-cap-control');
+            if (mode === 'agentic') {
+                downloadCapControl.classList.add('visible');
+            } else {
+                downloadCapControl.classList.remove('visible');
+            }
+        }
+        
+        function updateDownloadCapDisplay(value) {
+            document.getElementById('download-cap-value').textContent = value;
         }
         
         function startNewChat() {
@@ -1935,6 +1983,9 @@
             addThinkingStep(`${modeLabel} mode — Sending query...`, 'analyzing');
             
             try {
+                // Get download cap setting (only used in agentic mode)
+                const downloadCap = parseInt(document.getElementById('download-cap-slider').value) || 10;
+                
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1945,7 +1996,8 @@
                         conversation_id: conversationId,
                         kb_name: selectedKb,
                         mode: currentMode,
-                        stream: true
+                        stream: true,
+                        max_papers_to_download: downloadCap
                     })
                 });
                 
