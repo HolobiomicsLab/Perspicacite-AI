@@ -345,7 +345,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
                             content_b64 = data.get("content_b64")
                             if content_b64:
                                 assistant_content = base64.b64decode(content_b64).decode("utf-8")
-                    except:
+                    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
                         pass
                 yield event
         else:
@@ -359,7 +359,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
                             content_b64 = data.get("content_b64")
                             if content_b64:
                                 assistant_content = base64.b64decode(content_b64).decode("utf-8")
-                    except:
+                    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
                         pass
                 yield event
 

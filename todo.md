@@ -25,8 +25,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 
 ### Integration Gaps
 - [ ] Wire Elsevier API into actual KB enrichment path
-- [ ] Fix MCP server (currently returns placeholders)
-- [ ] Fix bare `except:` in `agentic_chat_stream`
+- [x] Fix bare `except:` in `agentic_chat_stream` - Fixed to catch specific exceptions (JSONDecodeError, binascii.Error, UnicodeDecodeError)
 
 ## Short Term
 - [x] the remove chat history button in UI removes all the history. The should be a way to choose what to remove
