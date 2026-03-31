@@ -41,6 +41,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [x] a way do delete chat history in UI
 - [x] make sure I can use scilex to search - Integrated SciLExAdapter as primary search, OpenAlex as fallback
 - [ ] Add citation network tool to planner (expose _get_citation_network as a tool)
+- [ ] Consider user preference for download strategy: quick answer (high threshold, low max) vs comprehensive survey (low threshold, high max)
 - [ ] make sure the advanced and profond works exactly as in v1
 - [ ] adding papers from bibtex to an existing KB
 ## Medium Term

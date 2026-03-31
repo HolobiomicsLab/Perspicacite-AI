@@ -163,6 +163,8 @@ class AgenticOrchestrator:
         max_iterations: int = 5,
         use_hybrid: bool = True,
         early_exit_confidence: float = 0.85,
+        relevance_threshold: int = 3,
+        max_papers_to_download: int = 10,
     ):
         self.llm = llm_client
         self.tools = tool_registry
@@ -171,6 +173,12 @@ class AgenticOrchestrator:
         self.max_iterations = max_iterations
         self.use_hybrid = use_hybrid
         self.early_exit_confidence = early_exit_confidence
+        
+        # Paper download configuration
+        # For literature surveys: lower threshold = more papers, higher max = comprehensive coverage
+        # For quick answers: higher threshold = only best papers, lower max = faster
+        self.relevance_threshold = relevance_threshold  # Min relevance score to download (1-5)
+        self.max_papers_to_download = max_papers_to_download  # Safety cap on downloads
 
         self.intent_classifier = IntentClassifier(llm_client)
         self.planner = ResearchPlanner(llm_client)
@@ -389,11 +397,16 @@ class AgenticOrchestrator:
         included_count = len([p for p in papers if p.get("relevance_score", 3) >= 3])
         yield {"type": "thinking", "message": f"Relevance filtering: {included_count}/{len(papers)} papers included"}
         
-        # Download full text for top relevant papers (up to 5)
-        max_download = 5
-        download_candidates = [p for p in papers if p.get("relevance_score", 3) >= 3][:max_download]
+        # Download full text for relevant papers (threshold-based, not hard limit)
+        # For literature surveys, comprehensive coverage is important - download ALL relevant papers
+        # up to a safety cap. Configurable via relevance_threshold and max_papers_to_download.
+        download_candidates = [
+            p for p in papers 
+            if p.get("relevance_score", 0) >= self.relevance_threshold
+        ][:self.max_papers_to_download]
+        
         if download_candidates:
-            yield {"type": "thinking", "message": f"Attempting to download {len(download_candidates)} papers for full text..."}
+            yield {"type": "thinking", "message": f"Attempting to download {len(download_candidates)} relevant papers for full text analysis..."}
             
             downloaded_count = 0
             for i, paper in enumerate(download_candidates, 1):
@@ -408,6 +421,8 @@ class AgenticOrchestrator:
                     yield {"type": "thinking", "message": f"✗ Paper {i} not available: {title}"}
             
             yield {"type": "thinking", "message": f"Downloaded {downloaded_count}/{len(download_candidates)} papers successfully"}
+        else:
+            yield {"type": "thinking", "message": "No papers met the relevance threshold for full-text download"}
         
         # Generate final answer
         yield {"type": "thinking", "message": "Synthesizing answer..."}
@@ -1526,28 +1541,41 @@ Generate your answer:"""
     async def _download_and_enrich_papers(
         self, 
         papers: List[Dict[str, Any]], 
-        max_papers: int = 5
+        relevance_threshold: int = 3,
+        max_papers: int = 10
     ) -> List[Dict[str, Any]]:
         """Download PDFs for relevant papers and extract full text.
         
+        For literature surveys, downloads ALL relevant papers (score >= threshold)
+        up to a safety cap. This ensures comprehensive coverage rather than
+        arbitrary limits.
+        
         Args:
-            papers: List of paper dicts with DOI
-            max_papers: Maximum papers to download (default 5)
+            papers: List of paper dicts with DOI and relevance_score
+            relevance_threshold: Minimum relevance score to download (default 3)
+            max_papers: Safety cap on downloads (default 10)
             
         Returns:
             Papers with added 'full_text' field where download succeeded
         """
-        # Only try to download for papers with DOI, prioritize open access
-        download_candidates = [
-            p for p in papers[:max_papers] 
-            if p.get("doi") and p.get("open_access", {}).get("is_oa", False)
-        ]
+        # Filter to relevant papers only (threshold-based, not hard limit)
+        relevant_papers = [
+            p for p in papers 
+            if p.get("relevance_score", 0) >= relevance_threshold and p.get("doi")
+        ][:max_papers]
+        
+        # Prioritize open access papers first (they're more likely to download successfully)
+        download_candidates = sorted(
+            relevant_papers,
+            key=lambda p: (not p.get("open_access", {}).get("is_oa", False), p.get("relevance_score", 0)),
+            reverse=True
+        )
         
         if not download_candidates:
-            # If no OA papers, try the top relevant papers anyway
-            download_candidates = [p for p in papers[:max_papers] if p.get("doi")]
+            logger.info("No papers met the relevance threshold for download")
+            return papers
         
-        logger.info(f"Attempting to download {len(download_candidates)} papers for full text enrichment")
+        logger.info(f"Attempting to download {len(download_candidates)} relevant papers (threshold >= {relevance_threshold})")
         
         enriched = []
         for paper in papers:
