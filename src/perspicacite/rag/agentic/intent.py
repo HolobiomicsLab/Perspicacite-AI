@@ -90,7 +90,7 @@ class IntentClassifier:
 
 ACTIVE KNOWLEDGE BASE: The user has selected curated KB "{active_kb_name}".
 - Always include "kb_search" in suggested_tools (preferably first) for any question that can be answered from scientific literature, methods, or prior curated papers.
-- You may also suggest openalex_search for external discovery when KB might be incomplete.
+- You may also suggest literature_search for external discovery when KB might be incomplete.
 """
         
         prompt = f"""You are an intent classifier for a scientific research assistant. Analyze the user query and determine the most appropriate research approach.
@@ -99,7 +99,7 @@ Query: "{query}"{history_context}{kb_block}
 
 Available tools:
 - lotus_search: Search for natural products, chemical structures, and taxonomy in the LOTUS database
-- openalex_search: Search for academic papers and research literature
+- literature_search: Search for academic papers via SciLEx (multi-API: Semantic Scholar, OpenAlex, PubMed)
 - kb_search: Search within previously downloaded papers in the knowledge base
 - web_search: General web search for supplementary information
 

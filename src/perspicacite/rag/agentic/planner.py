@@ -160,7 +160,7 @@ SEARCH STRATEGY (follow this like a senior researcher would):
 
 Step Types:
 - lotus_search: Natural products, chemical structures
-- literature_search: Academic literature search (via OpenAlex, SciLEx, Semantic Scholar, or fallback)
+- literature_search: Academic literature search via SciLEx (multi-API: Semantic Scholar, OpenAlex, PubMed, etc.)
 - kb_search: Search existing knowledge base
 - analyze: Process and extract insights
 - answer: Final response

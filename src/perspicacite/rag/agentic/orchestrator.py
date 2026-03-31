@@ -16,6 +16,9 @@ from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.retrieval.hybrid import hybrid_retrieval
 from perspicacite.rag.utils import format_references_academic
 
+# SciLEx integration
+from perspicacite.search.scilex_adapter import SciLExAdapter
+
 logger = logging.getLogger(__name__)
 
 
@@ -175,6 +178,9 @@ class AgenticOrchestrator:
 
         # Session management
         self.sessions: Dict[str, AgentSession] = {}
+
+        # SciLEx adapter for literature search (multi-API aggregation)
+        self.scilex_adapter = SciLExAdapter()
 
     def get_or_create_session(self, session_id: Optional[str] = None) -> AgentSession:
         """Get existing session or create new one."""
@@ -475,7 +481,7 @@ class AgenticOrchestrator:
         elif step.type == StepType.LITERATURE_SEARCH:
             query = step.tool_input.get("query", original_query)
             logger.info(f"LITERATURE_SEARCH: query='{query}'")
-            return await self._fallback_openalex_search(query)
+            return await self._scilex_search(query)
 
         elif step.type == StepType.DOWNLOAD_PAPERS:
             # Download papers from OpenAlex results
@@ -1177,13 +1183,71 @@ Generate your answer:"""
             return result_str[:100] + "..."
         return result_str
 
+    async def _scilex_search(self, query: str, max_results: int = 10) -> str:
+        """
+        Search academic literature using SciLEx (multi-API aggregation).
+        
+        SciLEx searches across multiple APIs:
+        - Semantic Scholar
+        - OpenAlex  
+        - PubMed
+        - arXiv (optional)
+        - And more based on configuration
+        
+        Falls back to direct OpenAlex if SciLEx is not available.
+        """
+        logger.info(f"SciLEx search: '{query}'")
+        
+        try:
+            # Use SciLEx adapter for multi-API search
+            papers = await self.scilex_adapter.search(
+                query=query,
+                max_results=max_results,
+                apis=["semantic_scholar", "openalex", "pubmed"],  # Core APIs
+            )
+            
+            if papers:
+                # Convert Paper models to dict format for consistency
+                paper_dicts = []
+                for p in papers:
+                    paper_dict = {
+                        "id": p.id,
+                        "title": p.title,
+                        "authors": [a.name for a in p.authors[:3]],
+                        "year": p.year,
+                        "cited_by_count": p.citation_count or 0,
+                        "abstract": p.abstract[:800] if p.abstract else "",
+                        "doi": p.doi or "",
+                        "pdf_url": p.pdf_url or "",
+                        "source": "scilex",
+                    }
+                    paper_dicts.append(paper_dict)
+                
+                # Accumulate for papers_found event
+                if hasattr(self, "_found_papers"):
+                    for p in paper_dicts:
+                        p["source"] = "literature_search"
+                    self._found_papers.extend(paper_dicts)
+                
+                logger.info(f"SciLEx search found {len(paper_dicts)} papers")
+                return self._format_paper_list(paper_dicts)
+            else:
+                logger.warning("SciLEx returned no results, falling back to OpenAlex")
+                return await self._fallback_openalex_search(query, max_results)
+                
+        except Exception as e:
+            logger.error(f"SciLEx search failed: {e}, falling back to OpenAlex")
+            return await self._fallback_openalex_search(query, max_results)
+
     async def _fallback_openalex_search(self, query: str, max_results: int = 10) -> str:
-        """Search OpenAlex directly via httpx. Query should already be
-        cleaned by the planner (conversational preamble stripped)."""
+        """
+        Fallback: Search OpenAlex directly via httpx.
+        Used when SciLEx is not available or fails.
+        """
         import httpx
 
         search_terms = query.strip()
-        logger.info(f"OpenAlex search: '{search_terms}'")
+        logger.info(f"OpenAlex fallback search: '{search_terms}'")
 
         url = "https://api.openalex.org/works"
         params = {
@@ -1200,7 +1264,6 @@ Generate your answer:"""
 
                 papers = []
                 for result in data.get("results", []):
-                    # Reconstruct abstract from inverted index
                     abstract = self._reconstruct_abstract(result.get("abstract_inverted_index"))
                     
                     paper = {
@@ -1220,15 +1283,16 @@ Generate your answer:"""
 
                 papers = self._dedupe_paper_dicts(papers)
 
-                # Accumulate for papers_found event with source
                 if hasattr(self, "_found_papers"):
                     for p in papers:
                         p["source"] = "literature_search"
                     self._found_papers.extend(papers)
 
+                logger.info(f"OpenAlex fallback found {len(papers)} papers")
                 return self._format_paper_list(papers)
         except Exception as e:
-            return f"OpenAlex search failed: {e}"
+            logger.error(f"OpenAlex fallback failed: {e}")
+            return f"Literature search failed: {e}"
 
     def _format_paper_list(self, papers: list) -> str:
         """Format a list of paper dicts into a readable string."""
@@ -1496,3 +1560,54 @@ Generate your answer:"""
             enriched.append(enriched_paper)
         
         return enriched
+
+    async def _get_citation_network(self, doi: str, direction: str = "both") -> Dict[str, Any]:
+        """
+        Get citation network for a paper using SciLEx/OpenCitations.
+        
+        Args:
+            doi: DOI of the paper
+            direction: "citations" (papers citing this), "references" (papers cited by this), 
+                      or "both"
+            
+        Returns:
+            Dict with citation network information
+        """
+        logger.info(f"Getting citation network for DOI: {doi} (direction: {direction})")
+        
+        # Run in thread pool since SciLEx citation tools are synchronous
+        import asyncio
+        
+        try:
+            # Try to import SciLEx citation tools
+            from scilex.citations.citations_tools import getRefandCitFormatted
+            
+            result = await asyncio.to_thread(getRefandCitFormatted, doi)
+            citations_data, stats = result
+            
+            network = {
+                "doi": doi,
+                "citing": [],  # Papers that cite this paper
+                "cited": [],   # Papers that this paper cites (references)
+                "stats": stats,
+            }
+            
+            if direction in ("citations", "both"):
+                network["citing"] = citations_data.get("citing", [])
+                
+            if direction in ("references", "both"):
+                network["cited"] = citations_data.get("cited", [])
+            
+            logger.info(
+                f"Citation network for {doi}: "
+                f"{len(network['citing'])} citing, {len(network['cited'])} references"
+            )
+            
+            return network
+            
+        except ImportError:
+            logger.warning("SciLEx citation tools not available")
+            return {"doi": doi, "citing": [], "cited": [], "error": "Citation tools not available"}
+        except Exception as e:
+            logger.error(f"Failed to get citation network: {e}")
+            return {"doi": doi, "citing": [], "cited": [], "error": str(e)}
