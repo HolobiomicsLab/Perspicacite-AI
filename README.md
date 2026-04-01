@@ -301,9 +301,7 @@ Click the 🌙/☀️ button in the top right to toggle between light and dark m
 ## Getting Help
 
 ### Documentation
-- `QUICKSTART.md` - Quick command-line examples
-- `TRY_IT_GUIDE.md` - Detailed integration guide
-- `IMPLEMENTATION_GUIDE.md` - Technical documentation
+- See `CONTRIBUTING.md` for contribution guidelines
 
 ### Common Issues
 
