@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 import uvicorn
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.models.kb import KnowledgeBase, ChunkConfig, chroma_collection_name_for_kb
+from perspicacite.models.rag import RAGMode
 
 # Configure logging with file output
 log_dir = Path("logs")
@@ -73,12 +74,22 @@ class ChatRequest(BaseModel):
         le=50, 
         description="Maximum papers to download for full-text analysis (Agentic mode). Higher = more comprehensive but slower"
     )
+    databases: List[str] = Field(
+        default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
+        description="List of databases to search (semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp)"
+    )
 
 
 class KBCreateRequest(BaseModel):
     """Request to create a knowledge base."""
 
-    name: str = Field(..., pattern=r"^[a-zA-Z0-9 _-]+$", min_length=1, max_length=100)
+    name: str = Field(
+        ..., 
+        pattern=r"^[a-zA-Z0-9 _-]+$", 
+        min_length=1, 
+        max_length=100,
+        description="KB name (spaces will be converted to underscores)"
+    )
     description: Optional[str] = None
 
 
@@ -422,6 +433,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
         "basic": RAGMode.BASIC,
         "advanced": RAGMode.ADVANCED,
         "profound": RAGMode.PROFOUND,
+        "literature_survey": RAGMode.LITERATURE_SURVEY,
     }
     rag_mode = mode_map.get(request.mode, RAGMode.BASIC)
 
@@ -432,7 +444,11 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
 
     # Create RAG request
     rag_request = RAGReq(
-        query=request.query, kb_name=request.kb_name or "default", mode=rag_mode, stream=True
+        query=request.query, 
+        kb_name=request.kb_name or "default", 
+        mode=rag_mode, 
+        stream=True,
+        databases=request.databases
     )
 
     # Execute using RAGEngine streaming
@@ -443,7 +459,9 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
         async for event in app_state.rag_engine.query_stream(rag_request):
             if event.event == "status":
                 # Forward status updates
-                yield f"data: {json.dumps({'type': 'thinking', 'message': json.loads(event.data)['message']})}\n\n"
+                status_data = json.loads(event.data)
+                # Include full status data (for literature survey session info, etc.)
+                yield f"data: {json.dumps({'type': 'status', **status_data})}\n\n"
 
             elif event.event == "source":
                 # Collect sources
@@ -504,6 +522,13 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "llm": provider_info,
     }
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return empty favicon to prevent 404 errors in logs."""
+    from fastapi.responses import Response
+    return Response(content=b"", media_type="image/x-icon")
 
 
 # ── Conversation routes ─────────────────────────────────────────────
@@ -668,23 +693,26 @@ async def create_knowledge_base(request: KBCreateRequest):
     if not app_state.session_store:
         return {"error": "System not initialized"}
 
-    collection_name = chroma_collection_name_for_kb(request.name)
+    # Sanitize KB name: replace spaces with underscores for storage
+    kb_name = request.name.strip().replace(" ", "_")
+    collection_name = chroma_collection_name_for_kb(kb_name)
 
-    existing = await app_state.session_store.get_kb_metadata(request.name)
+    existing = await app_state.session_store.get_kb_metadata(kb_name)
     if existing:
-        return {"error": f"Knowledge base '{request.name}' already exists"}
+        return {"error": f"Knowledge base '{kb_name}' already exists"}
 
+    # Create collection (handles "already exists" gracefully)
     await app_state.vector_store.create_collection(collection_name)
 
     kb = KnowledgeBase(
-        name=request.name,
+        name=kb_name,
         description=request.description,
         collection_name=collection_name,
         embedding_model=app_state.embedding_provider.model_name,
         chunk_config=ChunkConfig(),
     )
     await app_state.session_store.save_kb_metadata(kb)
-    logger.info(f"Created KB: {request.name} (collection: {collection_name})")
+    logger.info(f"Created KB: {kb_name} (collection: {collection_name})")
 
     return {
         "name": kb.name,
@@ -972,7 +1000,126 @@ async def add_bibtex_to_kb(name: str, request: Request):
 
 
 # =============================================================================
-# SECTION 9: Main Entry Point
+# SECTION 9: Literature Survey API Endpoints
+# =============================================================================
+
+class SurveySelectionRequest(BaseModel):
+    """Request to update paper selection for literature survey."""
+    session_id: str
+    selected_paper_ids: List[str]
+
+
+class SurveyGenerateRequest(BaseModel):
+    """Request to generate deep analysis for selected papers."""
+    session_id: str
+
+
+@app.get("/api/survey/{session_id}")
+async def get_survey_session(session_id: str):
+    """Get literature survey session status and papers."""
+    from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
+    
+    # Get the literature survey mode from RAGEngine
+    survey_mode = None
+    if app_state.rag_engine and RAGMode.LITERATURE_SURVEY in app_state.rag_engine._modes:
+        survey_mode = app_state.rag_engine._modes[RAGMode.LITERATURE_SURVEY]
+    
+    if not survey_mode:
+        return {"error": "Literature survey mode not available"}
+    
+    session = survey_mode.get_session(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    
+    return {
+        "session_id": session.session_id,
+        "query": session.query,
+        "papers_count": len(session.papers),
+        "themes_count": len(session.themes),
+        "selected_count": len(session.selected_papers),
+        "themes": [
+            {
+                "name": t.name,
+                "description": t.description,
+                "paper_count": len(t.papers)
+            }
+            for t in session.themes
+        ],
+        "papers": [
+            {
+                "id": p.id,
+                "title": p.title,
+                "authors": p.authors,
+                "year": p.year,
+                "abstract": p.abstract[:300] + "..." if len(p.abstract) > 300 else p.abstract,
+                "doi": p.doi,
+                "citation_count": p.citation_count,
+                "relevance_score": p.relevance_score,
+                "themes": p.themes,
+                "recommended": p.recommended,
+                "reason": p.reason,
+            }
+            for p in session.papers
+        ]
+    }
+
+
+@app.post("/api/survey/{session_id}/select")
+async def update_survey_selection(session_id: str, request: SurveySelectionRequest):
+    """Update paper selection for literature survey."""
+    from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
+    
+    survey_mode = None
+    if app_state.rag_engine and RAGMode.LITERATURE_SURVEY in app_state.rag_engine._modes:
+        survey_mode = app_state.rag_engine._modes[RAGMode.LITERATURE_SURVEY]
+    
+    if not survey_mode:
+        return {"error": "Literature survey mode not available"}
+    
+    success = survey_mode.update_selection(session_id, request.selected_paper_ids)
+    if not success:
+        return {"error": "Failed to update selection"}
+    
+    return {
+        "success": True,
+        "session_id": session_id,
+        "selected_count": len(request.selected_paper_ids)
+    }
+
+
+@app.post("/api/survey/{session_id}/generate")
+async def generate_survey_report(session_id: str):
+    """Generate deep analysis report for selected papers."""
+    from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
+    from perspicacite.models.rag import RAGResponse
+    
+    survey_mode = None
+    if app_state.rag_engine and RAGMode.LITERATURE_SURVEY in app_state.rag_engine._modes:
+        survey_mode = app_state.rag_engine._modes[RAGMode.LITERATURE_SURVEY]
+    
+    if not survey_mode:
+        return {"error": "Literature survey mode not available"}
+    
+    # Use LLM client from app_state
+    llm = app_state.llm_client
+    
+    try:
+        response = await survey_mode.generate_deep_analysis(session_id, llm)
+        return {
+            "success": True,
+            "session_id": session_id,
+            "answer": response.answer,
+            "papers_analyzed": response.metadata.get("papers_analyzed", 0),
+            "themes": response.metadata.get("themes", 0),
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate survey report: {e}")
+        return {"error": f"Failed to generate report: {str(e)}"}
+
+
+
+# =============================================================================
+# SECTION 10: Main Entry Point
 # =============================================================================
 
 if __name__ == "__main__":

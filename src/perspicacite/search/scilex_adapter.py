@@ -1,14 +1,17 @@
 """SciLEx adapter for Perspicacité v2.
 
 This module provides an adapter to use SciLEx as a literature search provider.
-SciLEx is installed as a dependency and imported directly.
+Uses SciLEx's collection, then manually aggregates and converts to Papers.
 """
 
 import asyncio
+import json
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Paper, PaperSource
@@ -17,27 +20,9 @@ logger = get_logger("perspicacite.search.scilex")
 
 
 class SciLExAdapter:
-    """
-    Adapter to use SciLEx as a search provider.
-
-    Integration approach: Library import with adapter pattern.
-    SciLEx is installed as a dependency (pip install -e ../SciLEx).
-    This adapter:
-    1. Prepares SciLEx config files in a temp directory
-    2. Calls SciLEx collection functions programmatically
-    3. Maps SciLEx dict/DataFrame output to Perspicacite Paper models
-    4. Wraps sync calls in asyncio.to_thread()
-
-    Fallback: If SciLEx is not installed, gracefully degrades to built-in search.
-    """
+    """Adapter to use SciLEx as a search provider."""
 
     def __init__(self, api_config: dict[str, Any] | None = None):
-        """
-        Initialize SciLEx adapter.
-
-        Args:
-            api_config: Optional API configuration dict with API keys
-        """
         self._scilex_available = self._check_scilex()
         self.api_config = api_config or {}
 
@@ -58,22 +43,10 @@ class SciLExAdapter:
         year_max: int | None = None,
         apis: list[str] | None = None,
     ) -> list[Paper]:
-        """
-        Search academic databases via SciLEx.
-
-        Args:
-            query: Search query
-            max_results: Maximum results per API
-            year_min: Minimum publication year
-            year_max: Maximum publication year
-            apis: List of APIs to use (default: semantic_scholar, openalex, pubmed)
-
-        Returns:
-            List of Paper models
-        """
+        """Search academic databases via SciLEx."""
         if not self._scilex_available:
             logger.warning("scilex_not_available_fallback")
-            return await self._fallback_search(query, max_results)
+            return []
 
         return await asyncio.to_thread(
             self._scilex_search_sync,
@@ -92,31 +65,57 @@ class SciLExAdapter:
         year_max: int | None,
         apis: list[str] | None,
     ) -> list[Paper]:
-        """
-        Synchronous SciLEx collection.
-
-        This runs in a thread pool to not block the event loop.
-        """
+        """Synchronous SciLEx search."""
         from scilex.crawlers.collector_collection import CollectCollection
-        try:
-            from scilex.crawlers.aggregate import deduplicate, convertToZoteroFormat
-        except ImportError:
-            # Fallback if functions not available
-            from scilex.crawlers.aggregate import deduplicate
-            convertToZoteroFormat = None  # Will handle below
+        from scilex.crawlers.aggregate import (
+            OpenAlextoZoteroFormat,
+            SemanticScholartoZoteroFormat,
+            ArxivtoZoteroFormat,
+            PubMedtoZoteroFormat,
+            IEEEtoZoteroFormat,
+            SpringertoZoteroFormat,
+            DBLPtoZoteroFormat,
+            deduplicate,
+        )
 
-        # Default APIs if not specified
+        # API name mapping
+        api_name_map = {
+            "semantic_scholar": "SemanticScholar",
+            "openalex": "OpenAlex",
+            "pubmed": "PubMed",
+            "arxiv": "Arxiv",
+            "ieee": "IEEE",
+            "springer": "Springer",
+            "dblp": "DBLP",
+        }
+
+        # Format converters
+        api_converters = {
+            "OpenAlex": OpenAlextoZoteroFormat,
+            "SemanticScholar": SemanticScholartoZoteroFormat,
+            "Arxiv": ArxivtoZoteroFormat,
+            "PubMed": PubMedtoZoteroFormat,
+            "IEEE": IEEEtoZoteroFormat,
+            "Springer": SpringertoZoteroFormat,
+            "DBLP": DBLPtoZoteroFormat,
+        }
+
+        # Default APIs
         if apis is None:
             apis = ["semantic_scholar", "openalex", "pubmed"]
 
-        # Create temp config
+        # Use a single year to limit queries
+        search_year = year_max or 2024
+        capitalized_apis = [api_name_map.get(a, a) for a in apis]
+
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Configure SciLEx
             main_config = {
                 "collect_name": "perspicacite_search",
                 "output_dir": tmpdir,
-                "keywords": [[query], []],  # SciLEx format: list of keyword groups
-                "apis": apis,
-                "years": [year_min or 1900, year_max or 2100],
+                "keywords": [[query], []],
+                "apis": capitalized_apis,
+                "years": [search_year, search_year],
                 "fields": [],
                 "collect_type": "references",
                 "zotero": False,
@@ -124,80 +123,162 @@ class SciLExAdapter:
                 "zotero_key": "",
             }
 
-            # Build API config
             api_config = self._build_api_config(apis)
 
             try:
-                # Initialize collection
+                # Phase 1: Collect
+                logger.info("scilex_collection_start", query=query, apis=apis)
                 collector = CollectCollection(main_config, api_config)
 
-                # Run collection
-                logger.info("scilex_collection_start", query=query, apis=apis)
-                collector.run_collection()
+                queries_by_api = collector.queryCompositor()
 
-                # Load and process results
-                import pandas as pd
+                for api_name, queries in queries_by_api.items():
+                    api_collect_list = []
+                    for idx, query_dict in enumerate(queries):
+                        query_dict["id_collect"] = idx
+                        query_dict["total_art"] = 0
+                        query_dict["last_page"] = 0
+                        query_dict["coll_art"] = 0
+                        query_dict["state"] = 0
+                        query_dict["max_articles_per_query"] = max_results * 2
+                        api_collect_list.append({"query": query_dict, "api": api_name})
 
-                results_file = Path(tmpdir) / "perspicacite_search" / "all_data.csv"
-                if not results_file.exists():
+                    try:
+                        logger.info(f"Collecting from {api_name}...")
+                        collector.run_job_collects(api_collect_list)
+                        logger.info(f"Successfully collected from {api_name}")
+                    except Exception as api_error:
+                        logger.warning(f"API {api_name} failed: {api_error}")
+                        continue
+
+                # Phase 2: Manual aggregation
+                logger.info("scilex_aggregation_start")
+                repo_path = Path(tmpdir) / "perspicacite_search"
+
+                all_records = []
+
+                # Walk through API directories
+                for api_dir in repo_path.iterdir():
+                    if not api_dir.is_dir():
+                        continue
+                    if api_dir.name in ["config_used.yml", "citation_cache.db"]:
+                        continue
+
+                    api_name = api_dir.name
+                    converter = api_converters.get(api_name)
+
+                    if not converter:
+                        logger.warning(f"No converter for API: {api_name}")
+                        continue
+
+                    # Process each query directory
+                    for query_dir in api_dir.iterdir():
+                        if not query_dir.is_dir():
+                            continue
+
+                        # Process each result file
+                        for result_file in query_dir.iterdir():
+                            if not result_file.is_file():
+                                continue
+
+                            try:
+                                with open(result_file) as f:
+                                    data = json.load(f)
+
+                                # Handle different response formats
+                                if isinstance(data, dict) and "results" in data:
+                                    papers_list = data["results"]
+                                elif isinstance(data, list):
+                                    papers_list = data
+                                else:
+                                    continue
+
+                                # Convert each paper to Zotero format
+                                for paper_data in papers_list:
+                                    try:
+                                        zotero_record = converter(paper_data)
+                                        zotero_record["archive"] = api_name
+                                        all_records.append(zotero_record)
+                                    except Exception as conv_error:
+                                        logger.debug(f"Conversion error: {conv_error}")
+                                        continue
+
+                            except Exception as e:
+                                logger.debug(f"Failed to read {result_file}: {e}")
+                                continue
+
+                logger.info(f"scilex_collected_records", count=len(all_records))
+
+                if not all_records:
                     logger.warning("scilex_no_results", query=query)
                     return []
 
-                df = pd.read_csv(results_file)
+                # Create DataFrame
+                df = pd.DataFrame(all_records)
 
                 # Deduplicate
-                df_deduped = deduplicate(df)
-
-                # Convert to Zotero format for consistent output (if available)
-                if convertToZoteroFormat:
-                    df_zotero = convertToZoteroFormat(df_deduped)
-                else:
-                    df_zotero = df_deduped
+                try:
+                    df_deduped = deduplicate(df)
+                    logger.info(f"scilex_deduplicated", before=len(df), after=len(df_deduped))
+                except Exception as e:
+                    logger.debug(f"Deduplication error: {e}")
+                    df_deduped = df
 
                 # Convert to Paper models
-                papers = self._map_scilex_to_papers(df_zotero)
+                papers = self._map_dataframe_to_papers(df_deduped)
 
-                logger.info(
-                    "scilex_collection_complete",
-                    query=query,
-                    found=len(papers),
-                )
-
+                logger.info("scilex_collection_complete", query=query, found=len(papers))
                 return papers[:max_results]
 
             except Exception as e:
                 logger.error("scilex_collection_error", error=str(e))
-                # Re-raise so caller can handle fallback
                 raise
 
     def _build_api_config(self, apis: list[str]) -> dict[str, Any]:
-        """Build API configuration dict for SciLEx."""
+        """Build API configuration dict for SciLEx.
+        
+        Note: SciLEx uses capitalized API names (e.g., "SemanticScholar") as keys,
+        not uppercase env var names.
+        """
+        # Map lowercase API names to SciLEx capitalized names
+        api_name_map = {
+            "semantic_scholar": "SemanticScholar",
+            "openalex": "OpenAlex",
+            "pubmed": "PubMed",
+            "arxiv": "Arxiv",
+            "ieee": "IEEE",
+            "springer": "Springer",
+            "dblp": "DBLP",
+        }
+        
         config = {}
-
         for api in apis:
             api_upper = api.upper()
-            env_key = f"SCILEX_{api_upper}_API_KEY"
-            api_key = os.environ.get(env_key) or self.api_config.get(api, {}).get("api_key")
-
+            scilex_api_name = api_name_map.get(api, api)
+            
+            # Try multiple env var naming conventions
+            env_key_prefixed = f"SCILEX_{api_upper}_API_KEY"
+            env_key_direct = f"{api_upper}_API_KEY"
+            
+            api_key = (
+                os.environ.get(env_key_prefixed) or
+                os.environ.get(env_key_direct) or
+                self.api_config.get(api, {}).get("api_key")
+            )
+            
             if api_key:
-                config[api_upper] = {"api_key": api_key}
+                config[scilex_api_name] = {"api_key": api_key}
+                # Log only first/last 4 chars of key for security
+                masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "****"
+                logger.info(f"API key configured for {scilex_api_name}", key_mask=masked_key, key_length=len(api_key))
             else:
-                config[api_upper] = {}
-
+                config[scilex_api_name] = {}
+                logger.debug(f"No API key found for {scilex_api_name}", checked_vars=[env_key_prefixed, env_key_direct])
         return config
 
-    def _map_scilex_to_papers(self, df: Any) -> list[Paper]:
-        """
-        Map SciLEx DataFrame to Perspicacite Paper models.
-
-        Args:
-            df: SciLEx DataFrame (in Zotero format)
-
-        Returns:
-            List of Paper models
-        """
+    def _map_dataframe_to_papers(self, df: pd.DataFrame) -> list[Paper]:
+        """Map SciLEx aggregated DataFrame to Paper models."""
         papers = []
-
         for _, row in df.iterrows():
             try:
                 paper = self._map_single_record(row)
@@ -205,56 +286,66 @@ class SciLExAdapter:
             except Exception as e:
                 logger.warning("scilex_map_error", error=str(e))
                 continue
-
         return papers
 
     def _map_single_record(self, row: Any) -> Paper:
-        """Map a single SciLEx record to Paper model."""
-        # Extract authors
+        """Map a single SciLEx record (Zotero format) to Paper model."""
+        from perspicacite.models.papers import Author
+
+        def safe_str(value, default=""):
+            if value is None:
+                return default
+            if isinstance(value, float) and pd.isna(value):
+                return default
+            return str(value) if value else default
+
+        # Extract fields from Zotero format
+        title = safe_str(row.get("title"), "Untitled")
+        abstract = safe_str(row.get("abstractNote")) or safe_str(row.get("abstract"))
+
+        # Parse authors (semicolon-separated in Zotero format: "Last1, First1; Last2, First2")
         authors = []
-        author_field = row.get("author", "")
-        if isinstance(author_field, str) and author_field:
-            for author_str in author_field.split("; "):
+        author_field = safe_str(row.get("authors")) or safe_str(row.get("author"))
+        if author_field:
+            # Split by semicolon (handle both "; " and ";" separators)
+            for author_str in author_field.replace("; ", ";").split(";"):
                 author_str = author_str.strip()
                 if not author_str:
                     continue
-
-                # Try to parse "Last, First" format
+                # Zotero format is "Last, First" 
                 if "," in author_str:
                     parts = author_str.split(",", 1)
                     family = parts[0].strip()
                     given = parts[1].strip() if len(parts) > 1 else None
                     name = f"{given} {family}" if given else family
                 else:
-                    # "First Last" format
+                    # Fallback: try to parse "First Last"
                     parts = author_str.rsplit(" ", 1)
                     if len(parts) == 2:
-                        family = parts[1]
                         given = parts[0]
+                        family = parts[1]
                         name = author_str
                     else:
                         name = author_str
-                        family = None
                         given = None
-
-                from perspicacite.models.papers import Author
-
+                        family = None
                 authors.append(Author(name=name, given=given, family=family))
 
-        # Extract year
+        # Parse year from date
         year = None
-        date_field = row.get("date", "")
-        if isinstance(date_field, str) and date_field:
+        date_field = safe_str(row.get("date"))
+        if date_field:
             try:
                 year = int(date_field.split("-")[0])
             except (ValueError, IndexError):
                 pass
 
-        # Generate ID from DOI or PMID
-        doi = row.get("DOI", "")
-        pmid = row.get("pmid", "")
-        url = row.get("url", "")
+        # Extract other fields
+        doi = safe_str(row.get("DOI"))
+        pmid = safe_str(row.get("pmid"))
+        url = safe_str(row.get("url"))
 
+        # Generate ID
         if doi:
             paper_id = f"doi:{doi}"
         elif pmid:
@@ -263,77 +354,34 @@ class SciLExAdapter:
             paper_id = url
         else:
             import hashlib
-
-            title = row.get("title", "")
             paper_id = f"generated:{hashlib.md5(title.encode()).hexdigest()[:12]}"
-
-        # Get abstract
-        abstract = row.get("abstractNote", "") or row.get("abstract", "")
-
-        # Get PDF URL
-        pdf_url = row.get("file", "")
-        if isinstance(pdf_url, str) and pdf_url.startswith("/"):
-            # Local file path - skip
-            pdf_url = None
 
         # Get citation count
         citation_count = None
-        if "citation_count" in row:
-            try:
-                citation_count = int(row["citation_count"])
-            except (ValueError, TypeError):
-                pass
+        try:
+            cit = row.get("citation_count", row.get("nb_citation"))
+            if cit and not pd.isna(cit):
+                citation_count = int(cit)
+        except (ValueError, TypeError):
+            pass
 
         return Paper(
             id=paper_id,
-            title=row.get("title", "Untitled"),
+            title=title,
             authors=authors,
             abstract=abstract or None,
             year=year,
-            journal=row.get("publicationTitle") or row.get("journal"),
+            journal=safe_str(row.get("publicationTitle")) or safe_str(row.get("journal")),
             doi=doi or None,
-            pmid=str(pmid) if pmid else None,
+            pmid=pmid or None,
             url=url or None,
-            pdf_url=pdf_url,
+            pdf_url=safe_str(row.get("pdf_url")) or None,
             citation_count=citation_count,
             source=PaperSource.SCILEX,
-            keywords=row.get("tags", "").split(", ") if row.get("tags") else [],
-            metadata={
-                "scilex_api": row.get("api_source", "unknown"),
-                "scilex_date_added": row.get("dateAdded", ""),
-            },
+            keywords=[t.strip() for t in safe_str(row.get("tags")).split(", ")] if row.get("tags") else [],
+            metadata={"archive": safe_str(row.get("archive"), "unknown")},
         )
 
-    async def _fallback_search(self, query: str, max_results: int) -> list[Paper]:
-        """Fallback search when SciLEx is not available."""
-        logger.info("fallback_search", query=query)
-        # Return empty list - caller should use alternative search
-        return []
 
-
-class SciLExSearchProvider:
-    """
-    High-level search provider interface for SciLEx.
-
-    This provides a simpler interface for the RAG engine to use.
-    """
-
-    def __init__(self, adapter: SciLExAdapter | None = None):
-        self.adapter = adapter or SciLExAdapter()
-
-    async def search(
-        self,
-        query: str,
-        max_results: int = 10,
-        **kwargs: Any,
-    ) -> list[Paper]:
-        """Search for papers."""
-        return await self.adapter.search(query, max_results=max_results, **kwargs)
-
-    @property
-    def name(self) -> str:
-        return "scilex"
-
-    @property
-    def description(self) -> str:
-        return "Search academic databases via SciLEx (10+ APIs)"
+# For compatibility
+SciLExSearchProvider = SciLExAdapter

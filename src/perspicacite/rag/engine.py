@@ -13,6 +13,7 @@ from perspicacite.rag.modes import (
     AgenticRAGMode,
     AdvancedRAGMode,
     BasicRAGMode,
+    LiteratureSurveyRAGMode,
     ProfoundRAGMode,
 )
 from perspicacite.rag.tools import ToolRegistry
@@ -57,6 +58,7 @@ class RAGEngine:
             RAGMode.ADVANCED: AdvancedRAGMode(config),
             RAGMode.PROFOUND: ProfoundRAGMode(config),
             RAGMode.AGENTIC: AgenticRAGMode(config),
+            RAGMode.LITERATURE_SURVEY: LiteratureSurveyRAGMode(config),
         }
 
     async def query(self, request: RAGRequest) -> RAGResponse:

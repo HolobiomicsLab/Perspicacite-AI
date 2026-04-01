@@ -1,7 +1,7 @@
 """RAG models."""
 
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -14,13 +14,15 @@ class RAGMode(str, Enum):
     BASIC: Simple retrieval + generation (single query, no refinement)
     ADVANCED: Query rephrasing + hybrid retrieval + WRRF scoring + optional refinement
     PROFOUND: Multi-cycle research with planning, web search, reflection (from v1)
-    AGENTIC: New intent-based agentic RAG with tool use
+    AGENTIC: Intent-based agentic RAG with tool use
+    LITERATURE_SURVEY: Systematic field mapping with theme identification and structured output
     """
 
     BASIC = "basic"
     ADVANCED = "advanced"
     PROFOUND = "profound"
     AGENTIC = "agentic"
+    LITERATURE_SURVEY = "literature_survey"
 
 
 class SourceReference(BaseModel):
@@ -59,6 +61,10 @@ class RAGRequest(BaseModel):
     use_web_search: bool = False
     filters: Optional[SearchFilters] = None
     conversation_id: Optional[str] = None
+    databases: List[str] = Field(
+        default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
+        description="List of databases to search"
+    )
 
     def __repr__(self) -> str:
         return (

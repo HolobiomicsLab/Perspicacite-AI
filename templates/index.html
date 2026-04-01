@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Perspicacité v2 - True Agentic RAG</title>
+    <title>Perspicacité AI - True Agentic RAG</title>
     <style>
         /* ScienceGuide-inspired styling */
         @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700&family=Libre+Franklin:wght@300;400;500;600&family=Quicksand:wght@400;500;600&display=swap');
@@ -333,6 +333,207 @@
             text-align: center;
             font-weight: 500;
             color: var(--primary);
+        }
+
+        /* Literature Survey Styles */
+        .survey-container {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin: 10px 0;
+        }
+
+        .survey-container h3 {
+            margin: 0 0 10px 0;
+            color: var(--primary);
+        }
+
+        .survey-actions {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .survey-actions.bottom {
+            border-top: 1px solid var(--border);
+            padding-top: 15px;
+            margin-top: 20px;
+        }
+
+        .survey-actions button {
+            padding: 8px 16px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .survey-actions button:hover {
+            background: var(--bg-primary);
+        }
+
+        .survey-actions button.primary {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .survey-actions button.primary:hover {
+            background: var(--primary-light);
+        }
+
+        .survey-actions button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background: var(--bg-secondary);
+        }
+
+        .survey-themes {
+            margin-top: 15px;
+        }
+
+        .survey-theme {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+
+        .theme-header {
+            padding: 12px 16px;
+            background: var(--bg-primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            user-select: none;
+        }
+
+        .theme-header:hover {
+            background: var(--bg-secondary);
+        }
+
+        .theme-toggle {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .theme-count {
+            color: var(--text-secondary);
+            font-size: 13px;
+            margin-left: auto;
+        }
+
+        .theme-content {
+            padding: 16px;
+        }
+
+        .theme-description {
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .theme-papers {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .survey-paper {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            gap: 10px;
+            transition: background 0.2s;
+        }
+
+        .survey-paper:hover {
+            background: var(--bg-primary);
+        }
+
+        .survey-paper.selected {
+            background: rgba(27, 68, 121, 0.05);
+            border-color: var(--primary);
+        }
+
+        .survey-paper input[type="checkbox"] {
+            margin-top: 2px;
+        }
+
+        .survey-paper label {
+            flex: 1;
+            cursor: pointer;
+        }
+
+        .paper-title {
+            font-weight: 500;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .recommended-badge {
+            background: #fbbf24;
+            color: #92400e;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .paper-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .paper-abstract {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .paper-reason {
+            font-size: 12px;
+            color: var(--primary);
+            margin-top: 6px;
+            font-style: italic;
+        }
+
+        .survey-report {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+        }
+
+        .report-content {
+            line-height: 1.6;
+        }
+
+        .report-content h1, .report-content h2, .report-content h3 {
+            color: var(--primary);
+            margin-top: 20px;
+        }
+
+        .report-meta {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 13px;
         }
 
         .send-btn {
@@ -836,9 +1037,62 @@
             background: rgba(239, 68, 68, 0.1);
         }
 
+        /* Database Selector Section */
+        .db-section {
+            margin-top: auto;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .db-section h3 {
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        .db-selector {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .db-option {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.15s;
+            user-select: none;
+        }
+        .db-option:hover {
+            border-color: var(--primary-light);
+        }
+        .db-option.selected {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        .db-option input {
+            display: none;
+        }
+        .db-select-all {
+            font-size: 11px;
+            color: var(--secondary);
+            cursor: pointer;
+            margin-top: 6px;
+            display: inline-block;
+        }
+        .db-select-all:hover {
+            text-decoration: underline;
+        }
+
         /* KB Section */
         .kb-section {
-            margin-top: auto;
             padding-top: 12px;
             border-top: 1px solid var(--border);
             flex-shrink: 0;
@@ -1137,6 +1391,42 @@
                     </div>
                 </div>
                 
+                <!-- Database Selector -->
+                <div class="db-section">
+                    <h3>🌐 Search Databases</h3>
+                    <div id="db-selector" class="db-selector">
+                        <label class="db-option selected" data-db="semantic_scholar">
+                            <input type="checkbox" value="semantic_scholar" checked>
+                            <span>Semantic Scholar</span>
+                        </label>
+                        <label class="db-option selected" data-db="openalex">
+                            <input type="checkbox" value="openalex" checked>
+                            <span>OpenAlex</span>
+                        </label>
+                        <label class="db-option selected" data-db="pubmed">
+                            <input type="checkbox" value="pubmed" checked>
+                            <span>PubMed</span>
+                        </label>
+                        <label class="db-option" data-db="arxiv">
+                            <input type="checkbox" value="arxiv">
+                            <span>arXiv</span>
+                        </label>
+                        <label class="db-option" data-db="ieee">
+                            <input type="checkbox" value="ieee">
+                            <span>IEEE</span>
+                        </label>
+                        <label class="db-option" data-db="springer">
+                            <input type="checkbox" value="springer">
+                            <span>Springer</span>
+                        </label>
+                        <label class="db-option" data-db="dblp">
+                            <input type="checkbox" value="dblp">
+                            <span>DBLP</span>
+                        </label>
+                    </div>
+                    <span class="db-select-all" onclick="toggleAllDatabases()">Select All / Deselect All</span>
+                </div>
+                
                 <!-- Knowledge Base -->
                 <div class="kb-section">
                     <h3>📚 Knowledge Base</h3>
@@ -1183,7 +1473,7 @@
             <div class="header">
                 <div class="header-content">
                     <div class="header-title">
-                        <h1>🔬 Perspicacité v2</h1>
+                        <h1>🔬 Perspicacité AI</h1>
                         <p>Literature AI assistant — KB-first retrieval with web fallback</p>
                     </div>
                     <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
@@ -1220,6 +1510,7 @@
                             <option value="advanced">⚡ Advanced (Hybrid)</option>
                             <option value="profound">🔬 Deep Research</option>
                             <option value="agentic">🤖 Perspicacité Agentic</option>
+                            <option value="literature_survey">📖 Literature Survey</option>
                         </select>
                         <div id="download-cap-control" class="download-cap-control" title="Maximum papers to download for full-text analysis">
                             <label>📄 Max papers:</label>
@@ -1247,11 +1538,47 @@
         let lastFoundPapers = [];
         let currentMode = 'basic';
         
+        // Database selection state
+        const defaultDatabases = ['semantic_scholar', 'openalex', 'pubmed'];
+        
+        // Initialize database selector
+        function initDatabaseSelector() {
+            const selector = document.getElementById('db-selector');
+            selector.addEventListener('click', function(e) {
+                const label = e.target.closest('.db-option');
+                if (label) {
+                    const checkbox = label.querySelector('input');
+                    checkbox.checked = !checkbox.checked;
+                    label.classList.toggle('selected', checkbox.checked);
+                    e.preventDefault();
+                }
+            });
+        }
+        
+        function toggleAllDatabases() {
+            const options = document.querySelectorAll('.db-option');
+            const allSelected = Array.from(options).every(opt => opt.classList.contains('selected'));
+            options.forEach(opt => {
+                const checkbox = opt.querySelector('input');
+                checkbox.checked = !allSelected;
+                opt.classList.toggle('selected', !allSelected);
+            });
+        }
+        
+        function getSelectedDatabases() {
+            const selected = [];
+            document.querySelectorAll('.db-option.selected').forEach(opt => {
+                selected.push(opt.dataset.db);
+            });
+            return selected.length > 0 ? selected : defaultDatabases;
+        }
+        
         const modeDescriptions = {
             'agentic': '🤖 KB-first with intent detection and tool use',
             'profound': '🔬 Multi-cycle deep research with planning',
             'advanced': '⚡ Query rephrasing + WRRF + Hybrid retrieval',
-            'basic': '📚 Fast single-query retrieval'
+            'basic': '📚 Fast single-query retrieval',
+            'literature_survey': '📖 Systematic field mapping with themes'
         };
         
         // Theme management
@@ -1435,13 +1762,21 @@
                 const container = document.getElementById('chat-container');
                 container.innerHTML = `
                     <div class="message assistant">
-                        Hello! I'm Perspicacité — an AI literature assistant. I will:
+                        <strong>Welcome to Perspicacité</strong> — Your AI research assistant!
                         <br><br>
-                        • Search your selected Knowledge Base first (curated by you)<br>
-                        • Fall back to web literature search (OpenAlex) when your KB is insufficient<br>
-                        • Ground answers in retrieved papers and maintain conversation context<br>
-                        • Let you curate: add selected retrieved papers back into your KB<br><br>
-                        Try: "What are key metabolites in jasmine?" or "Summarize feature-based molecular networking (FBMN)"
+                        <strong>Quick Start:</strong><br>
+                        • Select a <strong>Knowledge Base</strong> from the sidebar (or use Web Search)<br>
+                        • Choose a <strong>Search Mode</strong> below:<br>
+                        &nbsp;&nbsp;📚 <strong>Quick Search</strong> — Fast single-query retrieval<br>
+                        &nbsp;&nbsp;⚡ <strong>Advanced</strong> — Query rephrasing + hybrid retrieval<br>
+                        &nbsp;&nbsp;🔬 <strong>Deep Research</strong> — Multi-cycle profound research<br>
+                        &nbsp;&nbsp;🤖 <strong>Agentic</strong> — Intent-based with tool use<br>
+                        &nbsp;&nbsp;📖 <strong>Literature Survey</strong> — Systematic field mapping with themes<br><br>
+                        <strong>Features:</strong><br>
+                        • Search your curated KB first, fall back to web search<br>
+                        • Create custom KBs from BibTeX files<br>
+                        • Download papers and add to your KB<br><br>
+                        <strong>Try asking:</strong> "What are key metabolites in jasmine?" or "Literature survey on continuous learning in agents"
                     </div>
                 `;
                 messages = [];
@@ -1484,6 +1819,7 @@
         
         checkStatus();
         loadConversationHistory();
+        initDatabaseSelector();
         
         // Auto-refresh timestamps every minute
         setInterval(updateTimestamps, 60000);
@@ -1644,6 +1980,26 @@
             } else {
                 infoDiv.style.display = 'none';
                 deleteBtn.style.display = 'none';
+            }
+            
+            // Update survey "Add to KB" button if survey is visible
+            updateSurveyAddToKBButton();
+        }
+        
+        function updateSurveyAddToKBButton() {
+            // Update the "Add Selected to KB" button in survey interface
+            const surveyContainer = document.querySelector('.survey-container');
+            if (!surveyContainer) return;
+            
+            const addButton = surveyContainer.querySelector('button[onclick="addSurveyPapersToKB()"]');
+            if (addButton) {
+                if (selectedKb) {
+                    addButton.disabled = false;
+                    addButton.textContent = `Add Selected to "${selectedKb}"`;
+                } else {
+                    addButton.disabled = true;
+                    addButton.textContent = 'Select a KB first';
+                }
             }
         }
         
@@ -1986,6 +2342,9 @@
                 // Get download cap setting (only used in agentic mode)
                 const downloadCap = parseInt(document.getElementById('download-cap-slider').value) || 10;
                 
+                // Get selected databases
+                const selectedDatabases = getSelectedDatabases();
+                
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1997,7 +2356,8 @@
                         kb_name: selectedKb,
                         mode: currentMode,
                         stream: true,
-                        max_papers_to_download: downloadCap
+                        max_papers_to_download: downloadCap,
+                        databases: selectedDatabases
                     })
                 });
                 
@@ -2076,6 +2436,15 @@
                             lastFoundPapers = data.papers;
                             if (assistantDiv) {
                                 showPapersCuration(assistantDiv, data.papers);
+                            }
+                        } else if (data.type === 'status') {
+                            // Status update - could be progress message or literature survey completion
+                            if (data.session_id && data.papers_count !== undefined) {
+                                // Literature survey complete - load the survey interface
+                                setTimeout(() => loadSurveySession(data.session_id), 100);
+                            } else if (data.message) {
+                                // Regular status message - show as thinking step
+                                addThinkingStep(data.message, 'analyzing');
                             }
                         }
                         if (data.details && data.details.includes('Intent:')) {
@@ -2404,6 +2773,359 @@
                     showToast('Error deleting KB: ' + e.message);
                 }
             }
+        }
+
+        // ============================================================================
+        // Literature Survey Mode Functions
+        // ============================================================================
+        
+        let currentSurveySession = null;
+        let surveySelectedPapers = new Set();
+        
+        async function loadSurveySession(sessionId) {
+            // Load literature survey session and display themes/paper selection
+            try {
+                const resp = await fetch(`/api/survey/${sessionId}`);
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showToast('Error: ' + data.error);
+                    return;
+                }
+                
+                currentSurveySession = data;
+                surveySelectedPapers = new Set(
+                    data.papers.filter(p => p.recommended).map(p => p.id)
+                );
+                
+                displaySurveyInterface(data);
+            } catch (e) {
+                showToast('Error loading survey: ' + e.message);
+            }
+        }
+        
+        function displaySurveyInterface(data) {
+            // Display the literature survey interface with themes and paper selection
+            const container = document.getElementById('chat-container');
+            
+            let html = `
+                <div class="survey-container">
+                    <h3>📖 Literature Survey: ${data.query}</h3>
+                    <p>Found ${data.papers_count} papers across ${data.themes_count} themes. 
+                       ${data.papers.filter(p => p.recommended).length} papers pre-selected for deep analysis.</p>
+                    
+                    <div class="survey-actions">
+                        <button onclick="selectAllSurveyPapers(true)">Select All</button>
+                        <button onclick="selectAllSurveyPapers(false)">Deselect All</button>
+                        <button onclick="selectRecommendedPapers()">Select Recommended</button>
+                        <button class="primary" onclick="generateSurveyReport()">Generate Survey Report</button>
+                    </div>
+                    
+                    <div class="survey-themes">
+            `;
+            
+            // Check if papers are assigned to themes
+            const papersWithThemes = data.papers.filter(p => p.themes && p.themes.length > 0);
+            
+            if (data.themes && data.themes.length > 0 && papersWithThemes.length > 0) {
+                // Group papers by theme
+                data.themes.forEach(theme => {
+                    const themePapers = data.papers.filter(p => p.themes && p.themes.includes(theme.name));
+                    
+                    if (themePapers.length === 0) return; // Skip empty themes
+                    
+                    html += `
+                        <div class="survey-theme">
+                            <div class="theme-header" onclick="toggleSurveyTheme(this)">
+                                <span class="theme-toggle">▼</span>
+                                <strong>${theme.name}</strong>
+                                <span class="theme-count">(${themePapers.length} papers)</span>
+                            </div>
+                            <div class="theme-content">
+                                <p class="theme-description">${theme.description}</p>
+                                <div class="theme-papers">
+                    `;
+                    
+                    themePapers.forEach(paper => {
+                        const isSelected = surveySelectedPapers.has(paper.id);
+                        const recommendedBadge = paper.recommended ? '<span class="recommended-badge">⭐ Recommended</span>' : '';
+                        
+                        html += `
+                            <div class="survey-paper ${isSelected ? 'selected' : ''}" data-paper-id="${paper.id}">
+                                <input type="checkbox" 
+                                       id="paper-${paper.id}" 
+                                       ${isSelected ? 'checked' : ''}
+                                       onchange="toggleSurveyPaper('${paper.id}')">
+                                <label for="paper-${paper.id}">
+                                    <div class="paper-title">${paper.title} ${recommendedBadge}</div>
+                                    <div class="paper-meta">
+                                        ${paper.authors.join(', ')} (${paper.year || 'N/A'}) | 
+                                        Citations: ${paper.citation_count || 0} | 
+                                        Relevance: ${paper.relevance_score}/5
+                                    </div>
+                                    <div class="paper-abstract">${paper.abstract}</div>
+                                    ${paper.reason ? `<div class="paper-reason">Why: ${paper.reason}</div>` : ''}
+                                </label>
+                            </div>
+                        `;
+                    });
+                    
+                    html += `
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            
+            // Show papers without theme assignment (or all papers if no themes)
+            const papersWithoutThemes = data.papers.filter(p => !p.themes || p.themes.length === 0);
+            if (papersWithoutThemes.length > 0) {
+                html += `
+                    <div class="survey-theme">
+                        <div class="theme-header" onclick="toggleSurveyTheme(this)">
+                            <span class="theme-toggle">▼</span>
+                            <strong>All Papers</strong>
+                            <span class="theme-count">(${papersWithoutThemes.length} papers)</span>
+                        </div>
+                        <div class="theme-content">
+                            <div class="theme-papers">
+                `;
+                
+                papersWithoutThemes.forEach(paper => {
+                    const isSelected = surveySelectedPapers.has(paper.id);
+                    const recommendedBadge = paper.recommended ? '<span class="recommended-badge">⭐ Recommended</span>' : '';
+                    
+                    html += `
+                        <div class="survey-paper ${isSelected ? 'selected' : ''}" data-paper-id="${paper.id}">
+                            <input type="checkbox" 
+                                   id="paper-${paper.id}" 
+                                   ${isSelected ? 'checked' : ''}
+                                   onchange="toggleSurveyPaper('${paper.id}')">
+                            <label for="paper-${paper.id}">
+                                <div class="paper-title">${paper.title} ${recommendedBadge}</div>
+                                <div class="paper-meta">
+                                    ${paper.authors.join(', ')} (${paper.year || 'N/A'}) | 
+                                    Citations: ${paper.citation_count || 0} | 
+                                    Relevance: ${paper.relevance_score}/5
+                                </div>
+                                <div class="paper-abstract">${paper.abstract}</div>
+                                ${paper.reason ? `<div class="paper-reason">Why: ${paper.reason}</div>` : ''}
+                            </label>
+                        </div>
+                    `;
+                });
+                
+                html += `
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            html += `
+                    </div>
+                    
+                    <div class="survey-actions bottom">
+                        <span id="survey-selection-count">${surveySelectedPapers.size} papers selected</span>
+                        <button onclick="addSurveyPapersToKB()" ${!selectedKb ? 'disabled' : ''}>
+                            ${selectedKb ? `Add Selected to "${selectedKb}"` : 'Select a KB first'}
+                        </button>
+                        <button class="primary" onclick="generateSurveyReport()">Generate Survey Report</button>
+                    </div>
+                </div>
+            `;
+            
+            // Append to chat
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.innerHTML = html;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function toggleSurveyTheme(header) {
+            // Toggle survey theme expansion
+            const content = header.nextElementSibling;
+            const toggle = header.querySelector('.theme-toggle');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                toggle.textContent = '▼';
+            } else {
+                content.style.display = 'none';
+                toggle.textContent = '▶';
+            }
+        }
+        
+        function toggleSurveyPaper(paperId) {
+            // Toggle paper selection
+            if (surveySelectedPapers.has(paperId)) {
+                surveySelectedPapers.delete(paperId);
+            } else {
+                surveySelectedPapers.add(paperId);
+            }
+            updateSurveySelectionDisplay();
+        }
+        
+        function selectAllSurveyPapers(select) {
+            // Select or deselect all papers
+            if (select) {
+                currentSurveySession.papers.forEach(p => surveySelectedPapers.add(p.id));
+            } else {
+                surveySelectedPapers.clear();
+            }
+            updateSurveySelectionDisplay();
+        }
+        
+        function selectRecommendedPapers() {
+            // Select only recommended papers
+            surveySelectedPapers.clear();
+            currentSurveySession.papers
+                .filter(p => p.recommended)
+                .forEach(p => surveySelectedPapers.add(p.id));
+            updateSurveySelectionDisplay();
+        }
+        
+        function updateSurveySelectionDisplay() {
+            // Update UI to reflect current selection
+            document.querySelectorAll('.survey-paper').forEach(el => {
+                const paperId = el.dataset.paperId;
+                const checkbox = el.querySelector('input[type="checkbox"]');
+                checkbox.checked = surveySelectedPapers.has(paperId);
+                el.classList.toggle('selected', surveySelectedPapers.has(paperId));
+            });
+            
+            const countEl = document.getElementById('survey-selection-count');
+            if (countEl) {
+                countEl.textContent = `${surveySelectedPapers.size} papers selected`;
+            }
+        }
+        
+        async function addSurveyPapersToKB() {
+            // Add selected survey papers to the current knowledge base
+            if (!selectedKb) {
+                showToast('Please select a knowledge base first');
+                return;
+            }
+            if (surveySelectedPapers.size === 0) {
+                showToast('Please select at least one paper');
+                return;
+            }
+            if (!currentSurveySession) {
+                showToast('No survey session available');
+                return;
+            }
+            
+            // Get selected papers from current session
+            const selected = [];
+            for (const paperId of surveySelectedPapers) {
+                const paper = currentSurveySession.papers.find(p => p.id === paperId);
+                if (paper) {
+                    selected.push({
+                        title: paper.title,
+                        authors: paper.authors || [],
+                        year: paper.year,
+                        doi: paper.doi,
+                        abstract: paper.abstract,
+                        citations: paper.citation_count
+                    });
+                }
+            }
+            
+            if (selected.length === 0) {
+                showToast('No valid papers selected');
+                return;
+            }
+            
+            showToast(`Adding ${selected.length} papers to "${selectedKb}"...`);
+            
+            try {
+                const resp = await fetch(`/api/kb/${selectedKb}/papers`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ papers: selected })
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    showToast('Error: ' + data.error);
+                    return;
+                }
+                showToast(`Added ${data.added_papers} papers to "${selectedKb}"`);
+                loadKBs(); // Refresh KB list to show updated paper count
+            } catch (e) {
+                showToast('Error: ' + e.message);
+            }
+        }
+        
+        async function generateSurveyReport() {
+            // Generate deep analysis report for selected papers
+            if (surveySelectedPapers.size === 0) {
+                showToast('Please select at least one paper');
+                return;
+            }
+            
+            if (surveySelectedPapers.size > 50) {
+                showToast('Maximum 50 papers allowed for deep analysis');
+                return;
+            }
+            
+            // Update selection on server
+            try {
+                const resp = await fetch(`/api/survey/${currentSurveySession.session_id}/select`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: currentSurveySession.session_id,
+                        selected_paper_ids: Array.from(surveySelectedPapers)
+                    })
+                });
+                
+                const data = await resp.json();
+                if (data.error) {
+                    showToast('Error: ' + data.error);
+                    return;
+                }
+                
+                // Now generate the report
+                showToast('Generating survey report... This may take a few minutes.');
+                
+                const genResp = await fetch(`/api/survey/${currentSurveySession.session_id}/generate`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: currentSurveySession.session_id
+                    })
+                });
+                
+                const genData = await genResp.json();
+                if (genData.error) {
+                    showToast('Error: ' + genData.error);
+                    return;
+                }
+                
+                // Display the report
+                displaySurveyReport(genData);
+                
+            } catch (e) {
+                showToast('Error: ' + e.message);
+            }
+        }
+        
+        function displaySurveyReport(data) {
+            // Display the generated survey report
+            const container = document.getElementById('chat-container');
+            
+            const div = document.createElement('div');
+            div.className = 'message assistant survey-report';
+            div.innerHTML = `
+                <h3>📖 Literature Survey Report</h3>
+                <div class="report-content">${data.answer.replace(/\n/g, '<br>')}</div>
+                <div class="report-meta">
+                    <p>Analyzed ${data.papers_analyzed} papers across ${data.themes} themes</p>
+                </div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
         }
     </script>
 

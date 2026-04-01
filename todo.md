@@ -26,6 +26,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 ### Integration Gaps
 - [ ] Wire Elsevier API into actual KB enrichment path
 - [x] Fix bare `except:` in `agentic_chat_stream` - Fixed to catch specific exceptions (JSONDecodeError, binascii.Error, UnicodeDecodeError)
+- [ ] In agentic RAG mode, the number of papers to be evaluated seems to be fix to 10, even if we set higher number of papers to download. 
 
 ## Short Term
 - [x] the remove chat history button in UI removes all the history. The should be a way to choose what to remove
@@ -45,6 +46,7 @@ packages_to_use/Perspicacite-AI-release Contains previous version. We should sea
 - [x] make sure the advanced and profond works exactly as in v1
 - [ ] adding papers from bibtex to an existing KB
 ## Medium Term
+- [ ] Add automatic routing for RAG mode
 - [ ] MCP support
 - [ ] the webapp is monolithic, maybe break it down to multiple files for better readability
 - [ ] add hovering function to chat history, which shows three dots. When clicking on it, show functions such as pin, delete, edit title etc.

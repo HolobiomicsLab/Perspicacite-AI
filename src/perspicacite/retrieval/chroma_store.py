@@ -60,6 +60,16 @@ class ChromaVectorStore:
         """
         dim = embedding_dim or self.embedding_provider.dimension
 
+        # Check if collection already exists
+        try:
+            existing = self.client.get_collection(name=name)
+            if existing:
+                logger.info("collection_already_exists", name=name)
+                return
+        except Exception:
+            # Collection doesn't exist, proceed to create
+            pass
+
         try:
             # Cosine space matches typical embedding APIs; L2 + (1-distance) breaks min_score filters.
             self.client.create_collection(
@@ -72,6 +82,10 @@ class ChromaVectorStore:
                 dimension=dim,
             )
         except Exception as e:
+            # If already exists, just log and continue
+            if "already exists" in str(e).lower():
+                logger.info("collection_already_exists", name=name)
+                return
             logger.error(
                 "collection_create_failed",
                 name=name,
