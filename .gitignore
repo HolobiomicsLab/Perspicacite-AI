@@ -67,11 +67,32 @@ packages_to_use/
 *.sqlite
 *.sqlite3
 
-# Documentation files (keep only main planning docs)
+# Claude AI sessions
+.claude/
+
+# Ruff cache
+.ruff_cache/
+
+# Documentation files (keep only main docs)
 *.md
 !README.md
-!Perspicacite_v2_Planning.md
-!IMPLEMENTATION_GUIDE.md
-!QUICKSTART.md
-!todo.md
+!CONTRIBUTING.md
+!LICENSE
+!NOTICE
+
+# Image files (except logo/screenshots)
+Untitled.png
+*.draft.png
+*.tmp.png
+
+# Local/dev files (keep locally, not in repo)
 PROBLEMS.md
+Perspicacite_v2_Planning.md
+IMPLEMENTATION_GUIDE.md
+QUICKSTART.md
+todo.md
+config.minimax.yml
+config.yml
+test_chunking.py
+test_lotus.py
+uv.lock

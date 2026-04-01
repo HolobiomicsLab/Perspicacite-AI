@@ -101,6 +101,7 @@ Select a mode from the dropdown:
 | **Advanced** | Better answers with query expansion | Medium |
 | **Profound** | Deep research with multiple cycles | Slower |
 | **Agentic** | Complex questions needing web search | Variable |
+| **Literature Survey** | Systematic review of a research field | Slower |
 
 #### 4. Review the Answer
 
@@ -197,6 +198,28 @@ When Perspicacité is working, it shows:
 - **Advanced**: Your KB might need broader search
 - **Profound**: Complex questions needing multiple perspectives
 - **Agentic**: Questions requiring web search beyond your KB
+- **Literature Survey**: Mapping a research field with AI-identified themes and recommended papers
+
+---
+
+## 📖 Literature Survey Mode
+
+The **Literature Survey** mode helps you systematically map a research field:
+
+1. **Searches multiple academic databases** (Semantic Scholar, OpenAlex, PubMed, arXiv, etc.)
+2. **Analyzes paper abstracts** with AI to assess relevance
+3. **Identifies research themes** automatically from key concepts
+4. **Recommends papers** based on citations, recency, and theme diversity
+5. **Lets you select papers** to add to your Knowledge Base
+
+**How to use:**
+1. Select "📖 Literature Survey" mode
+2. Ask a broad research question (e.g., "What are the recent advances in CRISPR gene editing?")
+3. Wait while it searches and analyzes (may take 1-2 minutes)
+4. Review papers grouped by AI-identified themes
+5. Select papers and click "Add Selected to KB" to save them
+
+> **Note:** Literature Survey requires papers to have abstracts for quality analysis.
 
 ---
 
