@@ -108,6 +108,7 @@ class RAGModeSettings(BaseModel):
     enable_reflection: bool = False
     build_citation_graph: bool = False
     use_hybrid: bool = False  # Use hybrid retrieval (vector + BM25)
+    max_papers: int = Field(default=10, ge=1, le=50)  # Max papers to include in response (agentic mode)
 
 
 class RAGModesConfig(BaseModel):

@@ -64,6 +64,7 @@ class AgenticRAGMode(BaseRAGMode):
         self.early_exit_confidence = rag_settings.get("early_exit_confidence", 0.85)
         self.max_iterations = rag_settings.get("max_iterations", 3)
         self.use_hybrid = rag_settings.get("use_hybrid", True)
+        self.max_papers = rag_settings.get("max_papers", 10)  # Configurable max papers in response
 
     def _get_orchestrator(
         self,
@@ -88,6 +89,7 @@ class AgenticRAGMode(BaseRAGMode):
                 max_iterations=self.max_iterations,
                 use_hybrid=self.use_hybrid,
                 early_exit_confidence=self.early_exit_confidence,
+                max_papers_to_download=self.max_papers,
             )
         return self._orchestrator
 
@@ -161,7 +163,7 @@ class AgenticRAGMode(BaseRAGMode):
         
         return RAGResponse(
             answer=final_answer or "No answer generated",
-            sources=sources[:10],
+            sources=sources[:self.max_papers],
             mode=RAGMode.AGENTIC,
             iterations=max(iterations, 1),
             research_plan=research_plan[:5],
