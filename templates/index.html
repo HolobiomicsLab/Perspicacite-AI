@@ -404,6 +404,11 @@
             overflow: hidden;
         }
 
+        .survey-theme.uncategorized {
+            border-style: dashed;
+            opacity: 0.9;
+        }
+
         .theme-header {
             padding: 12px 16px;
             background: var(--bg-primary);
@@ -2878,14 +2883,14 @@
                 });
             }
             
-            // Show papers without theme assignment (or all papers if no themes)
+            // Show papers without theme assignment (uncategorized)
             const papersWithoutThemes = data.papers.filter(p => !p.themes || p.themes.length === 0);
             if (papersWithoutThemes.length > 0) {
                 html += `
-                    <div class="survey-theme">
+                    <div class="survey-theme uncategorized">
                         <div class="theme-header" onclick="toggleSurveyTheme(this)">
                             <span class="theme-toggle">▼</span>
-                            <strong>All Papers</strong>
+                            <strong>Uncategorized Papers</strong>
                             <span class="theme-count">(${papersWithoutThemes.length} papers)</span>
                         </div>
                         <div class="theme-content">
