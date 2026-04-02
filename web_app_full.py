@@ -906,21 +906,16 @@ async def add_bibtex_to_kb(name: str, request: Request):
         return {"error": "BibTeX content is empty"}
 
     # Parse BibTeX entries using bibtexparser (same as CLI)
-    from perspicacite.models.papers import Paper, Author, PaperSource
+    from perspicacite.models.papers import PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
     from perspicacite.pipeline.download import get_pdf_with_fallback
-    from perspicacite.pipeline.bibtex_kb import (
-        load_bibtex_entries,
-        entries_to_papers,
-        ALLOWED_ENTRY_TYPES,
-    )
-    import io
+    from perspicacite.pipeline.bibtex_kb import entries_to_papers
+    import bibtexparser
 
     # Use bibtexparser to parse the BibTeX content
     try:
-        bibtex_file = io.StringIO(bibtex_content)
-        bibtex_file.path = None  # type: ignore
-        entries = load_bibtex_entries(bibtex_file)  # type: ignore
+        db = bibtexparser.loads(bibtex_content)
+        entries = db.entries
         papers = entries_to_papers(entries)
     except Exception as e:
         logger.error(f"BibTeX parsing failed: {e}")

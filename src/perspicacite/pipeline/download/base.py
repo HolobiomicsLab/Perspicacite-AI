@@ -45,13 +45,21 @@ class PDFDownloader:
         headers: dict[str, str] | None = None,
     ) -> bytes | None:
         """Download PDF from URL."""
-        client = http_client or httpx.AsyncClient(timeout=self.timeout)
+        client = http_client or httpx.AsyncClient(
+            timeout=self.timeout, follow_redirects=True
+        )
         should_close = http_client is None
+        # Browser-like UA prevents NCBI PMC / Europe PMC from serving
+        # HTML landing pages instead of actual PDFs.
+        merged = {
+            "User-Agent": "Mozilla/5.0 (compatible; Perspicacite/2.0)",
+            **(headers or {}),
+        }
 
         try:
             logger.info("pdf_download_start", url=url)
 
-            response = await client.get(url, headers=headers, follow_redirects=True)
+            response = await client.get(url, headers=merged, follow_redirects=True)
             response.raise_for_status()
 
             # Check if content is PDF

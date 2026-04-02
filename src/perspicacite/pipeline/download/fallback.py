@@ -90,44 +90,45 @@ async def get_pdf_with_fallback(
             if pdf_bytes:
                 return pdf_bytes
 
-        # 3. Try ACS if it's an ACS DOI
+        # 3. OpenAlex OA (fast, no key — try before paywalled publishers)
+        logger.info("pdf_download_trying_openalex_oa", doi=doi)
+        pdf_bytes = await download_pdf_from_openalex_oa(doi, client)
+        if pdf_bytes:
+            return pdf_bytes
+
+        # 4. Europe PMC (OA subset, no key — definitive for PMC papers)
+        logger.info("pdf_download_trying_europepmc", doi=doi)
+        pdf_bytes = await download_pdf_from_europepmc(doi, client)
+        if pdf_bytes:
+            return pdf_bytes
+
+        # 5. Try ACS if it's an ACS DOI (may require institutional access)
         if doi and is_acs_doi(doi):
             logger.info("pdf_download_trying_acs", doi=doi)
             pdf_bytes = await download_from_acs(doi, client)
             if pdf_bytes:
                 return pdf_bytes
 
-        # 4. Try RSC if it's an RSC DOI
+        # 6. Try RSC if it's an RSC DOI (may require institutional access)
         if doi and is_rsc_doi(doi):
             logger.info("pdf_download_trying_rsc", doi=doi)
             pdf_bytes = await download_from_rsc(doi, rsc_api_key, client)
             if pdf_bytes:
                 return pdf_bytes
 
-        # 5. Try AAAS/Science if it's an AAAS DOI
+        # 7. Try AAAS/Science if it's an AAAS DOI (may require institutional access)
         if doi and is_aaas_doi(doi):
             logger.info("pdf_download_trying_aaas", doi=doi)
             pdf_bytes = await download_from_aaas(doi, aaas_api_key, client)
             if pdf_bytes:
                 return pdf_bytes
 
-        # 6. Try Springer if it's a Springer DOI
+        # 8. Try Springer if it's a Springer DOI (may require institutional access)
         if doi and is_springer_doi(doi):
             logger.info("pdf_download_trying_springer", doi=doi)
             pdf_bytes = await download_from_springer(doi, springer_api_key, client)
             if pdf_bytes:
                 return pdf_bytes
-
-        # Keyless OA / public web fallbacks (no publisher API keys)
-        logger.info("pdf_download_trying_openalex_oa", doi=doi)
-        pdf_bytes = await download_pdf_from_openalex_oa(doi, client)
-        if pdf_bytes:
-            return pdf_bytes
-
-        logger.info("pdf_download_trying_europepmc", doi=doi)
-        pdf_bytes = await download_pdf_from_europepmc(doi, client)
-        if pdf_bytes:
-            return pdf_bytes
 
         # Typical Wiley Online Library DOI prefix — try direct PDF (OA / campus IP)
         if doi and doi.lower().startswith("10.1002/"):
