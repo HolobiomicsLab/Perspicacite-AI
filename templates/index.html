@@ -829,26 +829,6 @@
         }
         .kb-create-form.visible { display: block; }
 
-        .kb-create-tabs {
-            display: flex;
-            gap: 4px;
-            margin-bottom: 10px;
-        }
-        .kb-tab {
-            flex: 1;
-            padding: 6px 10px;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            font-size: 12px;
-            cursor: pointer;
-            color: var(--text-muted);
-        }
-        .kb-tab.active {
-            background: var(--secondary);
-            color: white;
-            border-color: var(--secondary);
-        }
         .kb-tab-content textarea {
             width: 100%;
             padding: 8px 10px;
@@ -1444,36 +1424,24 @@
                         <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
                     </div>
                     <div id="kb-create-form" class="kb-create-form">
-                        <div class="kb-create-tabs">
-                            <button class="kb-tab active" onclick="switchKBTab('simple')" id="kb-tab-simple">Simple</button>
-                            <button class="kb-tab" onclick="switchKBTab('bibtex')" id="kb-tab-bibtex">From BibTeX</button>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <span style="font-size: 13px; font-weight: 500; color: var(--text-main);">Create from BibTeX</span>
+                            <button onclick="toggleCreateKB()" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); padding: 0 2px; line-height: 1;" title="Close">&times;</button>
                         </div>
-                        <div id="kb-create-simple" class="kb-tab-content">
-                            <input id="kb-name-input" type="text" placeholder="Name (e.g. FBMN papers)">
-                            <input id="kb-desc-input" type="text" placeholder="Description (optional)">
-                            <button onclick="createKB()">Create</button>
+                        <input id="kb-bibtex-name-input" type="text" placeholder="KB Name (e.g. FBMN papers)">
+                        <div id="bibtex-drop-zone" class="bibtex-drop-zone" style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;">
+                            <div style="font-size: 24px; margin-bottom: 4px;">📄</div>
+                            <div style="font-size: 13px; color: var(--text-secondary);">Drop a <b>.bib</b> file here or click to browse</div>
+                            <input id="bibtex-file-input" type="file" accept=".bib,.txt" style="display:none;">
                         </div>
-                        <div id="kb-create-bibtex" class="kb-tab-content" style="display:none;">
-                            <input id="kb-bibtex-name-input" type="text" placeholder="KB Name (e.g. FBMN papers)">
-                            <div id="bibtex-drop-zone" class="bibtex-drop-zone" style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;">
-                                <div style="font-size: 24px; margin-bottom: 4px;">📄</div>
-                                <div style="font-size: 13px; color: var(--text-secondary);">Drop a <b>.bib</b> file here or click to browse</div>
-                                <input id="bibtex-file-input" type="file" accept=".bib,.txt" style="display:none;">
+                        <input type="hidden" id="kb-bibtex-content" value="">
+                        <div id="bibtex-progress" style="display:none; margin-bottom: 8px;">
+                            <div style="background: var(--border); border-radius: 4px; height: 6px; overflow: hidden;">
+                                <div id="bibtex-progress-bar" style="background: var(--secondary); height: 100%; width: 0%; transition: width 0.3s;"></div>
                             </div>
-                            <textarea id="kb-bibtex-content" placeholder="Or paste BibTeX content here...
-
-@article{key1,
-  title = {Paper Title},
-  author = {Author Name},
-  year = {2024},
-  doi = {10.xxxx/xxxxx}
-}
-
-@article{key2,
-  ...
-}"></textarea>
-                            <button onclick="createKBFromBibtex()">Create from BibTeX</button>
+                            <div id="bibtex-progress-text" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Creating KB...</div>
                         </div>
+                        <button id="bibtex-create-btn" onclick="createKBFromBibtex()">Create from BibTeX</button>
                     </div>
                 </div>
             </div>
@@ -2017,63 +1985,22 @@
             document.getElementById('kb-create-form').classList.toggle('visible');
         }
         
-        async function createKB() {
-            const name = document.getElementById('kb-name-input').value.trim();
-            const desc = document.getElementById('kb-desc-input').value.trim();
-            if (!name) return;
-            
-            try {
-                const resp = await fetch('/api/kb', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ name, description: desc || null })
-                });
-                const data = await resp.json();
-                if (!resp.ok) {
-                    const msg = data.detail
-                        ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
-                        : (data.error || 'Unknown error');
-                    showToast('Error: ' + msg);
-                    return;
-                }
-                if (data.error) {
-                    showToast('Error: ' + data.error);
-                    return;
-                }
-                showToast('KB "' + name + '" created');
-                document.getElementById('kb-name-input').value = '';
-                document.getElementById('kb-desc-input').value = '';
-                document.getElementById('kb-create-form').classList.remove('visible');
-                await loadKBs();
-                document.getElementById('kb-select').value = name;
-                selectKB(name);
-            } catch (e) {
-                showToast('Error creating KB: ' + e.message);
-            }
-        }
-
-        function switchKBTab(tab) {
-            document.querySelectorAll('.kb-tab').forEach(t => t.classList.remove('active'));
-            document.getElementById('kb-tab-' + tab).classList.add('active');
-
-            document.querySelectorAll('.kb-tab-content').forEach(c => c.style.display = 'none');
-            document.getElementById('kb-create-' + tab).style.display = 'block';
-        }
-
         // BibTeX drag-and-drop and file input handling
+        let bibtexFileLoaded = false;
         (function() {
             const dropZone = document.getElementById('bibtex-drop-zone');
             const fileInput = document.getElementById('bibtex-file-input');
-            const textarea = document.getElementById('kb-bibtex-content');
+            const hiddenInput = document.getElementById('kb-bibtex-content');
 
             function handleFile(file) {
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    textarea.value = e.target.result;
+                    hiddenInput.value = e.target.result;
+                    bibtexFileLoaded = true;
                     dropZone.querySelector('div:last-child').innerHTML =
                         '<b>' + file.name + '</b> loaded (' + Math.round(file.size / 1024) + ' KB)';
-                    dropZone.style.borderColor = 'var(--accent-color)';
+                    dropZone.style.borderColor = 'var(--accent)';
                 };
                 reader.onerror = function() {
                     showToast('Error reading file');
@@ -2116,11 +2043,26 @@
                 return;
             }
             if (!bibtex) {
-                showToast('Please paste or drop a BibTeX file');
+                showToast('Please drop a .bib file first');
                 return;
             }
 
+            // Count BibTeX entries client-side for progress tracking
+            const entryCount = (bibtex.match(/@\w+\s*\{/g) || []).length;
+
+            const createBtn = document.getElementById('bibtex-create-btn');
+            const progressDiv = document.getElementById('bibtex-progress');
+            const progressBar = document.getElementById('bibtex-progress-bar');
+            const progressText = document.getElementById('bibtex-progress-text');
+
             try {
+                // Show progress, disable button
+                createBtn.disabled = true;
+                createBtn.textContent = 'Creating...';
+                progressDiv.style.display = 'block';
+                progressBar.style.width = '5%';
+                progressText.textContent = `Creating KB for ${entryCount} entries...`;
+
                 // First create the KB
                 const resp = await fetch('/api/kb', {
                     method: 'POST',
@@ -2133,13 +2075,14 @@
                     const msg = data.detail
                         ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
                         : (data.error || 'Unknown error');
-                    showToast('Error: ' + msg);
-                    return;
+                    throw new Error(msg);
                 }
 
-                // Use the sanitized name from the server response (spaces → underscores)
                 const kbData = await resp.json();
                 const actualName = kbData.name || name;
+
+                progressBar.style.width = '15%';
+                progressText.textContent = `Importing ${entryCount} papers...`;
 
                 // Then add BibTeX content
                 const bibtexResp = await fetch('/api/kb/' + encodeURIComponent(actualName) + '/bibtex', {
@@ -2150,24 +2093,50 @@
 
                 const bibtexData = await bibtexResp.json();
                 if (!bibtexResp.ok || bibtexData.error) {
-                    showToast('Error adding papers: ' + (bibtexData.error || 'Unknown error'));
-                    return;
+                    throw new Error(bibtexData.error || 'Unknown error');
                 }
 
+                const added = bibtexData.added_papers || 0;
+                const dupes = bibtexData.skipped_duplicates || 0;
+                const pdfOk = bibtexData.pdf_download ? bibtexData.pdf_download.success : 0;
+                const pdfFail = bibtexData.pdf_download ? bibtexData.pdf_download.failed : 0;
+
+                progressBar.style.width = '100%';
+                let summary = `${added} of ${entryCount} papers added`;
+                if (dupes) summary += ` (${dupes} duplicates skipped)`;
+                if (pdfOk) summary += ` — ${pdfOk} PDFs downloaded`;
+                if (pdfFail) summary += ` (${pdfFail} PDFs unavailable)`;
+                progressText.textContent = summary;
+
                 showToast('KB "' + actualName + '" created with ' + (bibtexData.added_papers || 0) + ' papers');
+
+                // Reset form
                 document.getElementById('kb-bibtex-name-input').value = '';
                 document.getElementById('kb-bibtex-content').value = '';
-                // Reset drop zone
+                bibtexFileLoaded = false;
                 const dropZone = document.getElementById('bibtex-drop-zone');
                 dropZone.querySelector('div:last-child').innerHTML = 'Drop a <b>.bib</b> file here or click to browse';
-                dropZone.style.borderColor = 'var(--border-color)';
+                dropZone.style.borderColor = '';
                 document.getElementById('bibtex-file-input').value = '';
-                document.getElementById('kb-create-form').classList.remove('visible');
+
                 await loadKBs();
                 document.getElementById('kb-select').value = actualName;
                 selectKB(actualName);
+
+                // Hide progress and form after a moment
+                setTimeout(() => {
+                    progressDiv.style.display = 'none';
+                    progressBar.style.width = '0%';
+                    document.getElementById('kb-create-form').classList.remove('visible');
+                }, 2000);
+
             } catch (e) {
-                showToast('Error creating KB from BibTeX: ' + e.message);
+                showToast('Error: ' + e.message);
+                progressDiv.style.display = 'none';
+                progressBar.style.width = '0%';
+            } finally {
+                createBtn.disabled = false;
+                createBtn.textContent = 'Create from BibTeX';
             }
         }
 

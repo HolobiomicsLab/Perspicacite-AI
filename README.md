@@ -81,8 +81,8 @@ In the left sidebar, you'll see a "Knowledge Base" section:
 
 **To create a new Knowledge Base:**
 1. Click "+ Create new KB"
-2. Choose "Simple" to create an empty KB
-3. Or choose "From BibTeX" to import papers from a BibTeX file
+2. Enter a KB name and drag-and-drop a `.bib` file
+3. Click "Create from BibTeX" to import papers
 
 #### 2. Ask a Question
 
@@ -130,9 +130,8 @@ If you have a reference manager (Zotero, Mendeley, EndNote):
 
 1. Export your references as BibTeX (.bib file)
 2. In Perspicacité, click "+ Create new KB"
-3. Select "From BibTeX" tab
-4. Paste your BibTeX content
-5. Click "Create from BibTeX"
+3. Drag-and-drop your `.bib` file into the drop zone
+4. Enter a KB name and click "Create from BibTeX"
 
 ### Method 3: Add Papers One by One
 
@@ -363,6 +362,43 @@ Perspicacité v2 builds on:
 - **OpenAlex** for academic search
 - **DeepSeek/OpenAI/Anthropic** for AI models
 - **Unpaywall** for open access papers
+
+---
+
+
+## References
+
+Perspicacité builds on the following components:
+
+**Original Perspicacité AI (ISWC-C 2025 Demo Paper):**
+```bibtex
+@inproceedings{pradi2025perspicacite,
+  title     = {An AI Pipeline for Scientific Literacy and Discovery: a Demonstration of Perspicacit\\'{e}-AI Integration with Knowledge Graphs},
+  author    = {Pradi, Lucas and Jiang, Tao and Feraud, Matthieu and Bekbergenova, Madina and Taghzouti, Yousouf and Nothias, Louis-Felix},
+  booktitle = {Joint Proceedings of Industry, Doctoral Consortium, Posters and Demos of the 24th International Semantic Web Conference (ISWC-C 2025)},
+  pages     = {462--467},
+  year      = {2025},
+  month     = nov,
+  address   = {Nara, Japan},
+  url       = {https://hal.science/hal-05290005}
+}
+```
+
+**SciLEx - Science Literature Exploration Toolkit:**
+```bibtex
+@softwareversion{scilex2026,
+  TITLE = {{SciLEx, Science Literature Exploration Toolkit}},
+  AUTHOR = {Ringwald, C\\'{e}lian and Navet, Benjamin},
+  URL = {https://github.com/Wimmics/SciLEx},
+  INSTITUTION = {{University C\\^{o}te d'Azur ; CNRS ; Inria}},
+  YEAR = {2026},
+  MONTH = Fev,
+  SWHID = {swh:1:dir:944639eb0260a034a5cbf8766d5ee9b74ca85330},
+  VERSION = {1.0},
+  REPOSITORY = {https://github.com/Wimmics/SciLEx},
+  LICENSE = {MIT Licence},
+}
+```
 
 ---
 

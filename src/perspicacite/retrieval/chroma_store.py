@@ -271,9 +271,13 @@ class ChromaVectorStore:
         try:
             coll = self.client.get_collection(name=collection)
             count = coll.count()
+            # Count unique papers from chunk metadata
+            result = coll.get(include=["metadatas"])
+            unique_papers = len({m["paper_id"] for m in result["metadatas"]}) if result["metadatas"] else 0
             return {
                 "name": collection,
                 "count": count,
+                "unique_papers": unique_papers,
             }
         except Exception:
             return {"name": collection, "count": 0}

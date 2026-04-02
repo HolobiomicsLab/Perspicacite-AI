@@ -679,7 +679,7 @@ async def list_knowledge_bases():
             {
                 "name": kb.name,
                 "description": kb.description,
-                "paper_count": kb.paper_count,
+                "paper_count": stats.get("unique_papers", kb.paper_count),
                 "chunk_count": stats.get("count", 0),
                 "created_at": kb.created_at.isoformat() if kb.created_at else None,
             }
@@ -737,7 +737,7 @@ async def get_knowledge_base(name: str):
     return {
         "name": kb.name,
         "description": kb.description,
-        "paper_count": kb.paper_count,
+        "paper_count": stats.get("unique_papers", kb.paper_count),
         "chunk_count": stats.get("count", 0),
         "embedding_model": kb.embedding_model,
         "created_at": kb.created_at.isoformat() if kb.created_at else None,
