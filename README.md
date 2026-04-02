@@ -1,4 +1,4 @@
-# Perspicacité v2 - AI Research Assistant
+# Perspicacité - AI Research Assistant
 
 **Perspicacité** (French for "insight") is an AI-powered research assistant designed for scientists, researchers, and students who want to find and understand academic literature without getting lost in hundreds of papers.
 
@@ -24,7 +24,7 @@ You need **Python 3.12** installed on your computer. Then:
 ```bash
 # Download the project
 git clone <repository-url>
-cd perspicacite_v2
+cd perspicacite
 
 # Install dependencies using uv (recommended)
 uv sync --dev
