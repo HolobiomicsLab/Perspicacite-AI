@@ -320,8 +320,39 @@ async def chat_endpoint(request: ChatRequest):
             agentic_chat_stream(request, conversation_id), media_type="text/event-stream"
         )
     else:
-        # Non-streaming not implemented for simplicity
-        return {"error": "Non-streaming not supported. Use stream=true"}
+        # Non-streaming: consume the SSE stream internally, return JSON
+        answer = ""
+        sources = []
+        papers_found = 0
+
+        async for event in agentic_chat_stream(request, conversation_id):
+            if not event.startswith("data:"):
+                continue
+            try:
+                data = json.loads(event[5:].strip())
+            except json.JSONDecodeError:
+                continue
+
+            event_type = data.get("type", "")
+            if event_type == "answer":
+                content_b64 = data.get("content_b64")
+                if content_b64:
+                    answer = base64.b64decode(content_b64).decode("utf-8", errors="replace")
+                elif "content" in data:
+                    answer = str(data["content"])
+            elif event_type == "source":
+                sources.append(data.get("source", {}))
+            elif event_type == "papers_found":
+                papers_found = data.get("count", 0)
+            elif event_type == "done":
+                break
+
+        return {
+            "answer": answer,
+            "sources": sources,
+            "papers_found": papers_found,
+            "conversation_id": conversation_id,
+        }
 
 
 async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[str] = None):

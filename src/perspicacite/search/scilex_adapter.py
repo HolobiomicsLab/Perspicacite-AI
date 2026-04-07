@@ -104,8 +104,15 @@ class SciLExAdapter:
         if apis is None:
             apis = ["semantic_scholar", "openalex", "pubmed"]
 
-        # Use a single year to limit queries
-        search_year = year_max or 2024
+        # Use year range if provided
+        if year_min and year_max:
+            years = [year_min, year_max]
+        elif year_max:
+            years = [year_max, year_max]
+        elif year_min:
+            years = [year_min, year_min]
+        else:
+            years = [2024, 2024]
         capitalized_apis = [api_name_map.get(a, a) for a in apis]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -115,7 +122,7 @@ class SciLExAdapter:
                 "output_dir": tmpdir,
                 "keywords": [[query], []],
                 "apis": capitalized_apis,
-                "years": [search_year, search_year],
+                "years": years,
                 "fields": [],
                 "collect_type": "references",
                 "zotero": False,
