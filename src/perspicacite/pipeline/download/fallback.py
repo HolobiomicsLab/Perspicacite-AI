@@ -21,7 +21,7 @@ from .unpaywall import download_from_unpaywall
 from .arxiv import download_from_arxiv, is_arxiv_doi, is_arxiv_url
 from .wiley import download_from_wiley_tdm, download_from_wiley_direct
 from .openalex_oa import download_pdf_from_openalex_oa
-from .europepmc import download_pdf_from_europepmc
+from .europepmc import download_pdf_from_europepmc, get_fulltext_from_europepmc
 from .elsevier import get_content_from_elsevier
 from .aaas import download_from_aaas, is_aaas_doi
 from .acs import download_from_acs, is_acs_doi
@@ -297,13 +297,14 @@ async def get_content_with_fallback(
             )
 
         logger.info("content_download_trying_europepmc", doi=doi)
-        pdf_bytes = await download_pdf_from_europepmc(doi, client)
-        if pdf_bytes:
+        eu_text, eu_sections = await get_fulltext_from_europepmc(doi, client)
+        if eu_text:
             return ContentResult(
                 success=True,
-                content=pdf_bytes,
-                content_type="pdf",
+                content=eu_text,
+                content_type="text",
                 source="europepmc",
+                metadata={"sections": eu_sections} if eu_sections else None,
             )
 
         if doi and doi.lower().startswith("10.1002/"):

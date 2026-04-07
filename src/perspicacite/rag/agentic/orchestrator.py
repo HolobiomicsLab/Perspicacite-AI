@@ -1545,9 +1545,12 @@ Generate your answer:"""
             )
             
             if pdf_bytes:
-                parsed = await parser.parse_bytes(pdf_bytes)
-                # Limit full text to avoid token overload
-                paper["full_text"] = parsed.text[:15000] if parsed.text else ""
+                if pdf_bytes[:4] == b"%PDF":
+                    parsed = await parser.parse_bytes(pdf_bytes)
+                    paper["full_text"] = parsed.text or ""
+                else:
+                    # Non-PDF content (e.g. EuropePMC full text)
+                    paper["full_text"] = pdf_bytes.decode("utf-8", errors="replace")
                 paper["pdf_downloaded"] = True
             else:
                 paper["pdf_downloaded"] = False

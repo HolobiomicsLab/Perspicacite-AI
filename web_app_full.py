@@ -831,9 +831,13 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
                 # Try Unpaywall first, then alternative endpoint
                 pdf_bytes = await get_pdf_with_fallback(pd.doi, **pdf_kw)
                 if pdf_bytes and len(pdf_bytes) > 1000:
-                    parsed = await app_state.pdf_parser.parse(pdf_bytes)
-                    if parsed and parsed.text:
-                        full_text = parsed.text
+                    if pdf_bytes[:4] == b"%PDF":
+                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
+                        if parsed and parsed.text:
+                            full_text = parsed.text
+                    else:
+                        full_text = pdf_bytes.decode("utf-8", errors="replace")
+                    if full_text:
                         download_stats["success"] += 1
                         logger.info(f"Downloaded full text for: {pd.title[:50]}...")
                     else:
@@ -949,9 +953,13 @@ async def add_bibtex_to_kb(name: str, request: Request):
             try:
                 pdf_bytes = await get_pdf_with_fallback(paper.doi, **pdf_kw)
                 if pdf_bytes and len(pdf_bytes) > 1000:
-                    parsed = await app_state.pdf_parser.parse(pdf_bytes)
-                    if parsed and parsed.text:
-                        paper.full_text = parsed.text
+                    if pdf_bytes[:4] == b"%PDF":
+                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
+                        if parsed and parsed.text:
+                            paper.full_text = parsed.text
+                    else:
+                        paper.full_text = pdf_bytes.decode("utf-8", errors="replace")
+                    if paper.full_text:
                         download_stats["success"] += 1
             except Exception as e:
                 logger.warning(f"PDF download failed for {paper.title[:50]}: {e}")

@@ -55,6 +55,12 @@ Thumbs.db
 # Papers directory (downloaded PDFs)
 Papers/
 
+# Cached paper full text
+data/papers/
+
+# Cached paper full text
+data/papers/
+
 # Test outputs
 test_output.txt
 *_output.txt
@@ -99,3 +105,6 @@ uv.lock
 Untitled
 OA_metabolomics_library.bib
 OA_metabolomics_library_test.bib
+paper1_europepmc.txt
+paper2_europepmc.txt
+paper2_europepmc_sections.txt

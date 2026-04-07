@@ -117,7 +117,17 @@ class TestPDFDownloadWithBibTeXDOIs:
             "best_oa_location": None
         })
         mock_unpaywall.raise_for_status = Mock()
-        
+
+        # Mock OpenAlex - no result
+        mock_openalex = Mock()
+        mock_openalex.json = Mock(return_value={"results": []})
+        mock_openalex.raise_for_status = Mock()
+
+        # Mock EuropePMC search - no PMCID
+        mock_europepmc = Mock()
+        mock_europepmc.json = Mock(return_value={"resultList": {"result": []}})
+        mock_europepmc.raise_for_status = Mock()
+
         # Mock alternative endpoint HTML
         mock_html = Mock()
         mock_html.text = '''
@@ -128,15 +138,17 @@ class TestPDFDownloadWithBibTeXDOIs:
         </html>
         '''
         mock_html.raise_for_status = Mock()
-        
+
         # Mock PDF download
         mock_pdf = Mock()
         mock_pdf.content = b"%PDF-1.4 Test PDF content"
         mock_pdf.raise_for_status = Mock()
-        
+
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=[
             mock_unpaywall,   # Unpaywall call
+            mock_openalex,    # OpenAlex OA
+            mock_europepmc,   # EuropePMC search
             mock_html,        # Alternative endpoint HTML
             mock_pdf,         # PDF download
         ])
@@ -149,7 +161,7 @@ class TestPDFDownloadWithBibTeXDOIs:
         
         assert result is not None
         assert result.startswith(b"%PDF")
-        assert mock_client.get.call_count == 3
+        assert mock_client.get.call_count == 5
 
     @pytest.mark.asyncio
     async def test_multiple_dois_from_bibtex(self, sample_dois, test_email, monkeypatch):

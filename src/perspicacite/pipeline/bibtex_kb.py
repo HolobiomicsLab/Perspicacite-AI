@@ -137,9 +137,13 @@ async def enrich_papers_with_pdf(
                 springer_api_key=springer_api_key,
             )
             if pdf_bytes and len(pdf_bytes) > 1000:
-                parsed = await pdf_parser.parse(pdf_bytes)
-                if parsed and parsed.text and len(parsed.text.strip()) > 200:
-                    paper.full_text = parsed.text
+                if pdf_bytes[:4] == b"%PDF":
+                    parsed = await pdf_parser.parse(pdf_bytes)
+                    text = parsed.text if parsed else None
+                else:
+                    text = pdf_bytes.decode("utf-8", errors="replace")
+                if text and len(text.strip()) > 200:
+                    paper.full_text = text
                     stats["success"] += 1
                     continue
             stats["failed"] += 1
