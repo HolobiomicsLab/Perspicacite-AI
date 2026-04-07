@@ -57,6 +57,9 @@ knowledge_base:
   embedding_model: "text-embedding-3-small"
   chunk_size: 1000
   chunk_overlap: 200
+  # Chunking method: "token" (fast, word-based), "semantic" (embedding-based),
+  # or "agentic" (LLM-based intelligent partitioning)
+  chunking_method: "token"
   preserve_sections: true
   default_top_k: 10
   similarity_threshold: 0.7

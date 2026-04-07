@@ -237,6 +237,7 @@ async def create_kb_from_bibtex(
         vector_size=embedding_provider.dimension,
         chunk_size=config.knowledge_base.chunk_size,
         chunk_overlap=config.knowledge_base.chunk_overlap,
+        chunking_method=config.knowledge_base.chunking_method,
     )
     dkb = DynamicKnowledgeBase(
         vector_store,

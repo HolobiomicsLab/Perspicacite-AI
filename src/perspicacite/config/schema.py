@@ -48,7 +48,7 @@ class KnowledgeBaseConfig(BaseModel):
     embedding_model: str = "text-embedding-3-small"
     chunk_size: int = Field(default=1000, ge=100, le=10000)
     chunk_overlap: int = Field(default=200, ge=0, le=1000)
-    preserve_sections: bool = True
+    chunking_method: Literal["token", "semantic", "agentic"] = "token"
     default_top_k: int = Field(default=10, ge=1, le=100)
     similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
 

@@ -27,6 +27,7 @@ class KnowledgeBaseConfig:
     # Chunking settings
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    chunking_method: str = "token"  # "token", "semantic", "agentic"
 
     # Retrieval settings
     top_k: int = 5
@@ -128,7 +129,7 @@ class DynamicKnowledgeBase:
     ) -> int:
         """Add a single paper to the collection."""
         from perspicacite.models.documents import DocumentChunk, ChunkMetadata
-        from perspicacite.rag.chunking import create_chunker
+        from perspicacite.rag.chunking import create_chunker, SimpleChunker
 
         chunks: list[DocumentChunk] = []
 
@@ -163,8 +164,14 @@ Abstract:
             chunker = create_chunker(
                 chunk_size=self.config.chunk_size,
                 overlap=self.config.chunk_overlap,
+                method=self.config.chunking_method,
             )
-            text_chunks = chunker.chunk_text(paper.full_text)
+
+            # Advanced methods are async; token is sync
+            if isinstance(chunker, SimpleChunker):
+                text_chunks = chunker.chunk_text(paper.full_text)
+            else:
+                text_chunks = await chunker.chunk_text_async(paper.full_text)
 
             for i, chunk_text in enumerate(text_chunks):
                 chunks.append(DocumentChunk(

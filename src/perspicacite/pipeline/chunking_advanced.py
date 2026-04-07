@@ -550,12 +550,21 @@ class AdvancedChunker:
             
             try:
                 section_chunks = await section_chunker.chunk_text(section_text, paper, llm_client)
-                
-                # Update section metadata
+
+                # Update section metadata (ChunkMetadata is frozen, so create new)
                 for chunk in section_chunks:
-                    chunk.metadata.section = section_name
                     chunk.id = f"{paper.id}_{chunk_index}"
-                    chunk.metadata.chunk_index = chunk_index
+                    chunk.metadata = ChunkMetadata(
+                        paper_id=paper.id,
+                        chunk_index=chunk_index,
+                        source=paper.source,
+                        title=paper.title,
+                        authors=_format_authors(paper.authors),
+                        year=paper.year,
+                        doi=paper.doi,
+                        url=paper.url,
+                        section=section_name,
+                    )
                     chunk_index += 1
                 
                 all_chunks.extend(section_chunks)
@@ -587,19 +596,189 @@ class AdvancedChunker:
         text: str,
         llm_client: Any,
     ) -> List[str]:
+        """Agentic chunking using LLM span partitioning.
+
+        Slides over the text in character windows, asks the LLM to return
+        JSON spans [{"start": int, "end": int}] covering each window, then
+        validates and normalizes spans into contiguous non-overlapping chunks
+        that respect token caps.
         """
-        Agentic chunking using LLM for intelligent partitioning.
-        
-        Uses v2's LLM client instead of custom implementation.
-        """
-        # For now, fall back to semantic chunking
-        # Full agentic implementation would require more complex logic
-        logger.info("chunking: agentic chunking using semantic fallback")
-        return chunk_by_semantics(
-            text, self.encode, self.embed_model_name,
-            self.semantic_threshold, self.max_tokens,
-            self.min_tokens, self.overlap_tokens
-        )
+        if not text.strip():
+            return []
+
+        if llm_client is None:
+            logger.warning("chunking: agentic requires llm_client, falling back to token")
+            return chunk_by_tokens(text, self.encode, self.max_tokens, self.overlap_tokens)
+
+        window_chars = 8000
+        min_tokens = self.min_tokens
+
+        # --- helpers ---
+        def _split_span_by_tokens(span_text: str) -> List[str]:
+            if not span_text:
+                return []
+            if len(self.encode(span_text)) <= self.max_tokens:
+                return [span_text]
+            parts = re.split(r"(?<=[.!?;:])\s+", span_text)
+            if len(parts) > 1:
+                out: List[str] = []
+                buf: List[str] = []
+                buf_tok = 0
+                for p in parts:
+                    p = p.strip()
+                    if not p:
+                        continue
+                    t = len(self.encode(p))
+                    if buf and buf_tok + t > self.max_tokens:
+                        out.append(" ".join(buf).strip())
+                        buf = [p]
+                        buf_tok = t
+                    else:
+                        buf.append(p)
+                        buf_tok += t
+                if buf:
+                    out.append(" ".join(buf).strip())
+                final: List[str] = []
+                for piece in out:
+                    if len(self.encode(piece)) <= self.max_tokens:
+                        final.append(piece)
+                    else:
+                        words = piece.split()
+                        if len(words) <= 1:
+                            final.append(piece)
+                        else:
+                            mid = max(1, len(words) // 2)
+                            final.extend([" ".join(words[:mid]), " ".join(words[mid:])])
+                return final
+            words = span_text.split()
+            if len(words) <= 1:
+                return [span_text]
+            mid = max(1, len(words) // 2)
+            return [" ".join(words[:mid]), " ".join(words[mid:])]
+
+        # --- main loop ---
+        chunks: List[str] = []
+        pending_small = ""
+        text_len = len(text)
+        pos = 0
+
+        while pos < text_len:
+            win_end = min(pos + max(1, window_chars), text_len)
+            win_text = text[pos:win_end]
+            wlen = len(win_text)
+
+            # Ask LLM to partition this window
+            prompt = (
+                "Partition the following text window into coherent retrieval chunks.\n"
+                "Return STRICT JSON: {\"spans\": [{\"start\": <int>, \"end\": <int>}, ...]}\n"
+                "Constraints:\n"
+                "- spans must be sorted by start, contiguous (no gaps), non-overlapping\n"
+                f"- fully cover 0..{wlen}\n"
+                f"- each chunk roughly {self.max_tokens} tokens, minimum {min_tokens}\n"
+                "- prefer boundaries at paragraph/sentence breaks\n"
+                "- avoid breaking mid-sentence unless necessary\n\n"
+                f"text:\n{win_text}\n\n"
+                "Reply ONLY with the JSON object."
+            )
+
+            try:
+                response = await llm_client.complete(prompt, temperature=0.0, max_tokens=1024)
+            except Exception as e:
+                logger.warning(f"chunking: agentic LLM call failed: {e}")
+                # Fallback: token chunk this window
+                window_chunks = chunk_by_tokens(win_text, self.encode, self.max_tokens, 0)
+                chunks.extend(window_chunks)
+                pos = win_end
+                continue
+
+            # Parse spans
+            spans: List[Tuple[int, int]] = []
+            if response:
+                try:
+                    import json as _json
+                    first_brace = response.find("{")
+                    last_brace = response.rfind("}")
+                    payload = response[first_brace:last_brace + 1] if first_brace != -1 and last_brace != -1 else response
+                    data = _json.loads(payload)
+                    raw_spans = data.get("spans", [])
+                    for sp in raw_spans:
+                        if not isinstance(sp, dict):
+                            continue
+                        s = sp.get("start")
+                        e = sp.get("end")
+                        if isinstance(s, int) and isinstance(e, int):
+                            spans.append((s, e))
+                except Exception as e:
+                    logger.warning(f"chunking: failed to parse agentic spans: {e}")
+
+            # Normalize spans → sorted, clipped, contiguous
+            norm_spans: List[Tuple[int, int]] = []
+            if spans:
+                spans.sort(key=lambda x: (x[0], x[1]))
+                cur = 0
+                for s, e in spans:
+                    s = max(0, min(s, wlen))
+                    e = max(0, min(e, wlen))
+                    if e < s:
+                        s, e = e, s
+                    if s > cur:
+                        norm_spans.append((cur, s))
+                        cur = s
+                    if e > cur:
+                        norm_spans.append((cur, e))
+                        cur = e
+                if cur < wlen:
+                    norm_spans.append((cur, wlen))
+            else:
+                norm_spans = [(0, wlen)]
+
+            # Enforce token constraints: merge small, split large
+            window_chunks: List[str] = []
+            buffer = pending_small if pending_small else ""
+            pending_small = ""
+
+            for s, e in norm_spans:
+                span_txt = win_text[s:e]
+                candidate = (buffer + (" " if buffer and span_txt else "") + span_txt).strip()
+                if not candidate:
+                    continue
+                cand_tokens = len(self.encode(candidate))
+                if cand_tokens < min_tokens:
+                    buffer = candidate
+                    continue
+                if cand_tokens > self.max_tokens:
+                    pieces = _split_span_by_tokens(candidate)
+                    for p in pieces:
+                        window_chunks.append(p)
+                    buffer = ""
+                else:
+                    window_chunks.append(candidate)
+                    buffer = ""
+
+            pending_small = buffer
+            chunks.extend(window_chunks)
+            pos = win_end
+
+        # Flush leftover
+        if pending_small.strip():
+            chunks.append(pending_small.strip())
+
+        # Apply token-based overlap
+        if self.overlap_tokens > 0 and chunks:
+            overlapped: List[str] = []
+            for j, ch in enumerate(chunks):
+                if j == 0:
+                    overlapped.append(ch)
+                    continue
+                prev = overlapped[-1]
+                prev_words = prev.split()
+                tail_words = prev_words[-min(len(prev_words), self.overlap_tokens):]
+                merged = (" ".join(tail_words) + " " + ch).strip()
+                overlapped.append(merged)
+            chunks = overlapped
+
+        logger.info(f"chunking: agentic produced {len(chunks)} chunks")
+        return chunks
     
     def _to_document_chunks(
         self,

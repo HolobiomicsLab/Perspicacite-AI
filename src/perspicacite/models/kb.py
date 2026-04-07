@@ -15,10 +15,9 @@ def chroma_collection_name_for_kb(display_name: str) -> str:
 class ChunkConfig(BaseModel):
     """Configuration for text chunking."""
 
-    method: Literal["token", "semantic", "section_aware"] = "token"
+    method: Literal["token", "semantic", "agentic", "section_aware"] = "token"
     chunk_size: int = Field(default=1000, ge=100, le=10000)
     chunk_overlap: int = Field(default=200, ge=0, le=1000)
-    preserve_sections: bool = True
 
     def __repr__(self) -> str:
         return (
