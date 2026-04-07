@@ -31,6 +31,43 @@ class ContentResult:
     metadata: dict[str, Any] | None = None
 
 
+@dataclass
+class PaperDiscovery:
+    """Result of DOI source discovery via OpenAlex + Unpaywall."""
+
+    doi: str
+    pmcid: str | None = None
+    arxiv_id: str | None = None
+    oa_url: str | None = None
+    abstract: str | None = None
+    title: str | None = None
+    is_oa: bool = False
+    work_type: str | None = None  # "article", "preprint", etc.
+    unpaywall_pdf_url: str | None = None
+
+
+@dataclass
+class PaperContent:
+    """Unified result from retrieve_paper_content().
+
+    content_type values:
+      - "structured": full text with sections + references (JATS XML, HTML)
+      - "full_text": full text from PDF extraction (no structure)
+      - "abstract": abstract only (no full text available)
+      - "none": no content found
+    """
+
+    success: bool
+    doi: str
+    content_type: str  # "structured" | "full_text" | "abstract" | "none"
+    full_text: str | None = None
+    sections: dict[str, str] | None = None
+    references: list[dict] | None = None
+    abstract: str | None = None
+    content_source: str = "none"  # "pmc", "arxiv_html", "publisher_pdf", etc.
+    metadata: dict[str, Any] | None = None
+
+
 class PDFDownloader:
     """Generic PDF downloader with retry logic."""
 

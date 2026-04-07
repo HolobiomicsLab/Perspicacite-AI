@@ -12,7 +12,7 @@ import httpx
 from perspicacite.logging import get_logger
 from perspicacite.models.kb import ChunkConfig, KnowledgeBase, chroma_collection_name_for_kb
 from perspicacite.models.papers import Paper
-from perspicacite.pipeline.download import get_pdf_with_fallback
+from perspicacite.pipeline.download import retrieve_paper_content
 from perspicacite.pipeline.parsers.pdf import PDFParser
 from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
 
@@ -117,7 +117,7 @@ async def enrich_papers_with_pdf(
     rsc_api_key: str | None = None,
     springer_api_key: str | None = None,
 ) -> dict[str, int]:
-    """Download PDFs and set paper.full_text where possible."""
+    """Download content and set paper.full_text where possible."""
     stats = {"attempted": 0, "success": 0, "failed": 0, "skipped_no_doi": 0}
     for paper in papers:
         if not paper.doi:
@@ -125,27 +125,22 @@ async def enrich_papers_with_pdf(
             continue
         stats["attempted"] += 1
         try:
-            pdf_bytes = await get_pdf_with_fallback(
+            result = await retrieve_paper_content(
                 paper.doi,
                 url=paper.url,
-                alternative_endpoint=alternative_endpoint,
                 http_client=http_client,
+                pdf_parser=pdf_parser,
+                alternative_endpoint=alternative_endpoint,
                 unpaywall_email=unpaywall_email,
                 wiley_tdm_token=wiley_tdm_token,
                 aaas_api_key=aaas_api_key,
                 rsc_api_key=rsc_api_key,
                 springer_api_key=springer_api_key,
             )
-            if pdf_bytes and len(pdf_bytes) > 1000:
-                if pdf_bytes[:4] == b"%PDF":
-                    parsed = await pdf_parser.parse(pdf_bytes)
-                    text = parsed.text if parsed else None
-                else:
-                    text = pdf_bytes.decode("utf-8", errors="replace")
-                if text and len(text.strip()) > 200:
-                    paper.full_text = text
-                    stats["success"] += 1
-                    continue
+            if result.success and result.full_text:
+                paper.full_text = result.full_text
+                stats["success"] += 1
+                continue
             stats["failed"] += 1
         except Exception as ex:
             logger.warning("bibtex_pdf_failed", doi=paper.doi, error=str(ex))

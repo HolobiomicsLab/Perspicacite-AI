@@ -1520,45 +1520,41 @@ Generate your answer:"""
         return " ".join(words).strip()
 
     async def _download_single_paper(self, paper: Dict[str, Any]) -> Dict[str, Any]:
-        """Download and parse a single paper's PDF.
-        
+        """Download and parse a single paper's content.
+
         Args:
             paper: Paper dict with at least 'doi' and 'title'
-            
+
         Returns:
             Enriched paper dict with 'full_text' and 'pdf_downloaded' fields
         """
-        from perspicacite.pipeline.download import get_pdf_with_fallback
+        from perspicacite.pipeline.download import retrieve_paper_content
         from perspicacite.pipeline.parsers.pdf import PDFParser
-        
+
         doi = paper.get("doi", "")
         if not doi:
             paper["pdf_downloaded"] = False
             return paper
-        
+
         parser = PDFParser()
-        
+
         try:
-            pdf_bytes = await get_pdf_with_fallback(
+            result = await retrieve_paper_content(
                 doi=doi,
+                pdf_parser=parser,
                 unpaywall_email="perspicacite@example.com",
             )
-            
-            if pdf_bytes:
-                if pdf_bytes[:4] == b"%PDF":
-                    parsed = await parser.parse_bytes(pdf_bytes)
-                    paper["full_text"] = parsed.text or ""
-                else:
-                    # Non-PDF content (e.g. EuropePMC full text)
-                    paper["full_text"] = pdf_bytes.decode("utf-8", errors="replace")
+
+            if result.success and result.full_text:
+                paper["full_text"] = result.full_text
                 paper["pdf_downloaded"] = True
             else:
                 paper["pdf_downloaded"] = False
-                
+
         except Exception as e:
-            logger.warning(f"Failed to download/parse PDF for {doi}: {e}")
+            logger.warning(f"Failed to download/parse content for {doi}: {e}")
             paper["pdf_downloaded"] = False
-        
+
         return paper
 
     async def _download_and_enrich_papers(

@@ -150,3 +150,116 @@ async def download_from_arxiv(
     finally:
         if should_close:
             await client.aclose()
+
+
+async def fetch_arxiv_html(
+    arxiv_id: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> tuple[str | None, dict[str, str] | None]:
+    """Fetch and parse arXiv HTML version of a paper.
+
+    arXiv serves HTML at https://arxiv.org/html/{id} for many papers.
+    Returns structured text with sections when available.
+
+    Args:
+        arxiv_id: arXiv identifier (e.g., "2401.12345")
+        http_client: Optional HTTP client
+
+    Returns:
+        (full_text, sections) or (None, None) if unavailable.
+    """
+    client = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+    should_close = http_client is None
+
+    try:
+        html_url = f"https://arxiv.org/html/{arxiv_id}"
+        logger.info("arxiv_html_attempt", arxiv_id=arxiv_id, url=html_url)
+        response = await client.get(html_url)
+        if response.status_code != 200:
+            logger.info(
+                "arxiv_html_not_available",
+                arxiv_id=arxiv_id,
+                status=response.status_code,
+            )
+            return None, None
+
+        html = response.text
+
+        try:
+            from bs4 import BeautifulSoup, Tag, NavigableString
+        except ImportError:
+            # Fallback: just extract raw text
+            text = response.text
+            if len(text) > 500:
+                return text, None
+            return None, None
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Remove non-content elements
+        for tag in soup(["script", "style", "nav", "header", "footer"]):
+            tag.decompose()
+
+        # Find main content area
+        main = soup.find("article") or soup.find("main") or soup.find("body") or soup
+
+        # Extract sections from h2/h3 headers and section elements
+        sections: dict[str, str] = {}
+        current_title = "Preamble"
+        current_parts: list[str] = []
+
+        for child in main.children:
+            if isinstance(child, NavigableString):
+                text = child.strip()
+                if text:
+                    current_parts.append(text)
+                continue
+            if not isinstance(child, Tag):
+                continue
+
+            tag_name = (child.name or "").lower()
+
+            if tag_name in ("h1", "h2", "h3"):
+                # Flush previous section
+                if current_parts:
+                    sections[current_title] = "\n".join(current_parts)
+                    current_parts = []
+                current_title = child.get_text(strip=True) or current_title
+            elif tag_name == "section":
+                sec_header = child.find(["h1", "h2", "h3"])
+                sec_title = (
+                    sec_header.get_text(strip=True) if sec_header else "Section"
+                )
+                sec_text = child.get_text(separator="\n", strip=True)
+                if sec_text and len(sec_text) > 50:
+                    sections[sec_title] = sec_text
+            else:
+                text = child.get_text(strip=True)
+                if text:
+                    current_parts.append(text)
+
+        # Flush last section
+        if current_parts:
+            sections[current_title] = "\n".join(current_parts)
+
+        # Full text
+        full_text = main.get_text(separator="\n", strip=True)
+
+        if full_text and len(full_text) > 200:
+            logger.info(
+                "arxiv_html_success",
+                arxiv_id=arxiv_id,
+                text_length=len(full_text),
+                sections=len(sections),
+            )
+            return full_text, sections if sections else None
+
+        logger.info("arxiv_html_too_short", arxiv_id=arxiv_id)
+        return None, None
+
+    except Exception as e:
+        logger.error("arxiv_html_error", arxiv_id=arxiv_id, error=str(e))
+        return None, None
+    finally:
+        if should_close:
+            await client.aclose()

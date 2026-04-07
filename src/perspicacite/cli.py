@@ -138,14 +138,16 @@ def serve(
     spec.loader.exec_module(web_module)
     app = web_module.app
 
-    # TODO: Start MCP server alongside if enabled
-    # For now, just run FastAPI
-    uvicorn.run(
-        app,
-        host=config.server.host,
-        port=config.server.port,
-        reload=config.server.reload,
-    )
+    if config.mcp.enabled:
+        # Start MCP server alongside FastAPI
+        _start_mcp_and_web(config, app)
+    else:
+        uvicorn.run(
+            app,
+            host=config.server.host,
+            port=config.server.port,
+            reload=config.server.reload,
+        )
 
 
 @cli.command()
@@ -286,6 +288,36 @@ def query(
 
     # Run async query
     asyncio.run(_run_query(config, query, kb, mode, provider, model))
+
+
+def _start_mcp_and_web(config, app) -> None:
+    """Start MCP server and web server concurrently."""
+    import asyncio
+    import uvicorn
+
+    async def _run_both():
+        # Initialize MCP state
+        from perspicacite.mcp.server import mcp, mcp_state
+        await mcp_state.initialize(config)
+
+        # Run both servers concurrently
+        mcp_coro = mcp.run_streamable_http_async(
+            host=config.mcp.host,
+            port=config.mcp.port,
+        )
+        web_coro = asyncio.create_task(
+            asyncio.to_thread(
+                uvicorn.run,
+                app,
+                host=config.server.host,
+                port=config.server.port,
+                reload=config.server.reload,
+            )
+        )
+
+        await asyncio.gather(mcp_coro, web_coro)
+
+    asyncio.run(_run_both())
 
 
 async def _create_kb_from_bibtex(

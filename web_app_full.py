@@ -237,7 +237,7 @@ app_state = AppState()
 # =============================================================================
 
 def _get_pdf_fallback_kwargs(pdf_config) -> dict:
-    """Build keyword args for get_pdf_with_fallback from PDFDownloadConfig."""
+    """Build keyword args for retrieve_paper_content from PDFDownloadConfig."""
     if not pdf_config:
         return {}
     return {
@@ -782,7 +782,7 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
 
     from perspicacite.models.papers import Paper, Author, PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-    from perspicacite.pipeline.download import get_pdf_with_fallback
+    from perspicacite.pipeline.download import retrieve_paper_content
 
     # Convert PaperData dicts to Paper models with deduplication check
     papers_to_add = []
@@ -828,20 +828,11 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
         if pd.doi and app_state.pdf_downloader and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
-                # Try Unpaywall first, then alternative endpoint
-                pdf_bytes = await get_pdf_with_fallback(pd.doi, **pdf_kw)
-                if pdf_bytes and len(pdf_bytes) > 1000:
-                    if pdf_bytes[:4] == b"%PDF":
-                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
-                        if parsed and parsed.text:
-                            full_text = parsed.text
-                    else:
-                        full_text = pdf_bytes.decode("utf-8", errors="replace")
-                    if full_text:
-                        download_stats["success"] += 1
-                        logger.info(f"Downloaded full text for: {pd.title[:50]}...")
-                    else:
-                        download_stats["failed"] += 1
+                result = await retrieve_paper_content(pd.doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
+                if result.success and result.full_text:
+                    full_text = result.full_text
+                    download_stats["success"] += 1
+                    logger.info(f"Downloaded full text for: {pd.title[:50]}...")
                 else:
                     download_stats["failed"] += 1
             except Exception as e:
@@ -912,7 +903,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
     # Parse BibTeX entries using bibtexparser (same as CLI)
     from perspicacite.models.papers import PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-    from perspicacite.pipeline.download import get_pdf_with_fallback
+    from perspicacite.pipeline.download import retrieve_paper_content
     from perspicacite.pipeline.bibtex_kb import entries_to_papers
     import bibtexparser
 
@@ -948,21 +939,15 @@ async def add_bibtex_to_kb(name: str, request: Request):
         paper.source = PaperSource.BIBTEX
 
         # Try to download full text if DOI available
-        if paper.doi and app_state.pdf_downloader and app_state.pdf_parser:
+        if paper.doi and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
-                pdf_bytes = await get_pdf_with_fallback(paper.doi, **pdf_kw)
-                if pdf_bytes and len(pdf_bytes) > 1000:
-                    if pdf_bytes[:4] == b"%PDF":
-                        parsed = await app_state.pdf_parser.parse(pdf_bytes)
-                        if parsed and parsed.text:
-                            paper.full_text = parsed.text
-                    else:
-                        paper.full_text = pdf_bytes.decode("utf-8", errors="replace")
-                    if paper.full_text:
-                        download_stats["success"] += 1
+                result = await retrieve_paper_content(paper.doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
+                if result.success and result.full_text:
+                    paper.full_text = result.full_text
+                    download_stats["success"] += 1
             except Exception as e:
-                logger.warning(f"PDF download failed for {paper.title[:50]}: {e}")
+                logger.warning(f"Content download failed for {paper.title[:50]}: {e}")
                 download_stats["failed"] += 1
 
         papers_to_add.append(paper)

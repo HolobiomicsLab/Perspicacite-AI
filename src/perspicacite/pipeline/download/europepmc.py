@@ -324,20 +324,3 @@ async def get_fulltext_from_europepmc(
     finally:
         if should_close:
             await client.aclose()
-
-
-async def download_pdf_from_europepmc(
-    doi: str,
-    http_client: httpx.AsyncClient | None = None,
-) -> bytes | None:
-    """Download OA content when the article is in PMC.
-
-    .. deprecated::
-        PDF endpoints for EuropePMC/NCBI are unreliable.
-        Use :func:`get_fulltext_from_europepmc` instead, which returns
-        extracted text directly.
-    """
-    text, _ = await get_fulltext_from_europepmc(doi, http_client)
-    if text:
-        return text.encode("utf-8")
-    return None

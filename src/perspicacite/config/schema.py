@@ -25,8 +25,8 @@ class MCPConfig(BaseModel):
 
     enabled: bool = True
     host: str = "0.0.0.0"
-    port: int = Field(default=5500, ge=1024, le=65535)
-    transport: Literal["stdio", "sse"] = "stdio"
+    port: int = Field(default=5001, ge=1024, le=65535)
+    transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http"
 
 
 class DatabaseConfig(BaseModel):
