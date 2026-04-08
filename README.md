@@ -1,4 +1,4 @@
-# Perspicacité v2 — AI-Powered Scientific Literature Research Assistant
+# Perspicacité — AI-Powered Scientific Literature Research Assistant
 
 **Perspicacité** (French for "insight") helps scientists, researchers, and students search, understand, and organize academic literature using AI grounded in real research papers.
 
