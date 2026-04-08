@@ -291,33 +291,39 @@ def query(
 
 
 def _start_mcp_and_web(config, app) -> None:
-    """Start MCP server and web server concurrently."""
-    import asyncio
+    """Start MCP server and web server on a single port."""
     import uvicorn
+    from contextlib import asynccontextmanager
 
-    async def _run_both():
-        # Initialize MCP state
-        from perspicacite.mcp.server import mcp, mcp_state
-        await mcp_state.initialize(config)
+    # Initialize MCP state
+    from perspicacite.mcp.server import mcp, mcp_state
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(mcp_state.initialize(config))
 
-        # Run both servers concurrently
-        mcp_coro = mcp.run_streamable_http_async(
-            host=config.mcp.host,
-            port=config.mcp.port,
-        )
-        web_coro = asyncio.create_task(
-            asyncio.to_thread(
-                uvicorn.run,
-                app,
-                host=config.server.host,
-                port=config.server.port,
-                reload=config.server.reload,
-            )
-        )
+    # Get MCP ASGI app
+    mcp_app = mcp.http_app()
 
-        await asyncio.gather(mcp_coro, web_coro)
+    # Combine web app + MCP app lifespans
+    original_lifespan = app.router.lifespan_context
 
-    asyncio.run(_run_both())
+    @asynccontextmanager
+    async def combined_lifespan(app_instance):
+        async with original_lifespan(app_instance):
+            async with mcp_app.lifespan(app_instance):
+                yield
+
+    app.router.lifespan_context = combined_lifespan
+
+    # Mount MCP ASGI app — its internal routes are at /mcp
+    app.mount("/", mcp_app)
+
+    # Run single server
+    uvicorn.run(
+        app,
+        host=config.server.host,
+        port=config.server.port,
+        reload=config.server.reload,
+    )
 
 
 async def _create_kb_from_bibtex(

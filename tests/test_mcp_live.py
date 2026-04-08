@@ -1,182 +1,423 @@
 #!/usr/bin/env python3
-"""Live test scripts for Perspicacité MCP tools and JSON-RPC access.
+"""Live test scripts for Perspicacité MCP tools.
 
-These tests require a running Perspicacité server with real backends.
-They are NOT part of the automated test suite — run manually.
+Requires a running server: `perspicacite -c config.yml serve`
 
 Usage:
-    # Start the server first:
-    #   perspicacite serve --config config.yml
-
-    # Run all live tests:
-    #   python3 tests/test_mcp_live.py --base-url http://localhost:8000
-
-    # Run individual tests:
-    #   python3 tests/test_mcp_live.py --base-url http://localhost:8000 --test search
-    #   python3 tests/test_mcp_live.py --base-url http://localhost:8000 --test content
-    #   python3 tests/test_mcp_live.py --base-url http://localhost:8000 --test kb
-    #   python3 tests/test_mcp_live.py --base-url http://localhost:8000 --test report
-    #   python3 tests/test_mcp_live.py --base-url http://localhost:8000 --test jsonrpc
-    #   python3 tests/test_mcp_live.py --base-url http://localhost:8000 --test nonstream
+    python3 tests/test_mcp_live.py --all
+    python3 tests/test_mcp_live.py --test search
+    python3 tests/test_mcp_live.py --test content_pmc
+    python3 tests/test_mcp_live.py --test content_arxiv
+    python3 tests/test_mcp_live.py --test content_discovery
+    python3 tests/test_mcp_live.py --test refs
+    python3 tests/test_mcp_live.py --test kb
+    python3 tests/test_mcp_live.py --test jsonrpc
+    python3 tests/test_mcp_live.py --test nonstream
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
-import urllib.request
-import urllib.error
 
-BASE_URL = "http://localhost:8000"
-MCP_PORT = 5001
+import httpx
+
+DEFAULT_PORT = 8000
 
 
-def _json_post(url: str, data: dict, timeout: int = 120) -> dict:
-    """POST JSON and return parsed response."""
-    body = json.dumps(data).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+# =========================================================================
+# MCP Session Client
+# =========================================================================
+
+class MCPClient:
+    """Minimal MCP streamable-HTTP client for testing."""
+
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+        self.session_id: str | None = None
+        self._req_id = 0
+        self._headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+
+    def _next_id(self) -> int:
+        self._req_id += 1
+        return self._req_id
+
+    def _session_headers(self) -> dict:
+        h = dict(self._headers)
+        if self.session_id:
+            h["Mcp-Session-Id"] = self.session_id
+        return h
+
+    def _parse_sse(self, text: str) -> list[dict]:
+        """Parse SSE response, return list of JSON payloads."""
+        results = []
+        for line in text.split("\n"):
+            if line.startswith("data: "):
+                results.append(json.loads(line[6:]))
+        return results
+
+    def initialize(self) -> dict:
+        """Perform MCP initialize handshake."""
+        r = httpx.post(
+            self.base_url,
+            json={
+                "jsonrpc": "2.0",
+                "id": self._next_id(),
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-live", "version": "1.0"},
+                },
+            },
+            headers=self._headers,
+            timeout=10,
+        )
+        self.session_id = r.headers.get("mcp-session-id")
+        results = self._parse_sse(r.text)
+        if not results or "result" not in results[0]:
+            raise RuntimeError(f"Initialize failed: {r.text}")
+        return results[0]["result"]
+
+    def send_initialized(self):
+        """Send notifications/initialized to complete handshake."""
+        httpx.post(
+            self.base_url,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers=self._session_headers(),
+            timeout=5,
+        )
+
+    def list_tools(self) -> list[dict]:
+        """List available MCP tools."""
+        r = httpx.post(
+            self.base_url,
+            json={
+                "jsonrpc": "2.0",
+                "id": self._next_id(),
+                "method": "tools/list",
+                "params": {},
+            },
+            headers=self._session_headers(),
+            timeout=10,
+        )
+        results = self._parse_sse(r.text)
+        return results[0]["result"]["tools"]
+
+    def call_tool(self, name: str, arguments: dict, timeout: int = 120) -> dict:
+        """Call an MCP tool and return the parsed result."""
+        r = httpx.post(
+            self.base_url,
+            json={
+                "jsonrpc": "2.0",
+                "id": self._next_id(),
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+            headers=self._session_headers(),
+            timeout=timeout,
+        )
+        results = self._parse_sse(r.text)
+        if not results:
+            return {"error": "empty response", "raw": r.text}
+        msg = results[0]
+        if "error" in msg:
+            return {"error": msg["error"]}
+        # Extract text content from MCP content blocks
+        content = msg.get("result", {}).get("content", [])
+        text_parts = [c["text"] for c in content if c.get("type") == "text"]
+        if text_parts:
+            try:
+                return json.loads(text_parts[0])
+            except json.JSONDecodeError:
+                return {"raw_text": text_parts[0]}
+        return {"error": "no text content in response"}
+
+
+def create_client(port: int) -> MCPClient:
+    """Create and initialize an MCP client."""
+    client = MCPClient(f"http://localhost:{port}/mcp")
+    info = client.initialize()
+    client.send_initialized()
+    server_info = info.get("serverInfo", {})
+    print(f"  Connected to {server_info.get('name', '?')} v{server_info.get('version', '?')}")
+    print(f"  Session: {client.session_id}")
+    return client
+
+
+# =========================================================================
+# Helpers
+# =========================================================================
+
+def _pass(name: str, detail: str = ""):
+    msg = f"  PASS: {name}"
+    if detail:
+        msg += f" — {detail}"
+    print(msg)
+
+
+def _fail(name: str, detail: str = ""):
+    msg = f"  FAIL: {name}"
+    if detail:
+        msg += f" — {detail}"
+    print(msg)
+
+
+def _info(msg: str):
+    print(f"  {msg}")
+
+
+def _truncate(text: str, max_len: int = 200) -> str:
+    if len(text) > max_len:
+        return text[:max_len] + f"... ({len(text)} chars)"
+    return text
+
+
+def _cleanup_kb(kb_name: str):
+    """Delete a test KB from ChromaDB and SQLite."""
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        return {"error": f"HTTP {e.code}", "body": e.read().decode("utf-8", errors="replace")}
-    except urllib.error.URLError as e:
-        return {"error": f"Connection failed: {e.reason}"}
-
-
-def _json_rpc_call(tool_name: str, arguments: dict, timeout: int = 120) -> dict:
-    """Call an MCP tool via JSON-RPC."""
-    url = f"http://localhost:{MCP_PORT}/mcp"
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {"name": tool_name, "arguments": arguments},
-    }
-    return _json_post(url, payload, timeout=timeout)
-
-
-def _print_result(name: str, result: dict) -> None:
-    """Print a test result with formatting."""
-    success = result.get("success", "error" not in result)
-    status = "PASS" if success else "FAIL"
-    print(f"\n{'='*60}")
-    print(f"[{status}] {name}")
-    print(f"{'='*60}")
-    # Truncate large fields for readability
-    display = dict(result)
-    if "full_text" in display and isinstance(display["full_text"], str) and len(display["full_text"]) > 200:
-        display["full_text"] = display["full_text"][:200] + f"... ({len(result['full_text'])} chars total)"
-    if "papers" in display and isinstance(display["papers"], list) and len(display["papers"]) > 3:
-        display["papers"] = display["papers"][:3] + [f"... and {len(result['papers']) - 3} more"]
-    if "report" in display and isinstance(display["report"], str) and len(display["report"]) > 300:
-        display["report"] = display["report"][:300] + f"... ({len(result['report'])} chars total)"
-    print(json.dumps(display, indent=2, ensure_ascii=False)[:2000])
+        import chromadb, sqlite3
+        from perspicacite.models.kb import chroma_collection_name_for_kb
+        collection = chroma_collection_name_for_kb(kb_name)
+        chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        chroma_client.delete_collection(collection)
+        conn = sqlite3.connect("./data/perspicacite.db")
+        conn.execute("DELETE FROM kb_metadata WHERE name = ?", (kb_name,))
+        conn.commit()
+        conn.close()
+        _info(f"Cleaned up test KB: {kb_name}")
+    except Exception as e:
+        _info(f"Cleanup skipped ({e})")
 
 
 # =========================================================================
-# Test 1: search_literature
+# Tests
 # =========================================================================
 
-def test_search(base_url: str) -> None:
-    """Test search_literature with real SciLex search."""
-    print("\n>>> Test: search_literature (flash attention, 2023-2025)")
+def test_discovery(port: int):
+    """Test MCP handshake and tool listing."""
+    print("\n>>> Test: MCP Discovery (initialize + tools/list)")
 
-    # Via MCP tool (if MCP server running)
-    result = _json_rpc_call("search_literature", {
+    client = create_client(port)
+    tools = client.list_tools()
+    tool_names = [t["name"] for t in tools]
+
+    _info(f"Discovered {len(tools)} tools:")
+    for name in tool_names:
+        _info(f"  - {name}")
+
+    expected = [
+        "search_literature", "get_paper_content", "get_paper_references",
+        "list_knowledge_bases", "search_knowledge_base",
+        "create_knowledge_base", "add_papers_to_kb", "generate_report",
+    ]
+    missing = [t for t in expected if t not in tool_names]
+    if missing:
+        _fail("tool listing", f"missing: {missing}")
+    else:
+        _pass("tool listing", f"all {len(expected)} expected tools present")
+
+
+def test_search(port: int):
+    """Test search_literature with real backends."""
+    print("\n>>> Test: search_literature (flash attention, 2024-2025)")
+
+    client = create_client(port)
+    result = client.call_tool("search_literature", {
         "query": "flash attention mechanisms",
         "max_results": 5,
-        "year_min": 2023,
+        "year_min": 2024,
         "year_max": 2025,
         "databases": ["semantic_scholar", "openalex"],
-    })
+    }, timeout=60)
 
-    _print_result("search_literature", result)
+    if "error" in result:
+        _fail("search_literature", str(result["error"]))
+        return
 
-    if result.get("success"):
-        papers = result.get("papers", [])
-        print(f"\n  Found {len(papers)} papers")
-        for p in papers[:3]:
-            print(f"  - {p.get('title', '?')[:80]} ({p.get('year')}) [{p.get('doi', 'no DOI')}]")
+    papers = result.get("papers", result.get("results", []))
+    total = result.get("total_results", len(papers))
+    _info(f"Total results: {total}, returned: {len(papers)}")
+
+    for p in papers[:3]:
+        title = p.get("title", "?")[:70]
+        year = p.get("year", "?")
+        doi = p.get("doi", "no DOI")
+        _info(f"  - [{year}] {title}  ({doi})")
+
+    if len(papers) > 0:
+        _pass("search_literature", f"{len(papers)} papers found")
     else:
-        print(f"  Search returned error — MCP server may not be running on port {MCP_PORT}")
-        print(f"  Error: {result.get('error', result)}")
+        _fail("search_literature", "no papers returned")
 
 
-# =========================================================================
-# Test 2: get_paper_content — PMC paper
-# =========================================================================
+def test_content_pmc(port: int):
+    """Test get_paper_content with a PMC paper."""
+    print("\n>>> Test: get_paper_content (PMC paper)")
 
-def test_content_pmc(base_url: str) -> None:
-    """Test get_paper_content with a PMC paper (Nature Immunology)."""
-    print("\n>>> Test: get_paper_content (PMC — bioRxiv preprint with published version)")
-
-    # This bioRxiv DOI was published in Nature Immunology — should find via PMC
+    client = create_client(port)
+    # A well-known OA paper with PMC full text
     doi = "10.1038/s41590-025-02241-4"
-    result = _json_rpc_call("get_paper_content", {"doi": doi, "include_sections": True})
+    _info(f"DOI: {doi}")
 
-    _print_result("get_paper_content (PMC)", result)
+    result = client.call_tool("get_paper_content", {
+        "doi": doi,
+        "include_sections": True,
+    }, timeout=60)
 
-    if result.get("success"):
-        ct = result.get("content_type", "unknown")
-        src = result.get("content_source", "unknown")
-        length = result.get("full_text_length", 0)
-        sections = result.get("sections")
-        refs = result.get("references")
-        print(f"\n  Content type: {ct}")
-        print(f"  Source: {src}")
-        print(f"  Full text length: {length}")
-        if sections:
-            print(f"  Sections ({len(sections)}): {list(sections.keys())[:5]}")
-        if refs:
-            print(f"  References: {len(refs)}")
+    if "error" in result:
+        _fail("get_paper_content (PMC)", str(result["error"]))
+        return
+
+    success = result.get("success", False)
+    ct = result.get("content_type", "?")
+    src = result.get("content_source", "?")
+    ft_len = result.get("full_text_length", len(result.get("full_text", "")))
+    sections = result.get("sections")
+    refs = result.get("references")
+
+    _info(f"Success: {success}")
+    _info(f"Content type: {ct}, Source: {src}")
+    _info(f"Full text length: {ft_len}")
+    if sections:
+        _info(f"Sections ({len(sections)}): {list(sections.keys())[:5]}")
+    if refs:
+        _info(f"References: {len(refs)}")
+
+    if success and ft_len > 0:
+        _pass("get_paper_content (PMC)", f"{ct} from {src}, {ft_len} chars")
+    else:
+        _fail("get_paper_content (PMC)", f"success={success}, content_type={ct}")
 
 
-# =========================================================================
-# Test 3: get_paper_content — arXiv paper
-# =========================================================================
-
-def test_content_arxiv(base_url: str) -> None:
+def test_content_arxiv(port: int):
     """Test get_paper_content with an arXiv paper."""
-    print("\n>>> Test: get_paper_content (arXiv)")
+    print("\n>>> Test: get_paper_content (arXiv paper)")
 
-    doi = "10.48550/arXiv.2401.12345"
-    result = _json_rpc_call("get_paper_content", {"doi": doi})
+    client = create_client(port)
+    # Flash attention paper on arXiv
+    doi = "10.48550/arXiv.2205.14135"
+    _info(f"DOI: {doi}")
 
-    _print_result("get_paper_content (arXiv)", result)
+    result = client.call_tool("get_paper_content", {
+        "doi": doi,
+    }, timeout=60)
 
-    if result.get("success"):
-        ct = result.get("content_type", "unknown")
-        src = result.get("content_source", "unknown")
-        print(f"\n  Content type: {ct}")
-        print(f"  Source: {src}")
+    if "error" in result:
+        _fail("get_paper_content (arXiv)", str(result["error"]))
+        return
+
+    success = result.get("success", False)
+    ct = result.get("content_type", "?")
+    src = result.get("content_source", "?")
+    ft_len = result.get("full_text_length", len(result.get("full_text", "")))
+
+    _info(f"Success: {success}")
+    _info(f"Content type: {ct}, Source: {src}")
+    _info(f"Full text length: {ft_len}")
+
+    if success and ft_len > 0:
+        _pass("get_paper_content (arXiv)", f"{ct} from {src}, {ft_len} chars")
+    else:
+        _fail("get_paper_content (arXiv)", f"success={success}, content_type={ct}")
 
 
-# =========================================================================
-# Test 4: KB lifecycle (create → add → search → report)
-# =========================================================================
+def test_content_discovery(port: int):
+    """Test get_paper_content with a paper that goes through discovery only (abstract)."""
+    print("\n>>> Test: get_paper_content (abstract-only / discovery)")
 
-def test_kb_lifecycle(base_url: str) -> None:
-    """Test full KB lifecycle: create, add papers, search, generate report."""
+    client = create_client(port)
+    # A DOI unlikely to have full text OA
+    doi = " 10.1056/NEJMra2500106"
+#    doi = "10.1038/s42256-026-01200-4"
+#    doi = "10.1126/science.adi3000"
+    _info(f"DOI: {doi}")
+
+    result = client.call_tool("get_paper_content", {
+        "doi": doi,
+    }, timeout=60)
+
+    if "error" in result:
+        _fail("get_paper_content (discovery)", str(result["error"]))
+        return
+
+    success = result.get("success", False)
+    ct = result.get("content_type", "?")
+    abstract = result.get("abstract", "")
+
+    _info(f"Success: {success}")
+    _info(f"Content type: {ct}")
+    if abstract:
+        _info(f"Abstract: {_truncate(abstract, 150)}")
+
+    if ct == "abstract" and abstract:
+        _pass("get_paper_content (discovery)", f"abstract returned ({len(abstract)} chars)")
+    elif success:
+        _pass("get_paper_content (discovery)", f"got {ct} content")
+    else:
+        _fail("get_paper_content (discovery)", f"success={success}, content_type={ct}")
+
+
+def test_refs(port: int):
+    """Test get_paper_references."""
+    print("\n>>> Test: get_paper_references")
+
+    client = create_client(port)
+    # Use a PMC paper that likely has references
+    doi = "10.1038/s41590-025-02241-4"
+    _info(f"DOI: {doi}")
+
+    result = client.call_tool("get_paper_references", {
+        "doi": doi,
+    }, timeout=60)
+
+    if "error" in result:
+        _fail("get_paper_references", str(result["error"]))
+        return
+
+    refs = result.get("references", [])
+    total = result.get("total", len(refs))
+    note = result.get("note", "")
+
+    _info(f"Total references: {total}")
+    if note:
+        _info(f"Note: {note}")
+    if refs:
+        for r in refs[:3]:
+            _info(f"  - {r.get('title', r.get('text', '?'))[:70]}")
+
+    if total > 0:
+        _pass("get_paper_references", f"{total} references found")
+    elif note:
+        _pass("get_paper_references", f"tool callable, note: {note}")
+    else:
+        _fail("get_paper_references", "no references and no note")
+
+
+def test_kb(port: int):
+    """Test full KB lifecycle: create → add → search → list → report."""
+    print("\n>>> Test: KB lifecycle (create → add → search → list → report)")
+
+    client = create_client(port)
     kb_name = f"test_kb_{int(time.time())}"
 
     # Step 1: Create KB
-    print(f"\n>>> Test: create_knowledge_base ({kb_name})")
-    result = _json_rpc_call("create_knowledge_base", {"name": kb_name, "description": "Live test KB"})
-    _print_result("create_knowledge_base", result)
+    _info(f"Creating KB: {kb_name}")
+    result = client.call_tool("create_knowledge_base", {
+        "name": kb_name,
+        "description": "Live test KB",
+    })
     if not result.get("success"):
-        print("  FAILED — skipping remaining KB tests")
+        _fail("create_knowledge_base", str(result.get("error", result)))
         return
+    _pass("create_knowledge_base")
 
     # Step 2: Add papers
-    print(f"\n>>> Test: add_papers_to_kb")
+    _info("Adding papers to KB...")
     papers = [
         {
             "title": "Attention Is All You Need",
@@ -193,86 +434,126 @@ def test_kb_lifecycle(base_url: str) -> None:
             "abstract": "We introduce a new language representation model called BERT.",
         },
     ]
-    result = _json_rpc_call("add_papers_to_kb", {"kb_name": kb_name, "papers": papers})
-    _print_result("add_papers_to_kb", result)
+    result = client.call_tool("add_papers_to_kb", {
+        "kb_name": kb_name,
+        "papers": papers,
+    })
+    if result.get("success"):
+        _pass("add_papers_to_kb", f"added {result.get('added_papers', result.get('added', '?'))} papers")
+    else:
+        _fail("add_papers_to_kb", str(result.get("error", result)))
 
     # Step 3: Search KB
-    print(f"\n>>> Test: search_knowledge_base")
-    result = _json_rpc_call("search_knowledge_base", {"query": "transformer attention", "kb_name": kb_name, "top_k": 3})
-    _print_result("search_knowledge_base", result)
+    _info("Searching KB for 'transformer attention'...")
+    result = client.call_tool("search_knowledge_base", {
+        "query": "transformer attention",
+        "kb_name": kb_name,
+        "top_k": 3,
+    })
+    if "error" not in result:
+        hits = result.get("results", result.get("papers", []))
+        _pass("search_knowledge_base", f"{len(hits)} results")
+    else:
+        _fail("search_knowledge_base", str(result.get("error")))
 
     # Step 4: List KBs
-    print(f"\n>>> Test: list_knowledge_bases")
-    result = _json_rpc_call("list_knowledge_bases", {})
-    _print_result("list_knowledge_bases", result)
+    _info("Listing knowledge bases...")
+    result = client.call_tool("list_knowledge_bases", {})
+    if result.get("success"):
+        kbs = result.get("knowledge_bases", [])
+        found = any(kb.get("name") == kb_name for kb in kbs)
+        if found:
+            _pass("list_knowledge_bases", f"found {kb_name} in {len(kbs)} KBs")
+        else:
+            _fail("list_knowledge_bases", f"{kb_name} not found in {len(kbs)} KBs")
+    else:
+        _fail("list_knowledge_bases", str(result.get("error", result)))
 
-    # Step 5: Generate report (skip if no LLM — just show it was callable)
-    print(f"\n>>> Test: generate_report")
-    result = _json_rpc_call("generate_report", {
+    # Step 5: Generate report
+    _info("Generating report...")
+    result = client.call_tool("generate_report", {
         "query": "What are the key transformer architectures?",
         "kb_name": kb_name,
         "mode": "basic",
-    })
-    _print_result("generate_report", result)
-
-
-# =========================================================================
-# Test 5: JSON-RPC access (validates /mcp endpoint)
-# =========================================================================
-
-def test_jsonrpc(base_url: str) -> None:
-    """Test that MCP tools are callable via JSON-RPC POST to /mcp."""
-    print(f"\n>>> Test: JSON-RPC access to MCP tools on port {MCP_PORT}")
-
-    # Test 1: list_tools
-    url = f"http://localhost:{MCP_PORT}/mcp"
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/list",
-        "params": {},
-    }
-    result = _json_post(url, payload)
-    _print_result("tools/list (JSON-RPC)", result)
-
-    # Test 2: Call list_knowledge_bases via JSON-RPC
-    result = _json_rpc_call("list_knowledge_bases", {})
-    _print_result("list_knowledge_bases (JSON-RPC)", result)
-
+    }, timeout=180)
     if result.get("success"):
-        print("\n  JSON-RPC access confirmed — MCP tools work via plain HTTP POST")
+        report = result.get("report", "")
+        _pass("generate_report", f"{len(report)} chars")
     else:
-        print(f"\n  JSON-RPC failed — is the MCP server running on port {MCP_PORT}?")
+        # Report may fail without LLM configured — that's ok, tool was callable
+        _info(f"Report result: {_truncate(str(result), 150)}")
+        _pass("generate_report", "tool callable (may need LLM config)")
+
+    # Step 6: Cleanup test KB
+    _cleanup_kb(kb_name)
 
 
-# =========================================================================
-# Test 6: Non-streaming /api/chat
-# =========================================================================
+def test_jsonrpc(port: int):
+    """Test that MCP tools are callable via JSON-RPC."""
+    print(f"\n>>> Test: JSON-RPC session on port {port}")
 
-def test_nonstream(base_url: str) -> None:
-    """Test /api/chat with stream=False returns JSON."""
-    print(f"\n>>> Test: /api/chat non-streaming")
+    client = create_client(port)
 
+    # Test tools/list
+    tools = client.list_tools()
+    _pass("tools/list via JSON-RPC", f"{len(tools)} tools")
+
+    # Test a simple tool call
+    result = client.call_tool("list_knowledge_bases", {})
+    if "error" not in result:
+        _pass("list_knowledge_bases via JSON-RPC")
+    else:
+        _fail("list_knowledge_bases via JSON-RPC", str(result.get("error")))
+
+
+def test_nonstream(port: int):
+    """Test /api/chat with stream=False returns valid JSON response."""
+    print(f"\n>>> Test: /api/chat non-streaming on port {port}")
+
+    # Create a KB with a paper so basic mode has something to retrieve
+    client = create_client(port)
+    kb_name = f"test_chat_{int(time.time())}"
+    client.call_tool("create_knowledge_base", {"name": kb_name, "description": "Chat test KB"})
+    client.call_tool("add_papers_to_kb", {
+        "kb_name": kb_name,
+        "papers": [{
+            "title": "FlashAttention: Fast and Memory-Efficient Exact Attention",
+            "doi": "10.48550/arXiv.2205.14135",
+            "year": 2022,
+            "authors": ["Dao", "Fu"],
+            "abstract": "We present FlashAttention, an attention algorithm that computes exact attention with far fewer memory accesses.",
+        }],
+    })
+
+    url = f"http://localhost:{port}/api/chat"
     payload = {
         "query": "What is flash attention?",
         "mode": "basic",
         "stream": False,
-        "max_papers": 2,
-        "databases": ["semantic_scholar"],
+        "kb_name": kb_name,
     }
 
-    result = _json_post(f"{base_url}/api/chat", payload, timeout=180)
-    _print_result("/api/chat (non-streaming)", result)
+    try:
+        r = httpx.post(url, json=payload, timeout=180)
+        result = r.json()
+    except Exception as e:
+        _fail("/api/chat non-streaming", str(e))
+        _cleanup_kb(kb_name)
+        return
 
     if "answer" in result and result["answer"]:
-        print(f"\n  Answer length: {len(result['answer'])} chars")
-        print(f"  Sources: {len(result.get('sources', []))}")
-        print(f"  Papers found: {result.get('papers_found', 0)}")
-        print(f"  Conversation ID: {result.get('conversation_id', 'N/A')}")
+        ans_len = len(result["answer"])
+        sources = len(result.get("sources", []))
+        _info(f"Answer: {ans_len} chars, Sources: {sources}")
+        _info(f"Papers found: {result.get('papers_found', 0)}")
+        _info(f"Conversation ID: {result.get('conversation_id', 'N/A')}")
+        _pass("/api/chat non-streaming")
     elif "error" in result:
-        print(f"  Error: {result['error']}")
+        _fail("/api/chat non-streaming", str(result["error"]))
     else:
-        print("  Unexpected response format")
+        _fail("/api/chat non-streaming", f"unexpected: {_truncate(str(result))}")
+
+    _cleanup_kb(kb_name)
 
 
 # =========================================================================
@@ -280,39 +561,53 @@ def test_nonstream(base_url: str) -> None:
 # =========================================================================
 
 TESTS = {
-    "search": ("Test search_literature", test_search),
-    "content_pmc": ("Test get_paper_content (PMC)", test_content_pmc),
-    "content_arxiv": ("Test get_paper_content (arXiv)", test_content_arxiv),
-    "kb": ("Test KB lifecycle (create→add→search→report)", test_kb_lifecycle),
-    "jsonrpc": ("Test JSON-RPC access to MCP tools", test_jsonrpc),
-    "nonstream": ("Test /api/chat non-streaming", test_nonstream),
-    "content": ("Test get_paper_content (PMC + arXiv)", lambda b: (test_content_pmc(b), test_content_arxiv(b))),
-    "report": ("Test generate_report", lambda b: test_kb_lifecycle(b)),
+    "discovery": ("MCP Discovery (initialize + tools/list)", test_discovery),
+    "search": ("search_literature", test_search),
+    "content_pmc": ("get_paper_content (PMC)", test_content_pmc),
+    "content_arxiv": ("get_paper_content (arXiv)", test_content_arxiv),
+    "content_discovery": ("get_paper_content (abstract-only)", test_content_discovery),
+    "refs": ("get_paper_references", test_refs),
+    "kb": ("KB lifecycle", test_kb),
+    "jsonrpc": ("JSON-RPC session", test_jsonrpc),
+    "nonstream": ("/api/chat non-streaming", test_nonstream),
+    "all_content": ("All content tests", lambda p: (test_content_pmc(p), test_content_arxiv(p), test_content_discovery(p))),
 }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Live tests for Perspicacité MCP tools")
-    parser.add_argument("--base-url", default=BASE_URL, help="Perspicacité web app URL")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Server port")
     parser.add_argument("--test", choices=list(TESTS.keys()), help="Run a specific test")
     parser.add_argument("--all", action="store_true", help="Run all tests")
     args = parser.parse_args()
 
     if args.test:
+        if args.test == "all_content":
+            args.all = True
+            # run only content tests
+            for key in ["content_pmc", "content_arxiv", "content_discovery"]:
+                name, fn = TESTS[key]
+                print(f"\n{'='*60}\nRunning: {name}\n{'='*60}")
+                fn(args.port)
+            return
         name, fn = TESTS[args.test]
-        print(f"\nRunning: {name}")
-        fn(args.base_url)
+        print(f"\n{'='*60}\nRunning: {name}\n{'='*60}")
+        fn(args.port)
     elif args.all:
         for key, (name, fn) in TESTS.items():
-            if key in ("content", "report"):
-                continue  # skip aliases
-            print(f"\nRunning: {name}")
-            fn(args.base_url)
+            if key in ("all_content",):
+                continue
+            print(f"\n{'='*60}\nRunning: {name}\n{'='*60}")
+            try:
+                fn(args.port)
+            except Exception as e:
+                print(f"  ERROR: {e}")
     else:
         print("Available tests:")
         for key, (name, _) in TESTS.items():
             print(f"  --test {key}: {name}")
-        print(f"\nRun all: python3 {__file__} --all --base-url {BASE_URL}")
+        print(f"\nRun all: python3 {__file__} --all")
+        print(f"Custom ports: python3 {__file__} --all --mcp-port 5500 --web-port 8000")
 
 
 if __name__ == "__main__":

@@ -350,7 +350,7 @@ async def chat_endpoint(request: ChatRequest):
         return {
             "answer": answer,
             "sources": sources,
-            "papers_found": papers_found,
+            "papers_found": papers_found or len(sources),
             "conversation_id": conversation_id,
         }
 

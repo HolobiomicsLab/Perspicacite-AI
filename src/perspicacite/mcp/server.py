@@ -51,6 +51,7 @@ class MCPState:
         self.config: Any = None
         self.llm_client: Any = None
         self.pdf_parser: Any = None
+        self.tool_registry: Any = None
         self.initialized: bool = False
 
     async def initialize(self, config: Any) -> None:
@@ -88,6 +89,10 @@ class MCPState:
 
         # PDF parser
         self.pdf_parser = PDFParser()
+
+        # Tool registry for RAG engine
+        from perspicacite.rag.tools import ToolRegistry
+        self.tool_registry = ToolRegistry()
 
         self.initialized = True
         logger.info("mcp_state_initialized")
@@ -702,6 +707,7 @@ async def generate_report(
     try:
         from perspicacite.models.kb import chroma_collection_name_for_kb
         from perspicacite.rag.engine import RAGEngine
+        from perspicacite.models.rag import RAGRequest, RAGMode
 
         collection_name = chroma_collection_name_for_kb(kb_name)
         kb_meta = await state.session_store.get_kb_metadata(kb_name)
@@ -712,6 +718,7 @@ async def generate_report(
             llm_client=state.llm_client,
             vector_store=state.vector_store,
             embedding_provider=state.embedding_provider,
+            tool_registry=state.tool_registry,
             config=state.config,
         )
 
@@ -719,20 +726,27 @@ async def generate_report(
         report_text = ""
         sources: list[dict] = []
 
-        mode_map = {"basic": "basic", "advanced": "advanced", "profound": "profound"}
-        rag_mode = mode_map.get(mode, "advanced")
+        mode_map = {
+            "basic": RAGMode.BASIC,
+            "advanced": RAGMode.ADVANCED,
+            "profound": RAGMode.PROFOUND,
+        }
+        rag_mode = mode_map.get(mode, RAGMode.ADVANCED)
 
-        async for event in engine.query_stream(
+        rag_request = RAGRequest(
             query=query,
-            collection_name=collection_name,
+            kb_name=kb_name,
             mode=rag_mode,
-            top_k=max_papers,
-        ):
-            event_type = event.get("type", "")
-            if event_type == "answer":
-                report_text = event.get("content", "")
-            elif event_type == "source":
-                src = event.get("source", {})
+        )
+
+        async for event in engine.query_stream(rag_request):
+            if event.event == "content":
+                import json as _json
+                payload = _json.loads(event.data)
+                report_text += payload.get("delta", "")
+            elif event.event == "source":
+                import json as _json
+                src = _json.loads(event.data)
                 sources.append({
                     "title": src.get("title"),
                     "authors": src.get("authors"),
