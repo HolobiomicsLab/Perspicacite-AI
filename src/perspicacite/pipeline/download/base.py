@@ -41,6 +41,8 @@ class PaperDiscovery:
     oa_url: str | None = None
     abstract: str | None = None
     title: str | None = None
+    authors: list[str] | None = None
+    year: int | None = None
     is_oa: bool = False
     work_type: str | None = None  # "article", "preprint", etc.
     unpaywall_pdf_url: str | None = None

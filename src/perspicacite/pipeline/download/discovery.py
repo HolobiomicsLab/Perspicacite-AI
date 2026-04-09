@@ -139,6 +139,17 @@ async def discover_paper_sources(
             disc.title = work.get("title")
             disc.is_oa = (work.get("open_access") or {}).get("is_oa", False)
             disc.work_type = work.get("type")
+            # Authors
+            authorships = work.get("authorships") or []
+            disc.authors = [
+                (a.get("author") or {}).get("display_name")
+                for a in authorships
+                if (a.get("author") or {}).get("display_name")
+            ] or None
+            # Year
+            py = work.get("publication_year")
+            if py:
+                disc.year = int(py)
 
             ids = work.get("ids") or {}
             # OpenAlex may return PMCID with or without "PMC" prefix

@@ -1,11 +1,12 @@
 """Unified paper content retrieval pipeline.
 
 Priority flow:
-  1. DISCOVERY  -- OpenAlex + Unpaywall → PMCID, arXiv ID, OA URLs, abstract
-  2. STRUCTURED -- PMC JATS XML, then arXiv HTML (sections + references)
-  3. PDF TEXT   -- Publisher OA, arXiv PDF, Unpaywall, publisher APIs, alternative
-  4. ABSTRACT   -- From discovery metadata
-  5. DISCARD    -- No content available
+  1. DISCOVERY     -- OpenAlex + Unpaywall → metadata, PMCID, arXiv ID, OA URLs
+  2. ALTERNATIVE   -- User-configured endpoint (if set)
+  3. STRUCTURED    -- PMC JATS XML, then arXiv HTML (sections + references)
+  4. PDF TEXT      -- Publisher OA, arXiv PDF, Unpaywall, publisher APIs
+  5. ABSTRACT      -- From discovery metadata
+  6. DISCARD       -- No content available
 """
 
 from __future__ import annotations
@@ -122,7 +123,30 @@ async def retrieve_paper_content(
             has_abstract=disc.abstract is not None,
         )
 
-        # ── STEP 2: STRUCTURED FULL TEXT ────────────────────────────────
+        # ── STEP 2: ALTERNATIVE ENDPOINT (before structured/PDF) ──────
+        if alternative_endpoint and pdf_parser is not None:
+            alt_pdf = await download_from_alternative_endpoint(
+                clean, alternative_endpoint, client
+            )
+            if alt_pdf:
+                text = await _parse_pdf_bytes(alt_pdf, pdf_parser)
+                if text:
+                    return PaperContent(
+                        success=True,
+                        doi=clean,
+                        content_type="full_text",
+                        full_text=text,
+                        abstract=disc.abstract,
+                        content_source="alternative",
+                        metadata={
+                            "title": disc.title,
+                            "authors": disc.authors,
+                            "year": disc.year,
+                            "doi": clean,
+                        },
+                    )
+
+        # ── STEP 3: STRUCTURED FULL TEXT ────────────────────────────────
 
         # 2a. PMC JATS XML (sections + references)
         if disc.pmcid:
@@ -169,7 +193,6 @@ async def retrieve_paper_content(
                 url,
                 client,
                 disc,
-                alternative_endpoint=alternative_endpoint,
                 unpaywall_email=unpaywall_email,
                 wiley_tdm_token=wiley_tdm_token,
                 aaas_api_key=aaas_api_key,
@@ -233,7 +256,6 @@ async def _try_pdf_sources(
     client: httpx.AsyncClient,
     disc: PaperDiscovery,
     *,
-    alternative_endpoint: str | None = None,
     unpaywall_email: str | None = None,
     wiley_tdm_token: str | None = None,
     aaas_api_key: str | None = None,
@@ -297,12 +319,6 @@ async def _try_pdf_sources(
         pdf = await download_from_wiley_tdm(doi, wiley_tdm_token, client)
         if pdf:
             return pdf, "wiley_tdm_pdf"
-
-    # 3f. Alternative endpoint
-    if alternative_endpoint:
-        pdf = await download_from_alternative_endpoint(doi, alternative_endpoint, client)
-        if pdf:
-            return pdf, "alternative"
 
     return None
 

@@ -105,6 +105,30 @@ def entries_to_papers(entries: list[dict[str, Any]]) -> list[Paper]:
     return papers
 
 
+def _parse_local_file_field(file_value: str | None) -> Path | None:
+    """Extract a local file path from a BibTeX ``file`` field.
+
+    Handles Zotero format: ``{Description:/path/to/file.pdf:application/pdf}``
+    Handles Mendeley format: ``{:C\\:\\Users\\...\\file.pdf:pdf}``
+    Handles plain path: ``/path/to/file.pdf``
+    """
+    if not file_value:
+        return None
+    v = file_value.strip().strip("{}")
+    # Zotero/Mendeley: colon-separated segments, path is middle one
+    if ":" in v:
+        parts = v.split(":")
+        for part in parts:
+            p = Path(part.strip())
+            if p.suffix.lower() == ".pdf" and p.exists():
+                return p
+    # Plain path
+    p = Path(v)
+    if p.suffix.lower() == ".pdf" and p.exists():
+        return p
+    return None
+
+
 async def enrich_papers_with_pdf(
     papers: list[Paper],
     *,
@@ -118,8 +142,20 @@ async def enrich_papers_with_pdf(
     springer_api_key: str | None = None,
 ) -> dict[str, int]:
     """Download content and set paper.full_text where possible."""
-    stats = {"attempted": 0, "success": 0, "failed": 0, "skipped_no_doi": 0}
+    stats = {"attempted": 0, "success": 0, "failed": 0, "skipped_no_doi": 0, "local_pdf": 0}
     for paper in papers:
+        # Try local PDF first (BibTeX ``file`` field mapped to pdf_url)
+        local_path = _parse_local_file_field(paper.pdf_url)
+        if local_path:
+            try:
+                result = await pdf_parser.parse(local_path)
+                if result.text:
+                    paper.full_text = result.text
+                    stats["local_pdf"] += 1
+                    continue
+            except Exception as ex:
+                logger.warning("local_pdf_parse_failed", path=str(local_path), error=str(ex))
+
         if not paper.doi:
             stats["skipped_no_doi"] += 1
             continue

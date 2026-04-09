@@ -102,6 +102,7 @@ class PaperData(BaseModel):
     doi: Optional[str] = None
     abstract: Optional[str] = None
     citations: Optional[int] = None
+    file: Optional[str] = Field(default=None, description="Local PDF path (Zotero/Mendeley export)")
 
 
 class KBAddPapersRequest(BaseModel):
@@ -852,20 +853,42 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
             source=PaperSource.WEB_SEARCH,
         )
 
-        # Try to download full text if DOI available
+        # Try local PDF first (e.g. from Zotero/Mendeley export)
         full_text = None
-        if pd.doi and app_state.pdf_downloader and app_state.pdf_parser:
+        if pd.file:
+            local_path = Path(pd.file)
+            if local_path.suffix.lower() == ".pdf" and local_path.exists():
+                try:
+                    parsed = await app_state.pdf_parser.parse(local_path)
+                    if parsed.text:
+                        full_text = parsed.text
+                        download_stats["success"] += 1
+                        logger.info(f"Parsed local PDF for: {pd.title[:50]}...")
+                except Exception as e:
+                    logger.warning(f"Local PDF parse failed for {pd.title[:50]}: {e}")
+
+        # Try to download full text if DOI available and no local PDF
+        if full_text is None and pd.doi and app_state.pdf_downloader and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
                 result = await retrieve_paper_content(pd.doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
                 if result.success and result.full_text:
                     full_text = result.full_text
                     download_stats["success"] += 1
-                    logger.info(f"Downloaded full text for: {pd.title[:50]}...")
+                    # Enrich paper metadata from discovery if original was placeholder
+                    meta = result.metadata or {}
+                    if meta.get("title") and paper.title.startswith("Reference"):
+                        paper.title = meta["title"]
+                    if meta.get("authors") and not paper.authors:
+                        from perspicacite.models.papers import Author
+                        paper.authors = [Author(name=a) for a in meta["authors"]]
+                    if result.abstract and not paper.abstract:
+                        paper.abstract = result.abstract
+                    logger.info(f"Downloaded full text for: {paper.title[:50]}...")
                 else:
                     download_stats["failed"] += 1
             except Exception as e:
-                logger.warning(f"PDF download failed for {pd.title[:50]}: {e}")
+                logger.warning(f"PDF download failed for {paper.title[:50]}: {e}")
                 download_stats["failed"] += 1
 
         paper.full_text = full_text
@@ -910,6 +933,62 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     }
 
 
+@app.get("/api/kb/{name}/chunks")
+async def get_kb_chunks(
+    name: str,
+    limit: int = 20,
+    offset: int = 0,
+    paper_id: str | None = None,
+):
+    """Inspect raw chunks stored in a knowledge base (paginated)."""
+    if not app_state.session_store:
+        return {"error": "System not initialized"}
+
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if not kb:
+        return {"error": f"Knowledge base '{name}' not found"}
+
+    limit = max(1, min(100, limit))
+    offset = max(0, offset)
+
+    coll = app_state.vector_store.client.get_collection(name=kb.collection_name)
+    total = coll.count()
+
+    where_filter = {"paper_id": paper_id} if paper_id else None
+    result = coll.get(
+        limit=limit,
+        offset=offset,
+        where=where_filter,
+        include=["documents", "metadatas"],
+    )
+
+    chunks = []
+    for i, chunk_id in enumerate(result["ids"]):
+        meta = result["metadatas"][i] if result["metadatas"] else {}
+        doc = result["documents"][i] if result["documents"] else ""
+        chunks.append({
+            "id": chunk_id,
+            "text": doc,
+            "paper_id": meta.get("paper_id"),
+            "chunk_index": meta.get("chunk_index"),
+            "section": meta.get("section"),
+            "title": meta.get("title"),
+            "authors": meta.get("authors"),
+            "year": meta.get("year"),
+            "doi": meta.get("doi"),
+            "source": meta.get("source"),
+        })
+
+    return {
+        "kb": name,
+        "total_chunks": total,
+        "offset": offset,
+        "limit": limit,
+        "returned": len(chunks),
+        "chunks": chunks,
+    }
+
+
 @app.post("/api/kb/{name}/bibtex")
 async def add_bibtex_to_kb(name: str, request: Request):
     """Upload a BibTeX file and add papers to a knowledge base."""
@@ -950,7 +1029,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
 
     # Process papers with deduplication and PDF download
     papers_to_add = []
-    download_stats = {"attempted": 0, "success": 0, "failed": 0}
+    download_stats = {"attempted": 0, "success": 0, "failed": 0, "local_pdf": 0}
 
     pdf_config = app_state.config.pdf_download if app_state.config else None
     pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
@@ -967,6 +1046,19 @@ async def add_bibtex_to_kb(name: str, request: Request):
         # Ensure source is set to BIBTEX
         paper.source = PaperSource.BIBTEX
 
+        # Try local PDF first (BibTeX ``file`` field mapped to pdf_url)
+        local_path = Path(paper.pdf_url) if paper.pdf_url else None
+        if local_path and local_path.suffix.lower() == ".pdf" and local_path.exists():
+            try:
+                parsed = await app_state.pdf_parser.parse(local_path)
+                if parsed.text:
+                    paper.full_text = parsed.text
+                    download_stats["local_pdf"] += 1
+                    papers_to_add.append(paper)
+                    continue
+            except Exception as e:
+                logger.warning(f"Local PDF parse failed for {paper.title[:50]}: {e}")
+
         # Try to download full text if DOI available
         if paper.doi and app_state.pdf_parser:
             download_stats["attempted"] += 1
@@ -975,6 +1067,15 @@ async def add_bibtex_to_kb(name: str, request: Request):
                 if result.success and result.full_text:
                     paper.full_text = result.full_text
                     download_stats["success"] += 1
+                    # Enrich paper metadata from discovery
+                    meta = result.metadata or {}
+                    if meta.get("title") and not paper.title:
+                        paper.title = meta["title"]
+                    if meta.get("authors") and not paper.authors:
+                        from perspicacite.models.papers import Author
+                        paper.authors = [Author(name=a) for a in meta["authors"]]
+                    if result.abstract and not paper.abstract:
+                        paper.abstract = result.abstract
             except Exception as e:
                 logger.warning(f"Content download failed for {paper.title[:50]}: {e}")
                 download_stats["failed"] += 1
