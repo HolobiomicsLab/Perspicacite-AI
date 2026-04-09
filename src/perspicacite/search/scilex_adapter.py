@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ class SciLExAdapter:
         year_min: int | None = None,
         year_max: int | None = None,
         apis: list[str] | None = None,
+        article_type: str | None = None,
     ) -> list[Paper]:
         """Search academic databases via SciLEx."""
         if not self._scilex_available:
@@ -55,6 +57,7 @@ class SciLExAdapter:
             year_min,
             year_max,
             apis,
+            article_type,
         )
 
     def _scilex_search_sync(
@@ -64,6 +67,7 @@ class SciLExAdapter:
         year_min: int | None,
         year_max: int | None,
         apis: list[str] | None,
+        article_type: str | None = None,
     ) -> list[Paper]:
         """Synchronous SciLEx search."""
         from scilex.crawlers.collector_collection import CollectCollection
@@ -104,7 +108,7 @@ class SciLExAdapter:
         if apis is None:
             apis = ["semantic_scholar", "openalex", "pubmed"]
 
-        # Use year range if provided
+        # Use year range if provided; default to last 3 years
         if year_min and year_max:
             years = [year_min, year_max]
         elif year_max:
@@ -112,7 +116,8 @@ class SciLExAdapter:
         elif year_min:
             years = [year_min, year_min]
         else:
-            years = [2024, 2024]
+            current_year = datetime.now().year
+            years = [current_year - 3, current_year]
         capitalized_apis = [api_name_map.get(a, a) for a in apis]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -234,12 +239,57 @@ class SciLExAdapter:
                 # Convert to Paper models
                 papers = self._map_dataframe_to_papers(df_deduped)
 
+                # Post-filter by article_type
+                if article_type:
+                    papers = self._filter_by_article_type(papers, article_type)
+
                 logger.info("scilex_collection_complete", query=query, found=len(papers))
                 return papers[:max_results]
 
             except Exception as e:
                 logger.error("scilex_collection_error", error=str(e))
                 raise
+
+    def _filter_by_article_type(self, papers: list[Paper], article_type: str) -> list[Paper]:
+        """Post-filter papers by article type.
+
+        Uses metadata.type (from SciLex itemType) when available, falls back to
+        title/journal keyword heuristics.
+        """
+        type_lower = article_type.lower().strip()
+
+        # Map user-friendly type names to Zotero itemType values
+        type_map = {
+            "review": ["journalarticle"],  # Reviews are journalArticle + keyword match
+            "article": ["journalarticle"],
+            "conference": ["conferencepaper", "proceedings-article"],
+            "preprint": ["preprint", "manuscript"],
+        }
+        match_types = type_map.get(type_lower, [type_lower])
+
+        # Keyword heuristics for reviews
+        review_kw = {"review", "reviews", "survey", "surveys", "systematic review"}
+
+        filtered = []
+        for p in papers:
+            meta_type = (p.metadata.get("type") or "").lower()
+
+            # For "review": match journalArticle + review keyword
+            if type_lower == "review":
+                if any(t in meta_type for t in match_types):
+                    title_lower = (p.title or "").lower()
+                    journal_lower = (p.journal or "").lower()
+                    if any(kw in title_lower for kw in review_kw) or any(
+                        kw in journal_lower for kw in review_kw
+                    ):
+                        filtered.append(p)
+                continue
+
+            # For other types: match by itemType
+            if any(t in meta_type for t in match_types):
+                filtered.append(p)
+
+        return filtered
 
     def _build_api_config(self, apis: list[str]) -> dict[str, Any]:
         """Build API configuration dict for SciLEx.
@@ -386,7 +436,10 @@ class SciLExAdapter:
             citation_count=citation_count,
             source=PaperSource.SCILEX,
             keywords=[t.strip() for t in safe_str(row.get("tags")).split(", ")] if row.get("tags") else [],
-            metadata={"archive": safe_str(row.get("archive"), "unknown")},
+            metadata={
+                "archive": safe_str(row.get("archive"), "unknown"),
+                "type": safe_str(row.get("itemType")) or safe_str(row.get("type")),
+            },
         )
 
 

@@ -295,9 +295,9 @@ class TestRetrievePaperContent:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=[mock_oa_response, mock_up_response])
 
-        # Mock europepmc to return structured text
+        # Mock PMC to return structured text
         with patch(
-            "perspicacite.pipeline.download.unified.get_fulltext_from_europepmc",
+            "perspicacite.pipeline.download.unified.get_fulltext_from_pmc",
             new_callable=AsyncMock,
             return_value=("This is a long full text from PMC " * 20, {"Introduction": "Some intro text"}),
         ), patch("perspicacite.pipeline.download.discovery._CACHE_DIR", tmp_path):

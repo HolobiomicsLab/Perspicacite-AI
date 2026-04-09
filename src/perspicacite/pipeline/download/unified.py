@@ -17,7 +17,7 @@ import httpx
 from perspicacite.logging import get_logger
 from .base import PaperContent, PaperDiscovery, PDFDownloader
 from .discovery import discover_paper_sources
-from .europepmc import get_fulltext_from_europepmc
+from .pmc import get_fulltext_from_pmc
 from .arxiv import (
     download_from_arxiv,
     fetch_arxiv_html,
@@ -126,7 +126,7 @@ async def retrieve_paper_content(
 
         # 2a. PMC JATS XML (sections + references)
         if disc.pmcid:
-            text, sections = await get_fulltext_from_europepmc(clean, client)
+            text, sections = await get_fulltext_from_pmc(clean, client)
             if text and len(text.strip()) > 200:
                 refs = _load_cached_references(clean)
                 return PaperContent(

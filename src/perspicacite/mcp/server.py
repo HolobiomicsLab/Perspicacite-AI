@@ -165,6 +165,7 @@ async def search_literature(
             year_min=year_min,
             year_max=year_max,
             apis=databases or ["semantic_scholar", "openalex", "pubmed"],
+            article_type=article_type,
         )
 
         # Convert Paper models to dicts
@@ -187,20 +188,6 @@ async def search_literature(
                     for a in p.authors
                 ]
             results.append(pd)
-
-        # Post-filter by article_type if requested
-        if article_type and article_type.lower() == "review":
-            # Heuristic: papers with "review" in title or journal
-            review_kw = {"review", "reviews", "survey", "surveys"}
-            filtered = []
-            for r in results:
-                title_lower = (r.get("title") or "").lower()
-                journal_lower = (r.get("journal") or "").lower()
-                if any(kw in title_lower for kw in review_kw) or any(
-                    kw in journal_lower for kw in review_kw
-                ):
-                    filtered.append(r)
-            results = filtered
 
         logger.info("mcp_search_literature", query=query, results=len(results))
         return _json_ok({"query": query, "total_results": len(results), "papers": results})
@@ -303,8 +290,8 @@ async def get_paper_references(
     """
     Get the list of cited references from a paper.
 
-    Parses JATS XML reference list from PubMed Central. Only works
-    for papers available in PMC Open Access.
+    Extracts references from JATS XML when available via PMC Open Access.
+    Falls back to discovery metadata for non-PMC papers.
 
     Args:
         doi: Paper DOI
@@ -317,28 +304,44 @@ async def get_paper_references(
         return state
 
     import httpx
-    from perspicacite.pipeline.download.europepmc import get_fulltext_from_europepmc
 
     try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            full_text, _sections = await get_fulltext_from_europepmc(doi, http_client=client)
-
-        if not full_text:
-            return _json_error(f"Paper not available in PMC: {doi}")
-
-        # Try to extract references from cached sections JSON
         from perspicacite.pipeline.download.unified import _load_cached_references
 
+        # Try loading cached refs first (from a previous content fetch)
         refs = _load_cached_references(doi)
         if refs:
             return _json_ok({"doi": doi, "references": refs, "total": len(refs)})
 
-        # No cached refs yet — extraction will be added later
+        # No cached refs — fetch content through unified pipeline to populate cache
+        from perspicacite.pipeline.download import retrieve_paper_content
+
+        pdf_config = getattr(state.config, "pdf_download", None)
+        pdf_kwargs = {}
+        if pdf_config:
+            for key in (
+                "unpaywall_email", "wiley_tdm_token", "elsevier_api_key",
+                "aaas_api_key", "rsc_api_key", "springer_api_key",
+            ):
+                val = getattr(pdf_config, key, None)
+                if val:
+                    pdf_kwargs[key] = val
+
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            await retrieve_paper_content(
+                doi, http_client=client, pdf_parser=state.pdf_parser, **pdf_kwargs,
+            )
+
+        # Try cache again after content fetch
+        refs = _load_cached_references(doi)
+        if refs:
+            return _json_ok({"doi": doi, "references": refs, "total": len(refs)})
+
         return _json_ok({
             "doi": doi,
             "references": [],
             "total": 0,
-            "note": "Reference extraction from JATS XML not yet implemented",
+            "note": "References not available — JATS XML extraction only works for PMC Open Access papers",
         })
 
     except Exception as e:

@@ -1,6 +1,6 @@
-"""Europe PMC — full-text via PMCID using PMC AWS Open Data.
+"""PMC Open Access — full-text and references via PMC AWS Open Data.
 
-Resolution: Europe PMC search API maps DOI → PMCID.
+DOI → PMCID resolution via Europe PMC search API.
 Content: PMC AWS Open Data (S3) provides direct access to JATS XML and
 plain text — free, no login, no API key.
 
@@ -8,7 +8,7 @@ plain text — free, no login, no API key.
   https://pmc-oa-opendata.s3.amazonaws.com/PMC3041641.1/PMC3041641.1.xml
 
 Fallback order after PMCID resolution:
-1. S3 JATS XML — structured sections, best quality
+1. S3 JATS XML — structured sections + references, best quality
 2. S3 plain text — guaranteed content if XML is missing
 """
 
@@ -22,7 +22,7 @@ import httpx
 
 from perspicacite.logging import get_logger
 
-logger = get_logger("perspicacite.pipeline.download.europepmc")
+logger = get_logger("perspicacite.pipeline.download.pmc")
 
 # ---------------------------------------------------------------------------
 # File cache
@@ -37,6 +37,10 @@ def _cache_path(pmcid: str) -> Path:
 
 def _cache_sections_path(pmcid: str) -> Path:
     return _CACHE_DIR / f"{pmcid}_sections.json"
+
+
+def _cache_refs_path(pmcid: str) -> Path:
+    return _CACHE_DIR / f"{pmcid}_refs.json"
 
 
 def _read_cache(pmcid: str) -> tuple[str | None, dict[str, str] | None]:
@@ -58,14 +62,32 @@ def _read_cache(pmcid: str) -> tuple[str | None, dict[str, str] | None]:
     return text, sections
 
 
-def _write_cache(pmcid: str, text: str, sections: dict[str, str] | None) -> None:
-    """Persist text + sections to disk."""
+def _write_cache(
+    pmcid: str,
+    text: str,
+    sections: dict[str, str] | None,
+    refs: list[dict] | None = None,
+    doi: str | None = None,
+) -> None:
+    """Persist text + sections + refs to disk."""
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _cache_path(pmcid).write_text(text, encoding="utf-8")
     if sections:
         _cache_sections_path(pmcid).write_text(
             json.dumps(sections, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    if refs:
+        refs_json = json.dumps(refs, ensure_ascii=False, indent=2)
+        # Write by PMCID
+        _cache_refs_path(pmcid).write_text(refs_json, encoding="utf-8")
+        # Also write by DOI so unified pipeline can find it
+        if doi:
+            clean_doi = doi.strip().lower()
+            for prefix in ("https://doi.org/", "http://doi.org/"):
+                if clean_doi.startswith(prefix):
+                    clean_doi = clean_doi[len(prefix):]
+            doi_refs_path = _CACHE_DIR / f"{clean_doi.replace('/', '_')}_refs.json"
+            doi_refs_path.write_text(refs_json, encoding="utf-8")
     logger.info("pmc_cache_write", pmcid=pmcid, text_length=len(text))
 
 # ---------------------------------------------------------------------------
@@ -206,6 +228,99 @@ def _extract_sections_from_xml(xml_bytes: bytes) -> dict[str, str] | None:
     return sections if sections else None
 
 
+def _extract_references_from_xml(xml_bytes: bytes) -> list[dict] | None:
+    """Extract references from JATS XML <ref-list>.
+
+    Returns a list of dicts with keys: doi, title, authors, year, journal, text.
+    """
+    try:
+        root = ElementTree.fromstring(xml_bytes)
+    except ElementTree.ParseError:
+        return None
+
+    ns = ""
+    if "}" in root.tag:
+        ns = root.tag.split("}")[0] + "}"
+
+    # Find <ref-list> — can be under <back> or directly under <article>
+    ref_list = root.find(f"{ns}back/{ns}ref-list")
+    if ref_list is None:
+        ref_list = root.find(f".//{ns}ref-list")
+    if ref_list is None:
+        return None
+
+    refs: list[dict] = []
+    for ref_el in ref_list.findall(f"{ns}ref"):
+        entry: dict = {}
+
+        # Try <mixed-citation> first (richer), then <element-citation>
+        citation = ref_el.find(f"{ns}mixed-citation")
+        if citation is None:
+            citation = ref_el.find(f"{ns}element-citation")
+        if citation is None:
+            # Fallback: grab all text from the ref element
+            text = "".join(ref_el.itertext()).strip()
+            if text:
+                entry["text"] = text
+                refs.append(entry)
+            continue
+
+        # Extract DOI from <ext-link> or <pub-id>
+        for ext in citation.findall(f".//{ns}ext-link"):
+            href = ext.get("xlink:href", ext.get("href", ""))
+            if not href:
+                href = (ext.text or "").strip()
+            if "doi.org/" in href:
+                entry["doi"] = href.split("doi.org/")[-1]
+                break
+        if "doi" not in entry:
+            for pub_id in citation.findall(f".//{ns}pub-id"):
+                if (pub_id.get("pub-id-type") or "") == "doi" and pub_id.text:
+                    entry["doi"] = pub_id.text.strip()
+                    break
+
+        # Extract title from <article-title>
+        title_el = citation.find(f"{ns}article-title")
+        if title_el is not None:
+            entry["title"] = "".join(title_el.itertext()).strip()
+
+        # Extract source/journal
+        source_el = citation.find(f"{ns}source")
+        if source_el is not None and source_el.text:
+            entry["journal"] = source_el.text.strip()
+
+        # Extract year
+        year_el = citation.find(f"{ns}year")
+        if year_el is not None and year_el.text:
+            entry["year"] = year_el.text.strip()
+
+        # Extract authors
+        authors: list[str] = []
+        for name_el in citation.findall(f".//{ns}name"):
+            surname = name_el.find(f"{ns}surname")
+            given = name_el.find(f"{ns}given-names")
+            parts = []
+            if given is not None and given.text:
+                parts.append(given.text.strip())
+            if surname is not None and surname.text:
+                parts.append(surname.text.strip())
+            if parts:
+                authors.append(" ".join(parts))
+        if authors:
+            entry["authors"] = authors
+
+        # Fallback full text of the citation
+        if "title" not in entry:
+            text = "".join(citation.itertext()).strip()
+            if text:
+                entry["text"] = text
+
+        if entry:
+            refs.append(entry)
+
+    return refs if refs else None
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -244,7 +359,7 @@ async def _resolve_pmcid(
     return str(pmcid).strip()
 
 
-async def get_fulltext_from_europepmc(
+async def get_fulltext_from_pmc(
     doi: str,
     http_client: httpx.AsyncClient | None = None,
 ) -> tuple[str | None, dict[str, str] | None]:
@@ -284,14 +399,16 @@ async def get_fulltext_from_europepmc(
                 sections = _extract_sections_from_xml(r_xml.content)
                 text = _extract_text_from_xml(r_xml.content)
                 if text and len(text) > 200:
+                    refs = _extract_references_from_xml(r_xml.content)
                     logger.info(
                         "pmc_s3_xml_success",
                         doi=clean,
                         pmcid=pmcid,
                         text_length=len(text),
                         sections=len(sections) if sections else 0,
+                        references=len(refs) if refs else 0,
                     )
-                    _write_cache(pmcid, text, sections)
+                    _write_cache(pmcid, text, sections, refs, doi=clean)
                     return text, sections
         except Exception as e:
             logger.info("pmc_s3_xml_failed", doi=clean, error=str(e))

@@ -344,8 +344,6 @@ async def chat_endpoint(request: ChatRequest):
                 sources.append(data.get("source", {}))
             elif event_type == "papers_found":
                 papers_found = data.get("count", 0)
-            elif event_type == "done":
-                break
 
         return {
             "answer": answer,

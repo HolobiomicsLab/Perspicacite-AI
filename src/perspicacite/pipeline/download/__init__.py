@@ -44,7 +44,7 @@ from . import rsc
 from . import springer
 from . import alternative
 from . import openalex_oa
-from . import europepmc
+from . import pmc
 
 __all__ = [
     # Unified pipeline (preferred)
@@ -71,5 +71,5 @@ __all__ = [
     "springer",
     "alternative",
     "openalex_oa",
-    "europepmc",
+    "pmc",
 ]
