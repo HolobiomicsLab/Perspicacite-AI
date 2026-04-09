@@ -286,15 +286,15 @@ class ChromaVectorStore:
         """Check if a paper already exists in the collection by paper_id."""
         try:
             coll = self.client.get_collection(name=collection)
-            # Query for any document with matching paper_id
-            results = coll.query(
-                query_texts=[""],  # Empty query
-                n_results=1,
+            # Use get() with metadata filter instead of query() to avoid
+            # ChromaDB's default embedding function (384-dim all-MiniLM-L6-v2)
+            # which conflicts with the OpenAI embeddings used in the collection.
+            results = coll.get(
                 where={"paper_id": paper_id},
                 include=[],
+                limit=1,
             )
-            # If any IDs returned, the paper exists
-            return bool(results["ids"] and len(results["ids"][0]) > 0)
+            return bool(results["ids"])
         except Exception as e:
             logger.error(
                 "paper_exists_check_failed",
