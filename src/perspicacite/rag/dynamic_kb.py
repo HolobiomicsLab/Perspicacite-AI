@@ -131,16 +131,29 @@ class DynamicKnowledgeBase:
         from perspicacite.models.documents import DocumentChunk, ChunkMetadata
         from perspicacite.rag.chunking import create_chunker, SimpleChunker
 
+        # Skip papers with no searchable content
+        has_full_text = bool(paper.full_text and paper.full_text.strip())
+        has_abstract = bool(paper.abstract and paper.abstract.strip()
+                           and paper.abstract.strip().lower() != "no abstract available")
+        if not has_full_text and not has_abstract:
+            logger.info(
+                "skip_paper_no_content",
+                paper_id=paper.id,
+                title=paper.title[:60] if paper.title else "",
+            )
+            return 0
+
         chunks: list[DocumentChunk] = []
 
-        # Create metadata chunk (always included)
+        # Create metadata chunk
+        abstract_display = paper.abstract or "No abstract available"
         metadata_text = f"""Title: {paper.title}
 Authors: {', '.join(str(a) for a in paper.authors)}
 Year: {paper.year or 'Unknown'}
 DOI: {paper.doi or 'Unknown'}
 
 Abstract:
-{paper.abstract or 'No abstract available'}"""
+{abstract_display}"""
 
         # Format authors as comma-separated string for metadata
         authors_str = ", ".join(str(a) for a in paper.authors) if paper.authors else None
