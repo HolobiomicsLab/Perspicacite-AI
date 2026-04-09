@@ -85,6 +85,7 @@ packages_to_use/
 !CONTRIBUTING.md
 !LICENSE
 !NOTICE
+!perspicacite_skills.md
 
 # Image files (except logo/screenshots)
 Untitled.png
@@ -111,3 +112,4 @@ chat_no_answer.png
 
 #project related files
 exposomics/
+create_exposomics_kb.py
