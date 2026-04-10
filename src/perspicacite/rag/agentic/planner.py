@@ -114,6 +114,9 @@ class ResearchPlanner:
         
         context = "\n".join(context_parts)
 
+        query_complexity = getattr(intent_result, "query_complexity", "simple")
+        query_complexity_source = getattr(intent_result, "query_complexity_source", "default")
+
         kb_rules = ""
         if active_kb_name:
             kb_rules = f"""
@@ -123,40 +126,60 @@ ACTIVE KNOWLEDGE BASE: The user selected curated KB "{active_kb_name}".
 - You SHOULD add step 2 as "literature_search" on that same core topic as a fallback when the KB is sparse (the system may skip step 2 automatically if KB retrieval is already sufficient).
 - Do not emit duplicate kb_search steps.
 """
+
+        composite_rules = ""
+        if query_complexity == "composite":
+            composite_rules = """
+
+QUERY COMPLEXITY: composite (multi-aspect, comparison, or pros/cons).
+For the FIRST wave of kb_search steps ONLY (when ACTIVE KNOWLEDGE BASE applies):
+- Emit 2–3 kb_search steps, each with "depends_on": [] (parallel), with DISTINCT tool_input.query strings.
+- Each sub-query MUST use ONLY words and phrases copied from the Original Query — no invented synonyms or new topics.
+- Example: "FBMN vs GNPS workflows" → separate kb_search queries for each side (minimal phrases from the query).
+- After that wave, use literature_search / answer as usual; set depends_on so later steps wait for ALL parallel kb steps when needed.
+"""
         
+        simple_search_rules = """
+SIMPLE query path (query complexity is simple — one focused topic, no explicit comparison):
+1. CLEAN THE QUERY: Strip conversational preamble ("what is", "tell me about", etc.).
+   Use ONLY terms from the Original Query. NEVER invent new terms.
+2. ONE SEARCH FIRST: The first search step must be the core topic with NOTHING appended.
+   Do NOT add "methodology", "review", "applications", or extra qualifiers.
+   - "what is feature based molecular networking and its application"
+     → search: "feature-based molecular networking" (NOT "...methodology", NOT "...review")
+   - "tell me about CRISPR gene editing" → search: "CRISPR gene editing"
+3. DO NOT OVER-DECOMPOSE: Do NOT pre-plan multiple parallel searches for broad simple queries.
+   One strong search beats several narrowed ones; replanning adds more if results are thin.
+4. Exception — genuinely distinct aspect only: if the user clearly asks for a second facet with different
+   search terms (rare for simple complexity), add ONE additional search for that facet — not parallel batches.
+"""
+
+        composite_search_rules = """
+COMPOSITE query path (query complexity is composite — see COMPOSITE block above):
+- Ignore the "one search first" and "do not over-decompose" rules for the initial kb_search wave.
+- Follow the COMPOSITE block: 2–3 parallel kb_search steps with distinct sub-queries from the Original Query only.
+- After that wave, prefer a single literature_search on the cleaned core topic unless the query clearly needs more.
+"""
+
+        mode_rules = composite_search_rules if query_complexity == "composite" else simple_search_rules
+
         prompt = f"""You are a research planner for a scientific research assistant. Create an effective research plan based on the user's query and intent.
 
 Original Query: "{query}"
 Classified Intent: {intent_result.intent.name} (confidence: {intent_result.confidence:.2f})
 Intent Reasoning: {intent_result.reasoning}
+Query complexity: {query_complexity} (detector: {query_complexity_source})
 Extracted Entities: {intent_result.entities}
 
-Available Tools: {available_tools}{kb_rules}
+Available Tools: {available_tools}{kb_rules}{composite_rules}
 
 {context}
 
 Your task is to create a research plan following the strategy below.
 
-SEARCH STRATEGY (follow this like a senior researcher would):
+SEARCH STRATEGY — apply the path that matches query complexity (stated above):
 
-1. CLEAN THE QUERY: Strip conversational preamble ("what is", "tell me about", etc.).
-   Use ONLY terms from the Original Query. NEVER invent new terms.
-
-2. ONE SEARCH FIRST: Your first search step must be the core topic with NOTHING appended.
-   Do NOT add "methodology", "review", "applications", or any qualifier.
-   One well-targeted search on the exact topic finds the original paper, reviews,
-   and related work — all of which contain the topic name.
-   - "what is feature based molecular networking and its application"
-     → search: "feature-based molecular networking" (NOT "...methodology", NOT "...review")
-   - "tell me about CRISPR gene editing" → search: "CRISPR gene editing"
-
-3. DO NOT OVER-DECOMPOSE: Do NOT pre-plan multiple parallel searches for broad queries.
-   A single search on the core topic covers more ground than several narrowed searches.
-   If the initial results are insufficient, the system will replan and add targeted searches.
-
-4. ONLY exception for a second search: if the user explicitly asks about a DISTINCT aspect
-   that would require genuinely different search terms (e.g., "compare X with Y",
-   "X and its effect on Z"). In that case, add ONE additional search for that specific aspect.
+{mode_rules.strip()}
 
 Step Types:
 - lotus_search: Natural products, chemical structures
@@ -258,15 +281,30 @@ Return JSON only (no markdown):
             else:
                 logger.info("Planner LLM response on failure: (none)")
             
-            return self._build_fallback_plan(query, intent_result, available_tools, e)
+            return self._build_fallback_plan(
+                query,
+                intent_result,
+                available_tools,
+                e,
+                active_kb_name=active_kb_name,
+                query_complexity=getattr(intent_result, "query_complexity", "simple"),
+            )
 
-    def _build_fallback_plan(self, query: str, intent_result, available_tools, error=None):
+    def _build_fallback_plan(
+        self,
+        query: str,
+        intent_result,
+        available_tools,
+        error=None,
+        active_kb_name: Optional[str] = None,
+        query_complexity: str = "simple",
+    ):
         """Build an intent-aware fallback plan when LLM planning fails."""
         from .intent import Intent
         
         clean_query = self._clean_query_for_search(query)
         intent = intent_result.intent
-        fallback_steps = []
+        fallback_steps: List[Step] = []
         
         if intent == Intent.NATURAL_PRODUCTS_ONLY:
             if "lotus_search" in available_tools:
@@ -280,35 +318,67 @@ Return JSON only (no markdown):
         
         elif intent == Intent.PAPERS_ONLY:
             if "literature_search" in available_tools:
-                fallback_steps.append(Step(
-                    id="step1",
-                    type=StepType.LITERATURE_SEARCH,
-                    description="Search for papers on core topic",
-                    tool="literature_search",
-                    tool_input={"query": clean_query}
-                ))
+                sub_queries = (
+                    self._composite_subqueries(clean_query)
+                    if query_complexity == "composite"
+                    else [clean_query]
+                )
+                sub_queries = list(dict.fromkeys(sub_queries))[:3]
+                for i, sub_q in enumerate(sub_queries):
+                    fallback_steps.append(Step(
+                        id=f"step_lit_{i+1}",
+                        type=StepType.LITERATURE_SEARCH,
+                        description=f"Search for papers: {sub_q}",
+                        tool="literature_search",
+                        tool_input={"query": sub_q},
+                        depends_on=[],
+                    ))
         
         elif intent == Intent.COMBINED_RESEARCH:
             step_counter = 1
+            if active_kb_name and "kb_search" in available_tools:
+                kb_queries = (
+                    self._composite_subqueries(clean_query)
+                    if query_complexity == "composite"
+                    else [clean_query]
+                )
+                kb_queries = list(dict.fromkeys(kb_queries))[:3]
+                for sub_q in kb_queries:
+                    fallback_steps.append(Step(
+                        id=f"step_kb_{step_counter}",
+                        type=StepType.KB_SEARCH,
+                        description=f"Search knowledge base '{active_kb_name}'",
+                        tool="kb_search",
+                        tool_input={"query": sub_q, "top_k": 10},
+                        depends_on=[],
+                    ))
+                    step_counter += 1
             if "lotus_search" in available_tools:
                 fallback_steps.append(Step(
                     id=f"step{step_counter}",
                     type=StepType.LOTUS_SEARCH,
                     description="Search LOTUS for natural products",
                     tool="lotus_search",
-                    tool_input={"query": clean_query}
+                    tool_input={"query": clean_query},
+                    depends_on=[],
                 ))
                 step_counter += 1
             
             if "literature_search" in available_tools:
-                sub_queries = self._decompose_query(clean_query)
+                sub_queries = (
+                    self._composite_subqueries(clean_query)
+                    if query_complexity == "composite"
+                    else self._decompose_query(clean_query)
+                )
+                sub_queries = list(dict.fromkeys(sub_queries))[:3]
                 for sub_q in sub_queries:
                     fallback_steps.append(Step(
                         id=f"step{step_counter}",
                         type=StepType.LITERATURE_SEARCH,
                         description=f"Search papers: {sub_q}",
                         tool="literature_search",
-                        tool_input={"query": sub_q}
+                        tool_input={"query": sub_q},
+                        depends_on=[],
                     ))
                     step_counter += 1
         
@@ -319,14 +389,16 @@ Return JSON only (no markdown):
                     type=StepType.LITERATURE_SEARCH,
                     description="Search for papers",
                     tool="literature_search",
-                    tool_input={"query": clean_query}
+                    tool_input={"query": clean_query},
+                    depends_on=[],
                 ))
-        
+
+        pre_answer_ids = [s.id for s in fallback_steps]
         fallback_steps.append(Step(
             id="final",
             type=StepType.ANSWER,
             description="Generate answer",
-            depends_on=[s.id for s in fallback_steps[-1:]] if fallback_steps else []
+            depends_on=pre_answer_ids,
         ))
         
         logger.warning(
@@ -373,6 +445,27 @@ Return JSON only (no markdown):
             return [base_topic, f"{base_topic} {aspect}"]
         
         return [clean_query]
+
+    @staticmethod
+    def _composite_subqueries(clean_query: str) -> List[str]:
+        """Split a comparison / multi-entity query into 2–3 search phrases using only the given text."""
+        q = (clean_query or "").strip()
+        if not q:
+            return [clean_query]
+        split_vs = re.split(r"(?i)\s+vs\.?\s+|\s+versus\s+", q, maxsplit=1)
+        if len(split_vs) == 2:
+            a, b = split_vs[0].strip(), split_vs[1].strip()
+            if len(a) > 2 and len(b) > 2:
+                return [a, b][:3]
+        dec = ResearchPlanner._decompose_query(q)
+        if len(dec) >= 2:
+            return dec[:3]
+        split_and = re.split(r"(?i)\s+and\s+", q, maxsplit=1)
+        if len(split_and) == 2:
+            a, b = split_and[0].strip(), split_and[1].strip()
+            if len(a) > 3 and len(b) > 3:
+                return [a, b][:3]
+        return [q]
     
     async def replan(
         self,
@@ -380,7 +473,8 @@ Return JSON only (no markdown):
         current_plan: Plan,
         completed_steps: List[Step],
         step_results: Dict[str, Any],
-        evaluation: str
+        evaluation: str,
+        evidence_summary: Optional[str] = None,
     ) -> Plan:
         """
         Replan based on evaluation of current results.
@@ -400,27 +494,44 @@ Return JSON only (no markdown):
         for step in completed_steps:
             result = step_results.get(step.id, "No result")
             results_summary.append(f"{step.id} ({step.type.value}): {str(result)[:200]}")
-        
+
+        evidence_block = ""
+        if evidence_summary and evidence_summary.strip():
+            evidence_block = (
+                "\n--- Per-facet evidence & gap status ---\n"
+                f"{evidence_summary.strip()[:3200]}\n"
+                "--- end evidence ---\n"
+            )
+
         prompt = f"""Evaluate and replan if needed.
 
 Query: "{query}"
 Evaluation: {evaluation}
-
+{evidence_block}
 Completed steps:
 {chr(10).join(results_summary)}
 
 Current plan steps remaining: {len(current_plan.steps) - len(completed_steps)}
 
-Should we:
-1. Continue with current plan
-2. Add more research steps
-3. Answer with what we have
+Instructions:
+- Review the per-facet evidence status above.  Facets marked [GAP] have no
+  evidence yet; facets marked [PARTIAL] have limited evidence.
+- If any facet is [GAP] or [PARTIAL], consider adding targeted search steps
+  for that specific facet query.
+- If all facets are [COVERED], prefer "answer" unless the evaluation
+  specifically says more depth is needed.
+- When adding steps, target the gap facets with specific queries.
+
+Choose ONE action:
+1. "continue" – current plan still has useful remaining steps
+2. "add_steps" – add targeted searches for gap/partial facets
+3. "answer" – evidence is sufficient, generate final answer
 
 Return JSON:
 {{
     "action": "continue|add_steps|answer",
     "reasoning": "why",
-    "additional_steps": [  # Only if action is "add_steps"
+    "additional_steps": [
         {{
             "id": "new_step1",
             "type": "tool_type",

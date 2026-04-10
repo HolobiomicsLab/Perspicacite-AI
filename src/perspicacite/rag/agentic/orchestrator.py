@@ -2,11 +2,12 @@
 
 import json
 import re
+import time
 import uuid
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, AsyncGenerator
+from typing import Dict, List, Any, Optional, AsyncGenerator, Set
 from datetime import datetime
 
 from .intent import IntentClassifier, Intent
@@ -20,6 +21,124 @@ from perspicacite.rag.utils import format_references_academic
 from perspicacite.search.scilex_adapter import SciLExAdapter
 
 logger = logging.getLogger(__name__)
+
+# Cap per-paper extraction LLM calls during final answer (map-reduce style).
+MAP_REDUCE_MAX_PAPERS = 8
+
+
+@dataclass
+class EvidenceFacet:
+    """One facet (sub-question) of a research query."""
+
+    query: str
+    step_ids: List[str] = field(default_factory=list)
+    entries: List[Dict[str, Any]] = field(default_factory=list)
+    _seen_keys: Set[str] = field(default_factory=set, repr=False)
+
+    @property
+    def status(self) -> str:
+        """gap / partial / covered based on hit count."""
+        n = len(self.entries)
+        if n == 0:
+            return "gap"
+        if n <= 2:
+            return "partial"
+        return "covered"
+
+    def _entry_key(self, e: Dict[str, Any]) -> str:
+        doi = (e.get("doi") or "").strip().lower()
+        if doi:
+            return f"doi:{doi}"
+        title = (e.get("title") or "").strip().lower()[:120]
+        return f"title:{title}" if title else ""
+
+    def _add_entry(self, entry: Dict[str, Any]) -> bool:
+        """Add an entry if not a facet-local duplicate. Returns True if added."""
+        k = self._entry_key(entry)
+        if k and k in self._seen_keys:
+            return False
+        if k:
+            self._seen_keys.add(k)
+        self.entries.append(entry)
+        return True
+
+
+@dataclass
+class EvidenceStore:
+    """Facet-keyed evidence accumulator for gap-driven replanning.
+
+    Each search step is registered under a facet (sub-question).
+    Simple queries use one facet ("main"); composite queries get one facet per
+    sub-query.  ``to_prompt_block()`` renders per-facet status for the replanner.
+    """
+
+    facets: Dict[str, EvidenceFacet] = field(default_factory=dict)
+
+    def register_facet(self, facet_key: str, query: str) -> EvidenceFacet:
+        if facet_key not in self.facets:
+            self.facets[facet_key] = EvidenceFacet(query=query)
+        return self.facets[facet_key]
+
+    def facet_for_step(self, step_id: str) -> Optional["EvidenceFacet"]:
+        for f in self.facets.values():
+            if step_id in f.step_ids:
+                return f
+        return None
+
+    def add_hits(
+        self,
+        hits: List[Dict[str, Any]],
+        step_id: str,
+        facet_key: str = "main",
+    ) -> None:
+        facet = self.facets.get(facet_key)
+        if facet is None:
+            facet = self.register_facet(facet_key, facet_key)
+        if step_id not in facet.step_ids:
+            facet.step_ids.append(step_id)
+        for h in hits:
+            facet._add_entry(h)
+
+    # Backward-compat alias
+    def add_kb_hits(self, hits: List[Dict[str, Any]], step_id: str = "", facet_key: str = "main") -> None:
+        self.add_hits(hits, step_id=step_id, facet_key=facet_key)
+
+    @property
+    def all_entries(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for f in self.facets.values():
+            out.extend(f.entries)
+        return out
+
+    def gap_summary(self) -> Dict[str, str]:
+        """Return {facet_key: status} for all facets."""
+        return {k: f.status for k, f in self.facets.items()}
+
+    def to_prompt_block(self, max_entries_per_facet: int = 7, max_chars: int = 3200) -> str:
+        """Render per-facet evidence + status for the replanner."""
+        if not self.facets:
+            return ""
+        sections: List[str] = []
+        for key, facet in self.facets.items():
+            status = facet.status.upper()
+            header = f"[{status}] Facet: {facet.query}"
+            if not facet.entries:
+                sections.append(f"{header}\n  (no evidence yet)")
+                continue
+            lines = [header]
+            for e in facet.entries[-max_entries_per_facet:]:
+                title = str(e.get("title", "?"))[:140]
+                doi = e.get("doi") or ""
+                ex = (e.get("excerpt") or "")[:350]
+                line = f"  - {title}"
+                if doi:
+                    line += f" (DOI: {doi})"
+                if ex:
+                    line += f"\n    {ex}"
+                lines.append(line)
+            sections.append("\n".join(lines))
+        text = "\n\n".join(sections)
+        return text if len(text) <= max_chars else text[:max_chars] + "\n…"
 
 
 @dataclass
@@ -46,6 +165,7 @@ class AgentSession:
     
     # User preferences for research depth (can be set per query)
     max_papers_to_download: Optional[int] = None  # Override orchestrator default
+    evidence: Optional[EvidenceStore] = None
 
     def add_message(self, role: str, content: str, metadata: Optional[dict] = None):
         """Add a message to the session."""
@@ -191,6 +311,7 @@ class AgenticOrchestrator:
 
         # Session management
         self.sessions: Dict[str, AgentSession] = {}
+        self._found_papers_lock = asyncio.Lock()
 
         # SciLEx adapter for literature search (multi-API aggregation)
         self.scilex_adapter = SciLExAdapter()
@@ -244,6 +365,7 @@ class AgenticOrchestrator:
         logger.info(f"Resolved session_id: {session.session_id}")
         session.add_message("user", query)
         session.kb_name = kb_name
+        session.evidence = EvidenceStore()
         
         # Store user preference for download cap in session
         if max_papers_to_download is not None:
@@ -264,6 +386,8 @@ class AgenticOrchestrator:
         )
         logger.info(f"Intent classified: {intent_result.intent.name}")
         logger.info(f"Confidence: {intent_result.confidence}")
+        logger.info(f"Query complexity: {getattr(intent_result, 'query_complexity', 'simple')} "
+                    f"({getattr(intent_result, 'query_complexity_source', '')})")
         logger.info(f"Suggested tools: {intent_result.suggested_tools}")
 
         yield {
@@ -292,28 +416,51 @@ class AgenticOrchestrator:
             active_kb_name=kb_name,
         )
 
-        # If a KB is selected, always search it first (don't rely on the LLM planner)
+        # If a KB is selected, always search it first (don't rely on the LLM planner).
+        # Composite + active KB: ensure parallel kb_search wave even when the planner emitted only one KB step.
         if kb_name:
             has_kb_step = any(s.type == StepType.KB_SEARCH for s in plan.steps)
+            qcomp = getattr(intent_result, "query_complexity", "simple")
             if not has_kb_step:
-                from perspicacite.rag.agentic.planner import ResearchPlanner
-
                 clean_query = ResearchPlanner._clean_query_for_search(query)
-                kb_step = Step(
-                    id="step1",
-                    type=StepType.KB_SEARCH,
-                    description=f"Search knowledge base '{kb_name}'",
-                    tool="kb_search",
-                    tool_input={"query": clean_query},
-                )
-                plan.steps.insert(0, kb_step)
-                plan.estimated_steps = len(plan.steps)
-                logger.info(
-                    f"Injected kb_search as step1 for KB {kb_name!r} tool_input.query={clean_query!r}"
-                )
+                if qcomp == "composite":
+                    subs = list(dict.fromkeys(ResearchPlanner._composite_subqueries(clean_query)))[:3]
+                    for i, sq in enumerate(subs):
+                        plan.steps.insert(
+                            i,
+                            Step(
+                                id=f"inject_kb_{i+1}",
+                                type=StepType.KB_SEARCH,
+                                description=f"Search knowledge base '{kb_name}'",
+                                tool="kb_search",
+                                tool_input={"query": sq},
+                                depends_on=[],
+                            ),
+                        )
+                    logger.info(
+                        f"Injected {len(subs)} parallel kb_search step(s) for KB {kb_name!r} "
+                        f"(composite): queries={subs!r}"
+                    )
+                else:
+                    kb_step = Step(
+                        id="step1",
+                        type=StepType.KB_SEARCH,
+                        description=f"Search knowledge base '{kb_name}'",
+                        tool="kb_search",
+                        tool_input={"query": clean_query},
+                    )
+                    plan.steps.insert(0, kb_step)
+                    logger.info(
+                        f"Injected kb_search as step1 for KB {kb_name!r} tool_input.query={clean_query!r}"
+                    )
+            elif qcomp == "composite":
+                self._maybe_upgrade_single_kb_to_composite_parallel(plan, query, kb_name)
+            plan.estimated_steps = len(plan.steps)
 
         logger.info(f"Orchestrator plan reasoning ({len(plan.reasoning)} chars): {plan.reasoning}")
         _log_steps_detail(plan.steps, "Orchestrator plan (final, after KB inject if any)")
+
+        self._register_evidence_facets(session, plan)
 
         if plan.can_answer_from_history:
             yield {"type": "thinking", "message": "I can answer from our conversation history..."}
@@ -321,83 +468,120 @@ class AgenticOrchestrator:
         # Step 3: Execute plan iteratively
         step_results: Dict[str, Any] = {}
         completed_steps: List[Step] = []
-        self._found_papers: List[Dict[str, Any]] = []
 
         for iteration in range(self.max_iterations):
             logger.info(f"\n--- Iteration {iteration + 1}/{self.max_iterations} ---")
 
-            # Find next executable step
-            next_step = self._get_next_step(plan, completed_steps, step_results)
-
-            if not next_step:
+            batch = self._get_next_parallel_batch(plan, completed_steps, step_results)
+            if not batch:
                 logger.info("No more steps to execute")
                 break
 
-            logger.info(
-                f"Next step: {next_step.id} ({next_step.type.value}) - {next_step.description}"
-            )
-
-            # Check condition
-            if next_step.condition and not self._evaluate_condition(
-                next_step.condition, step_results
-            ):
-                logger.info(f"Step {next_step.id} condition not met, skipping")
-                completed_steps.append(next_step)
+            to_run: List[Step] = []
+            for s in batch:
+                if s.condition and not self._evaluate_condition(s.condition, step_results):
+                    logger.info(f"Step {s.id} condition not met, skipping")
+                    completed_steps.append(s)
+                else:
+                    to_run.append(s)
+            if not to_run:
                 continue
 
-            # Execute step
-            yield {
-                "type": "tool_call",
-                "step": next_step.id,
-                "tool": next_step.tool or next_step.type.value,
-                "description": next_step.description,
-                "query": next_step.tool_input.get("query", ""),
-            }
-
-            import time
-
-            step_start_time = time.time()
-            logger.info(f"Executing step {next_step.id}...")
-            result = await self._execute_step(next_step, query, step_results, session)
-            step_duration = time.time() - step_start_time
-
-            # Log the result
-            result_str = str(result)
-            logger.info(f"Step {next_step.id} completed in {step_duration:.2f}s")
-            logger.info(f"Result length: {len(result_str)} chars")
-            # Show first 2000 chars to see actual content (not just titles)
-            preview_len = min(2000, len(result_str))
-            logger.info(
-                f"Result preview: {result_str[:preview_len]}{'...[truncated]' if len(result_str) > preview_len else ''}"
-            )
-
-            step_results[next_step.id] = result
-            completed_steps.append(next_step)
-
-            yield {
-                "type": "tool_result",
-                "step": next_step.id,
-                "result_summary": self._summarize_result(result),
-            }
-
-            # Evaluate if we need to replan
-            if next_step.type in (
-                StepType.LOTUS_SEARCH,
-                StepType.LITERATURE_SEARCH,
-                StepType.KB_SEARCH,
-            ):
-                should_continue = await self._evaluate_progress(
-                    query, plan, completed_steps, step_results
+            if len(to_run) > 1:
+                logger.info(
+                    "Parallel batch: "
+                    + ", ".join(f"{s.id} ({s.type.value})" for s in to_run)
                 )
-                logger.info(f"Progress evaluation: {should_continue}")
 
-                if should_continue == "replan":
-                    evaluation = "Need more specific search"
-                    plan = await self.planner.replan(
-                        query, plan, completed_steps, step_results, evaluation
+            async def _run_step(step: Step) -> tuple[Step, Any, float]:
+                t0 = time.time()
+                res = await self._execute_step(step, query, step_results, session)
+                return step, res, time.time() - t0
+
+            for s in to_run:
+                yield {
+                    "type": "tool_call",
+                    "step": s.id,
+                    "tool": s.tool or s.type.value,
+                    "description": s.description,
+                    "query": s.tool_input.get("query", ""),
+                }
+
+            if len(to_run) == 1:
+                next_step = to_run[0]
+                step, result, step_duration = await _run_step(next_step)
+                result_str = str(result)
+                logger.info(f"Step {step.id} completed in {step_duration:.2f}s")
+                logger.info(f"Result length: {len(result_str)} chars")
+                preview_len = min(2000, len(result_str))
+                logger.info(
+                    f"Result preview: {result_str[:preview_len]}{'...[truncated]' if len(result_str) > preview_len else ''}"
+                )
+                step_results[step.id] = result
+                completed_steps.append(step)
+                yield {
+                    "type": "tool_result",
+                    "step": step.id,
+                    "result_summary": self._summarize_result(result),
+                }
+                batch_for_eval = [step]
+            else:
+                gathered = await asyncio.gather(*[_run_step(s) for s in to_run])
+                for step, result, step_duration in gathered:
+                    result_str = str(result)
+                    logger.info(f"Step {step.id} completed in {step_duration:.2f}s")
+                    logger.info(f"Result length: {len(result_str)} chars")
+                    step_results[step.id] = result
+                    completed_steps.append(step)
+                    yield {
+                        "type": "tool_result",
+                        "step": step.id,
+                        "result_summary": self._summarize_result(result),
+                    }
+                batch_for_eval = to_run
+
+            trigger_eval = any(
+                s.type
+                in (
+                    StepType.LOTUS_SEARCH,
+                    StepType.LITERATURE_SEARCH,
+                    StepType.KB_SEARCH,
+                )
+                for s in batch_for_eval
+            )
+            if trigger_eval:
+                eval_result = await self._evaluate_progress(
+                    query,
+                    plan,
+                    completed_steps,
+                    step_results,
+                    session=session,
+                    eval_step_ids=[s.id for s in batch_for_eval],
+                )
+                decision = eval_result["decision"]
+                logger.info(
+                    f"Progress evaluation: decision={decision}, "
+                    f"gaps={eval_result['gap_facets']}, "
+                    f"missing={eval_result['missing_aspects'][:3]}"
+                )
+
+                if decision == "replan":
+                    ev_summary = (
+                        session.evidence.to_prompt_block()
+                        if session.evidence
+                        else ""
                     )
+                    plan = await self.planner.replan(
+                        query,
+                        plan,
+                        completed_steps,
+                        step_results,
+                        eval_result["evaluation_text"] or "Need more specific search",
+                        evidence_summary=ev_summary or None,
+                    )
+                    self._register_evidence_facets(session, plan)
                     yield {"type": "thinking", "message": "Adjusting research plan..."}
-                elif should_continue == "answer":
+                elif decision == "answer":
                     logger.info("Sufficient results, moving to answer")
                     break
 
@@ -409,12 +593,16 @@ class AgenticOrchestrator:
         yield {"type": "thinking", "message": "Extracting papers from search results..."}
         papers = self._extract_papers_from_results(step_results)
         logger.info(f"Extracted {len(papers)} papers from search results")
-        
-        # Score papers for relevance
-        yield {"type": "thinking", "message": f"Scoring {len(papers)} papers for relevance..."}
-        papers = await self._score_papers_for_relevance(query, papers, min_score=3)
-        included_count = len([p for p in papers if p.get("relevance_score", 3) >= 3])
-        yield {"type": "thinking", "message": f"Relevance filtering: {included_count}/{len(papers)} papers included"}
+
+        all_from_kb = all(p.get("source") == "kb_search" for p in papers) if papers else False
+        if all_from_kb and papers:
+            logger.info("All papers from KB (pre-scored at 4); skipping LLM relevance scoring")
+            yield {"type": "thinking", "message": f"Using {len(papers)} KB papers (relevance scoring skipped)"}
+        else:
+            yield {"type": "thinking", "message": f"Scoring {len(papers)} papers for relevance..."}
+            papers = await self._score_papers_for_relevance(query, papers, min_score=3)
+            included_count = len([p for p in papers if p.get("relevance_score", 3) >= 3])
+            yield {"type": "thinking", "message": f"Relevance filtering: {included_count}/{len(papers)} papers included"}
         
         # Download full text for relevant papers (threshold-based, not hard limit)
         # For literature surveys, comprehensive coverage is important - download ALL relevant papers
@@ -475,21 +663,116 @@ class AgenticOrchestrator:
         if relevant_papers:
             yield {"type": "papers_found", "papers": relevant_papers}
 
-    def _get_next_step(
-        self, plan: Plan, completed: List[Step], results: Dict[str, Any]
-    ) -> Optional[Step]:
-        """Get the next executable step based on dependencies."""
-        completed_ids = {s.id for s in completed}
+    def _maybe_upgrade_single_kb_to_composite_parallel(
+        self, plan: Plan, query: str, kb_name: str
+    ) -> None:
+        """Replace one root parallel kb_search with multiple facets when query is composite.
 
+        The LLM planner often emits a single kb_search even for comparisons; this enforces
+        the parallel wave when _composite_subqueries yields 2+ distinct phrases.
+        """
+        clean = ResearchPlanner._clean_query_for_search(query)
+        subs = list(dict.fromkeys(ResearchPlanner._composite_subqueries(clean)))[:3]
+        if len(subs) < 2:
+            return
+
+        kb_parallel = [
+            (i, s)
+            for i, s in enumerate(plan.steps)
+            if s.type == StepType.KB_SEARCH and not s.depends_on
+        ]
+        if len(kb_parallel) != 1:
+            return
+
+        idx, lone = kb_parallel[0]
+        old_id = lone.id
+        top_k = lone.tool_input.get("top_k")
+        new_steps: List[Step] = []
+        for i, sq in enumerate(subs):
+            tool_input: Dict[str, Any] = {"query": sq}
+            if top_k is not None:
+                tool_input["top_k"] = top_k
+            new_steps.append(
+                Step(
+                    id=f"composite_kb_{i+1}",
+                    type=StepType.KB_SEARCH,
+                    description=f"Search knowledge base '{kb_name}' (composite facet)",
+                    tool="kb_search",
+                    tool_input=tool_input,
+                    depends_on=[],
+                )
+            )
+        plan.steps[idx : idx + 1] = new_steps
+        new_ids = [s.id for s in new_steps]
+        for s in plan.steps:
+            if old_id in s.depends_on:
+                s.depends_on = [d for d in s.depends_on if d != old_id] + new_ids
+        logger.info(
+            "Composite KB upgrade: replaced single root kb_search %r with %d step(s) subs=%r",
+            old_id,
+            len(new_steps),
+            subs,
+        )
+
+    def _register_evidence_facets(self, session: AgentSession, plan: Plan) -> None:
+        """Create evidence facets from search steps in the plan.
+
+        Each search step's ``tool_input.query`` becomes a facet.  Steps that
+        share identical queries share a facet.  This runs once after the plan is
+        finalized (including composite injection/upgrade).
+        """
+        if session.evidence is None:
+            session.evidence = EvidenceStore()
+        ev = session.evidence
+        for step in plan.steps:
+            if step.type not in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH):
+                continue
+            q = step.tool_input.get("query", "").strip()
+            facet_key = q.lower()[:120] or "main"
+            facet = ev.register_facet(facet_key, q or "main")
+            if step.id not in facet.step_ids:
+                facet.step_ids.append(step.id)
+        if not ev.facets:
+            ev.register_facet("main", "main")
+        logger.info(
+            "Evidence facets registered: %s",
+            {k: f.step_ids for k, f in ev.facets.items()},
+        )
+
+    def _facet_key_for_step(self, session: AgentSession, step: Step) -> str:
+        """Resolve which facet key a step belongs to."""
+        if session.evidence:
+            f = session.evidence.facet_for_step(step.id)
+            if f:
+                return f.query.lower()[:120] or "main"
+        q = step.tool_input.get("query", "").strip().lower()[:120]
+        return q or "main"
+
+    def _get_next_parallel_batch(
+        self, plan: Plan, completed: List[Step], results: Dict[str, Any]
+    ) -> List[Step]:
+        """Return the next step(s) to run.
+
+        Parallel-eligible: multiple search steps (KB or literature) with no
+        ``depends_on`` that are all ready simultaneously.
+        """
+        completed_ids = {s.id for s in completed}
+        ready: List[Step] = []
         for step in plan.steps:
             if step.id in completed_ids:
                 continue
-
-            # Check if dependencies are satisfied
             if all(dep in completed_ids for dep in step.depends_on):
-                return step
-
-        return None
+                ready.append(step)
+        if not ready:
+            return []
+        search_parallel = [
+            s
+            for s in ready
+            if s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH) and not s.depends_on
+        ]
+        if len(search_parallel) > 1:
+            return search_parallel
+        return [ready[0]]
 
     def _evaluate_condition(self, condition: str, results: Dict[str, Any]) -> bool:
         """Evaluate a step condition."""
@@ -518,7 +801,7 @@ class AgenticOrchestrator:
         elif step.type == StepType.LITERATURE_SEARCH:
             query = step.tool_input.get("query", original_query)
             logger.info(f"LITERATURE_SEARCH: query='{query}'")
-            return await self._scilex_search(query)
+            return await self._scilex_search(query, step_id=step.id, session=session)
 
         elif step.type == StepType.DOWNLOAD_PAPERS:
             # Download papers from OpenAlex results
@@ -734,17 +1017,34 @@ class AgenticOrchestrator:
                             else:
                                 formatted_parts.append("   Content: [No text content available]")
                             
-                            # Add to _found_papers for reference list generation
-                            if hasattr(self, "_found_papers"):
-                                self._found_papers.append({
-                                    "title": title,
-                                    "authors": [a.strip() for a in authors.split(",")] if authors else [],
-                                    "year": year,
-                                    "doi": doi,
-                                    "abstract": text_content[:500] if text_content else "",
-                                    "source": "kb_search",
-                                    "relevance_score": 4,  # KB papers are considered relevant by default
-                                })
+                            async with self._found_papers_lock:
+                                if hasattr(self, "_found_papers"):
+                                    self._found_papers.append({
+                                        "title": title,
+                                        "authors": [a.strip() for a in authors.split(",")] if authors else [],
+                                        "year": year,
+                                        "doi": doi,
+                                        "abstract": text_content[:500] if text_content else "",
+                                        "source": "kb_search",
+                                        "relevance_score": 4,
+                                        "_step_id": step.id,
+                                    })
+                                if session.evidence is None:
+                                    session.evidence = EvidenceStore()
+                                fk = self._facet_key_for_step(session, step)
+                                session.evidence.add_hits(
+                                    [
+                                        {
+                                            "title": title,
+                                            "doi": doi,
+                                            "excerpt": (text_content[:600] if text_content else ""),
+                                            "step_id": step.id,
+                                            "source": "kb_search",
+                                        }
+                                    ],
+                                    step_id=step.id,
+                                    facet_key=fk,
+                                )
                         
                         out = "\n".join(formatted_parts)
                         logger.info(f"KB_SEARCH: formatted tool result length={len(out)} chars")
@@ -848,114 +1148,155 @@ class AgenticOrchestrator:
             return False
 
     async def _evaluate_progress(
-        self, query: str, plan: Plan, completed_steps: List[Step], step_results: Dict[str, Any]
-    ) -> str:
-        """Evaluate if we should continue, replan, or answer.
-        
-        Uses document quality assessment for intelligent early exit decisions.
-        Ported from AgenticRAGMode.
-        """
-        last_step = completed_steps[-1]
-        last_result = step_results.get(last_step.id)
-        last_str = str(last_result) if last_result is not None else ""
+        self,
+        query: str,
+        plan: Plan,
+        completed_steps: List[Step],
+        step_results: Dict[str, Any],
+        session: Optional[AgentSession] = None,
+        eval_step_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate whether to continue, replan, or answer.
 
-        # Check if no more steps remaining
+        Returns a dict with:
+          - ``"decision"``: ``"continue"`` | ``"replan"`` | ``"answer"``
+          - ``"gap_facets"``: list of facet queries that are still gap/partial
+          - ``"missing_aspects"``: list from the quality assessor (if any)
+          - ``"evaluation_text"``: human-readable summary for the replanner
+        """
+        result: Dict[str, Any] = {
+            "decision": "continue",
+            "gap_facets": [],
+            "missing_aspects": [],
+            "evaluation_text": "",
+        }
+
+        last_step = completed_steps[-1]
+
         remaining_steps = [s for s in plan.steps if s.id not in {cs.id for cs in completed_steps}]
         if not remaining_steps:
-            return "answer"
+            result["decision"] = "answer"
+            result["evaluation_text"] = "No remaining steps."
+            return result
 
-        # After search tools: use quality assessment for early exit decision
-        if last_step.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH):
-            # Extract documents from result for quality assessment
-            documents = self._extract_documents_from_result(last_result)
-            
+        # --- Facet gap check (Phase 2) ---
+        gaps: Dict[str, str] = {}
+        if session and session.evidence:
+            gaps = session.evidence.gap_summary()
+        gap_facets = [k for k, v in gaps.items() if v in ("gap", "partial")]
+        result["gap_facets"] = gap_facets
+
+        remaining_search = any(
+            s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH)
+            for s in remaining_steps
+        )
+
+        if gap_facets and remaining_search:
+            facet_labels = "; ".join(f'"{f}" ({gaps[f]})' for f in gap_facets[:4])
+            logger.info(f"Facet gaps detected, forcing replan: {facet_labels}")
+            result["decision"] = "replan"
+            result["evaluation_text"] = f"Facets still uncovered: {facet_labels}"
+            return result
+
+        # --- Quality assessor (per-batch documents) ---
+        has_search = any(
+            s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH)
+            for s in (
+                [s for s in completed_steps if s.id in eval_step_ids]
+                if eval_step_ids
+                else [last_step]
+            )
+        )
+        if has_search:
+            documents = self._get_recent_found_papers(step_ids=eval_step_ids)
+
             if documents:
-                # Use quality assessor for intelligent early exit
                 is_sufficient, missing_aspects, confidence = await self.quality_assessor.assess(
                     query=query,
                     documents=documents,
                     step_purpose=last_step.description,
                 )
-                
+                result["missing_aspects"] = missing_aspects or []
+
                 logger.info(
                     f"Quality assessment: sufficient={is_sufficient}, "
                     f"confidence={confidence:.2f}, missing={len(missing_aspects)} aspects"
                 )
-                
-                # Early exit if quality is high and confidence meets threshold
-                if is_sufficient and confidence >= self.early_exit_confidence:
-                    logger.info(f"Early exit triggered: confidence {confidence:.2f} >= {self.early_exit_confidence}")
-                    return "answer"
-                
-                # Replan if quality is low and we have missing aspects
-                if not is_sufficient and missing_aspects and len(completed_steps) < 2:
-                    logger.info(f"Quality insufficient, continuing with plan: {missing_aspects[:3]}")
-                    return "replan"
 
-        # Fallback: check for substantial results after multiple steps
+                if is_sufficient and confidence >= self.early_exit_confidence:
+                    all_covered = all(v == "covered" for v in gaps.values()) if gaps else True
+                    if all_covered:
+                        logger.info(
+                            f"Early exit: confidence {confidence:.2f} >= {self.early_exit_confidence}, "
+                            "all facets covered"
+                        )
+                        result["decision"] = "answer"
+                        result["evaluation_text"] = "All facets covered; evidence sufficient."
+                        return result
+                    else:
+                        logger.info(
+                            "Quality assessor says sufficient but facets not all covered — "
+                            "continuing to fill gaps"
+                        )
+
+                if not is_sufficient and missing_aspects:
+                    aspect_str = ", ".join(missing_aspects[:3])
+                    logger.info(f"Quality insufficient, missing: {aspect_str}")
+                    if gap_facets:
+                        result["decision"] = "replan"
+                        result["evaluation_text"] = (
+                            f"Missing aspects: {aspect_str}. "
+                            f"Gap facets: {'; '.join(gap_facets[:4])}"
+                        )
+                        return result
+
         has_substantial_results = False
-        for result in step_results.values():
-            result_str = str(result)
+        for r in step_results.values():
+            result_str = str(r)
             if len(result_str) > 200 and "error" not in result_str.lower():
                 has_substantial_results = True
                 break
 
-        # Suggest termination if we have 3+ completed steps with results
         if has_substantial_results and len(completed_steps) >= 3:
-            return "answer"
+            result["decision"] = "answer"
+            result["evaluation_text"] = "Sufficient results accumulated."
 
-        return "continue"
+        return result
 
-    def _extract_documents_from_result(self, result: Any) -> List[Dict[str, Any]]:
-        """Extract document list from search result for quality assessment."""
-        documents = []
-        
-        if not result:
-            return documents
-            
-        result_str = str(result)
-        
-        # Check for common "no results" patterns
-        result_lower = result_str.lower()
-        if any(phrase in result_lower for phrase in [
-            "no relevant documents", 
-            "no results", 
-            "not found",
-            "search failed"
-        ]):
-            return documents
-        
-        # Try to parse documents from structured results
-        # Format 1: List of paper dicts from OpenAlex
-        if isinstance(result, list):
-            for item in result[:5]:  # Limit to top 5
-                if isinstance(item, dict):
-                    documents.append({
-                        "title": item.get("title", "Unknown"),
-                        "content": item.get("abstract", str(item)[:500]),
-                        "source": "openalex",
-                    })
-        
-        # Format 2: KB search results - extract from formatted string
-        if "Found" in result_str and "documents" in result_str:
-            # Extract document sections from KB result format
-            lines = result_str.split("\n")
-            current_doc = None
-            
-            for line in lines:
-                if line.startswith("- ") and "(relevance:" in line:
-                    # New document
-                    if current_doc:
-                        documents.append(current_doc)
-                    title = line.split("(relevance:")[0].replace("- ", "").strip()
-                    current_doc = {"title": title, "content": "", "source": "kb"}
-                elif current_doc and line.strip().startswith("Content:"):
-                    current_doc["content"] = line.replace("Content:", "").strip()[:500]
-            
-            if current_doc:
-                documents.append(current_doc)
-        
-        return documents[:5]  # Return top 5 documents
+    def _get_recent_found_papers(self, step_ids: Optional[List[str]] = None, limit: int = 5) -> List[Dict[str, Any]]:
+        """Return structured documents from _found_papers for quality assessment.
+
+        Uses the accumulated structured paper data rather than parsing formatted
+        output strings.  Optionally filters to papers added by specific step_ids
+        (stored on evidence entries).
+        """
+        if not hasattr(self, "_found_papers") or not self._found_papers:
+            return []
+
+        papers = list(self._found_papers)
+        if step_ids:
+            papers = [p for p in papers if p.get("_step_id") in step_ids] or papers
+
+        docs: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for p in papers[-limit * 2 :]:
+            title = str(p.get("title") or "Unknown")
+            key = title.strip().lower()[:100]
+            if key in seen:
+                continue
+            seen.add(key)
+            content = (
+                (p.get("abstract") or "")[:500]
+                or (p.get("full_text") or "")[:500]
+            )
+            docs.append({
+                "title": title,
+                "content": content,
+                "source": p.get("source", "unknown"),
+            })
+            if len(docs) >= limit:
+                break
+        return docs
 
     async def _analyze_results(self, query: str, step_results: Dict[str, Any]) -> str:
         """Have LLM analyze the results."""
@@ -1008,7 +1349,63 @@ Synthesis Guidelines:
 
 Provide a synthesized summary that combines the key insights from all sources."""
 
-        return await self.llm.complete(prompt, temperature=0.3)
+        return await self.llm.complete(prompt, temperature=0.15)
+
+    async def _per_paper_extraction_bullet(
+        self, query: str, paper: Dict[str, Any], list_index: int
+    ) -> str:
+        """Single-paper LLM pass: bullets aligned to the user question."""
+        title = str(paper.get("title", "Unknown"))[:220]
+        body = (paper.get("full_text") or paper.get("abstract") or "").strip()
+        if len(body) > 14000:
+            body = body[:14000] + "\n[truncated]"
+        if len(body) < 400:
+            return ""
+        prompt = (
+            f'Research question: "{query}"\n\n'
+            f"You extract from ONE paper. Citation index for this paper in the final answer: [{list_index}]\n"
+            f"Title: {title}\n\n"
+            "Text:\n---\n"
+            f"{body}\n"
+            "---\n\n"
+            "Output 3–8 bullet points of facts that directly help answer the research question. "
+            "Each bullet must be self-contained. If nothing is relevant, reply exactly: "
+            "(no relevant content for this question)\n"
+            "Do not invent information; use only the text above."
+        )
+        return await self.llm.complete(prompt, temperature=0.15)
+
+    async def _map_reduce_paper_bullets(
+        self, query: str, papers: List[Dict[str, Any]]
+    ) -> str:
+        """Top-N papers: parallel extraction bullets for final synthesis."""
+        indexed: List[tuple[int, Dict[str, Any]]] = []
+        for i, p in enumerate(papers, 1):
+            ft = (p.get("full_text") or "").strip()
+            ab = (p.get("abstract") or "").strip()
+            if len(ft) >= 500 or len(ab) >= 200:
+                indexed.append((i, p))
+        indexed = indexed[:MAP_REDUCE_MAX_PAPERS]
+        if not indexed:
+            return ""
+
+        sem = asyncio.Semaphore(4)
+
+        async def _one(li: int, p: Dict[str, Any]) -> str:
+            async with sem:
+                return await self._per_paper_extraction_bullet(query, p, li)
+
+        parts = await asyncio.gather(*[_one(li, p) for li, p in indexed])
+        blocks: List[str] = []
+        for (li, p), text in zip(indexed, parts):
+            t = (text or "").strip()
+            if not t:
+                continue
+            low = t.lower()
+            if "no relevant content for this question" in low and len(t) < 160:
+                continue
+            blocks.append(f"### Paper [{li}] {str(p.get('title', ''))[:90]}\n{t}")
+        return "\n\n".join(blocks)
 
     async def _generate_answer(
         self, query: str, plan: Plan, step_results: Dict[str, Any], session: AgentSession,
@@ -1030,30 +1427,39 @@ Provide a synthesized summary that combines the key insights from all sources.""
         # Build context from step results
         context_parts = []
 
-        # Prioritize certain result types
+        # Prioritize LOTUS results (always included as-is)
         if "lotus" in step_results:
             lotus_result = step_results["lotus"]
             logger.info(f"LOTUS result length: {len(str(lotus_result))} chars")
             context_parts.append(f"LOTUS Search Results:\n{lotus_result}")
 
-        for step_id, result in step_results.items():
-            if step_id != "lotus" and result:
-                result_str = str(result)
-                logger.info(f"Step {step_id} result length: {len(result_str)} chars")
-                context_parts.append(f"{step_id}:\n{result_str[:3000]}")
+        map_reduce_block = await self._map_reduce_paper_bullets(query, papers)
+        if map_reduce_block:
+            context_parts.append(
+                "\n\n---\n\nQuery-focused extractions (per paper; cite using [N] from the numbered list):\n"
+                + map_reduce_block
+            )
+            logger.info("Answer context: using map-reduce per-paper extractions (raw step results suppressed)")
+        else:
+            for step_id, result in step_results.items():
+                if step_id != "lotus" and result:
+                    result_str = str(result)
+                    logger.info(f"Step {step_id} result length: {len(result_str)} chars")
+                    context_parts.append(f"{step_id}:\n{result_str[:3000]}")
 
-        # Add full text from downloaded papers to context
-        full_text_parts = []
-        for i, paper in enumerate(papers, 1):
-            if paper.get("full_text"):
-                full_text_parts.append(
-                    f"[Paper {i}: {paper.get('title', 'Unknown')[:80]}...]\n"
-                    f"Full text excerpt:\n{paper['full_text'][:8000]}..."
+            full_text_parts = []
+            for i, paper in enumerate(papers, 1):
+                if paper.get("full_text"):
+                    full_text_parts.append(
+                        f"[Paper {i}: {paper.get('title', 'Unknown')[:80]}...]\n"
+                        f"Full text excerpt:\n{paper['full_text'][:8000]}..."
+                    )
+            if full_text_parts:
+                context_parts.append(
+                    "\n\n---\n\nDownloaded Full Text:\n"
+                    + "\n\n---\n\n".join(full_text_parts)
                 )
-        
-        if full_text_parts:
-            context_parts.append("\n\n---\n\nDownloaded Full Text:\n" + "\n\n---\n\n".join(full_text_parts))
-            logger.info(f"Added {len(full_text_parts)} full text documents to context")
+                logger.info(f"Added {len(full_text_parts)} full text documents to context")
 
         context = "\n\n".join(context_parts)
         logger.info(f"Total context length: {len(context)} chars")
@@ -1098,7 +1504,7 @@ Generate your answer:"""
         logger.info(f"Prompt length: {len(prompt)} chars")
         logger.info("Calling LLM for answer...")
 
-        answer = await self.llm.complete(prompt, temperature=0.4)
+        answer = await self.llm.complete(prompt, temperature=0.25)
         logger.info(f"Answer generated, length: {len(answer)} chars")
         logger.info(f"Answer content:\n{answer}")
 
@@ -1269,31 +1675,27 @@ Generate your answer:"""
             return result_str[:100] + "..."
         return result_str
 
-    async def _scilex_search(self, query: str, max_results: int = 10) -> str:
-        """
-        Search academic literature using SciLEx (multi-API aggregation).
-        
-        SciLEx searches across multiple APIs:
-        - Semantic Scholar
-        - OpenAlex  
-        - PubMed
-        - arXiv (optional)
-        - And more based on configuration
-        
+    async def _scilex_search(
+        self,
+        query: str,
+        max_results: int = 10,
+        step_id: str = "",
+        session: Optional[AgentSession] = None,
+    ) -> str:
+        """Search academic literature using SciLEx (multi-API aggregation).
+
         Falls back to direct OpenAlex if SciLEx is not available.
         """
         logger.info(f"SciLEx search: '{query}'")
-        
+
         try:
-            # Use SciLEx adapter for multi-API search
             papers = await self.scilex_adapter.search(
                 query=query,
                 max_results=max_results,
-                apis=["semantic_scholar", "openalex", "pubmed"],  # Core APIs
+                apis=["semantic_scholar", "openalex", "pubmed"],
             )
-            
+
             if papers:
-                # Convert Paper models to dict format for consistency
                 paper_dicts = []
                 for p in papers:
                     paper_dict = {
@@ -1305,31 +1707,34 @@ Generate your answer:"""
                         "abstract": p.abstract[:800] if p.abstract else "",
                         "doi": p.doi or "",
                         "pdf_url": p.pdf_url or "",
-                        "source": "scilex",
+                        "source": "literature_search",
+                        "_step_id": step_id,
                     }
                     paper_dicts.append(paper_dict)
-                
-                # Accumulate for papers_found event
-                if hasattr(self, "_found_papers"):
-                    for p in paper_dicts:
-                        p["source"] = "literature_search"
-                    self._found_papers.extend(paper_dicts)
-                
+
+                async with self._found_papers_lock:
+                    if hasattr(self, "_found_papers"):
+                        self._found_papers.extend(paper_dicts)
+                    self._accumulate_lit_evidence(paper_dicts, step_id, session)
+
                 logger.info(f"SciLEx search found {len(paper_dicts)} papers")
                 return self._format_paper_list(paper_dicts)
             else:
                 logger.warning("SciLEx returned no results, falling back to OpenAlex")
-                return await self._fallback_openalex_search(query, max_results)
-                
+                return await self._fallback_openalex_search(query, max_results, step_id=step_id, session=session)
+
         except Exception as e:
             logger.error(f"SciLEx search failed: {e}, falling back to OpenAlex")
-            return await self._fallback_openalex_search(query, max_results)
+            return await self._fallback_openalex_search(query, max_results, step_id=step_id, session=session)
 
-    async def _fallback_openalex_search(self, query: str, max_results: int = 10) -> str:
-        """
-        Fallback: Search OpenAlex directly via httpx.
-        Used when SciLEx is not available or fails.
-        """
+    async def _fallback_openalex_search(
+        self,
+        query: str,
+        max_results: int = 10,
+        step_id: str = "",
+        session: Optional[AgentSession] = None,
+    ) -> str:
+        """Fallback: Search OpenAlex directly via httpx."""
         import httpx
 
         search_terms = query.strip()
@@ -1351,7 +1756,7 @@ Generate your answer:"""
                 papers = []
                 for result in data.get("results", []):
                     abstract = self._reconstruct_abstract(result.get("abstract_inverted_index"))
-                    
+
                     paper = {
                         "id": result.get("id", ""),
                         "title": result.get("display_name", "Untitled"),
@@ -1364,21 +1769,47 @@ Generate your answer:"""
                         "abstract": abstract[:800] if abstract else "",
                         "doi": result.get("doi", ""),
                         "open_access": result.get("open_access", {}),
+                        "source": "literature_search",
+                        "_step_id": step_id,
                     }
                     papers.append(paper)
 
                 papers = self._dedupe_paper_dicts(papers)
 
-                if hasattr(self, "_found_papers"):
-                    for p in papers:
-                        p["source"] = "literature_search"
-                    self._found_papers.extend(papers)
+                async with self._found_papers_lock:
+                    if hasattr(self, "_found_papers"):
+                        self._found_papers.extend(papers)
+                    self._accumulate_lit_evidence(papers, step_id, session)
 
                 logger.info(f"OpenAlex fallback found {len(papers)} papers")
                 return self._format_paper_list(papers)
         except Exception as e:
             logger.error(f"OpenAlex fallback failed: {e}")
             return f"Literature search failed: {e}"
+
+    def _accumulate_lit_evidence(
+        self,
+        paper_dicts: List[Dict[str, Any]],
+        step_id: str,
+        session: Optional[AgentSession],
+    ) -> None:
+        """Push literature search results into the faceted evidence store."""
+        if not session or session.evidence is None or not paper_dicts:
+            return
+        ev = session.evidence
+        facet = ev.facet_for_step(step_id) if step_id else None
+        fk = facet.query.lower()[:120] if facet else "main"
+        hits = [
+            {
+                "title": p.get("title", ""),
+                "doi": p.get("doi", ""),
+                "excerpt": (p.get("abstract") or "")[:600],
+                "step_id": step_id,
+                "source": "literature_search",
+            }
+            for p in paper_dicts
+        ]
+        ev.add_hits(hits, step_id=step_id, facet_key=fk)
 
     def _format_paper_list(self, papers: list) -> str:
         """Format a list of paper dicts into a readable string."""

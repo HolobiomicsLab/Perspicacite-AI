@@ -2,12 +2,40 @@
 
 from enum import Enum, auto
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import json
 import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Heuristic triggers for multi-aspect / comparison queries (parallel search + map-reduce path).
+_COMPOSITE_PATTERNS: List[Tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bvs\.?\b", re.I), "vs"),
+    (re.compile(r"\bversus\b", re.I), "versus"),
+    (re.compile(r"\bcompare\b", re.I), "compare"),
+    (re.compile(r"\bcomparison\b", re.I), "comparison"),
+    (re.compile(r"\bpros and cons\b", re.I), "pros_cons"),
+    (re.compile(r"\badvantages and disadvantages\b", re.I), "adv_disadv"),
+    (re.compile(r"\bdifference between\b", re.I), "difference_between"),
+    (re.compile(r"\bdifferences between\b", re.I), "differences_between"),
+    (re.compile(r"\btrade-?offs?\b", re.I), "tradeoffs"),
+    (re.compile(r"\beffect of .{3,80} on\b", re.I), "effect_on"),
+    (re.compile(r"\band its effect on\b", re.I), "and_effect_on"),
+]
+
+# Heuristic tag is a weak signal: do not mark composite on this alone (needs LLM agreement).
+HEURISTIC_WEAK_COMPLEXITY_TAGS = frozenset({"effect_on"})
+
+
+def heuristic_query_complexity(query: str) -> Tuple[str, str]:
+    """Return (complexity, reason_tag). complexity is 'composite' or 'simple'."""
+    if not (query or "").strip():
+        return "simple", ""
+    for pat, tag in _COMPOSITE_PATTERNS:
+        if pat.search(query):
+            return "composite", tag
+    return "simple", ""
 
 
 class Intent(Enum):
@@ -29,6 +57,8 @@ class IntentResult:
     reasoning: str
     suggested_tools: List[str]
     entities: dict  # Extracted entities (compounds, organisms, etc.)
+    query_complexity: str = "simple"  # "simple" | "composite"
+    query_complexity_source: str = "default"  # heuristic, llm, heuristic+llm, simple, default
 
 
 class IntentClassifier:
@@ -116,13 +146,18 @@ Return ONLY a JSON object (no markdown, no text before or after):
     "intent": "natural_products_only|papers_only|combined_research|follow_up|clarification|analysis|unknown",
     "confidence": 0.0-1.0,
     "reasoning": "brief explanation of why this intent was chosen",
+    "query_complexity": "simple|composite",
     "suggested_tools": ["tool1", "tool2"],
     "entities": {{
         "compounds": ["extracted chemical names"],
         "organisms": ["extracted organism names"],
         "topics": ["research topics"]
     }}
-}}"""
+}}
+
+query_complexity rules:
+- "composite" if the question compares two or more entities, asks for pros/cons, differences, or multiple distinct sub-questions in one utterance.
+- "simple" for a single focused topic without explicit comparison or multi-part structure."""
 
         try:
             response = await self.llm.complete(prompt, temperature=0.1)
@@ -158,12 +193,37 @@ Return ONLY a JSON object (no markdown, no text before or after):
                     active_kb_name,
                 )
 
+            llm_qc = result.get("query_complexity", "simple")
+            if llm_qc not in ("simple", "composite"):
+                llm_qc = "simple"
+            h_qc, h_tag = heuristic_query_complexity(query)
+            if h_tag in HEURISTIC_WEAK_COMPLEXITY_TAGS and llm_qc != "composite":
+                h_qc = "simple"
+                if h_tag:
+                    logger.info(
+                        "Intent: weak heuristic tag %r ignored (LLM query_complexity=%s)",
+                        h_tag,
+                        llm_qc,
+                    )
+            final_qc = "composite" if (h_qc == "composite" or llm_qc == "composite") else "simple"
+            if final_qc == "composite":
+                if h_qc == "composite" and llm_qc == "composite":
+                    qc_src = "heuristic+llm"
+                elif h_qc == "composite":
+                    qc_src = f"heuristic:{h_tag}"
+                else:
+                    qc_src = "llm"
+            else:
+                qc_src = "simple"
+
             return IntentResult(
                 intent=intent_map.get(result["intent"], Intent.UNKNOWN),
                 confidence=result.get("confidence", 0.5),
                 reasoning=result.get("reasoning", ""),
                 suggested_tools=tools,
-                entities=result.get("entities", {})
+                entities=result.get("entities", {}),
+                query_complexity=final_qc,
+                query_complexity_source=qc_src,
             )
             
         except Exception as e:
@@ -174,6 +234,12 @@ Return ONLY a JSON object (no markdown, no text before or after):
     def _keyword_fallback(self, query: str, active_kb_name: Optional[str] = None) -> IntentResult:
         """Simple keyword-based intent classification as fallback."""
         query_lower = query.lower()
+        h_qc, h_tag = heuristic_query_complexity(query)
+        if h_tag in HEURISTIC_WEAK_COMPLEXITY_TAGS:
+            h_qc = "simple"
+            h_tag = ""
+        qc = h_qc
+        qc_src = f"heuristic:{h_tag}" if h_tag else ("simple" if h_qc == "simple" else "heuristic")
         
         # Check for LOTUS-specific keywords
         lotus_keywords = ["lotus", "natural product", "compound", "metabolite", "structure", "chemical"]
@@ -185,7 +251,9 @@ Return ONLY a JSON object (no markdown, no text before or after):
                     confidence=0.8,
                     reasoning="Keyword-based: Explicit LOTUS request",
                     suggested_tools=self._tools_with_kb(["lotus_search"], active_kb_name),
-                    entities={}
+                    entities={},
+                    query_complexity=qc,
+                    query_complexity_source=qc_src,
                 )
             # Otherwise combined
             return IntentResult(
@@ -195,7 +263,9 @@ Return ONLY a JSON object (no markdown, no text before or after):
                 suggested_tools=self._tools_with_kb(
                     ["lotus_search", "openalex_search"], active_kb_name
                 ),
-                entities={}
+                entities={},
+                query_complexity=qc,
+                query_complexity_source=qc_src,
             )
         
         # Check for paper-specific keywords
@@ -206,7 +276,9 @@ Return ONLY a JSON object (no markdown, no text before or after):
                 confidence=0.8,
                 reasoning="Keyword-based: Explicit paper search request",
                 suggested_tools=self._tools_with_kb(["openalex_search"], active_kb_name),
-                entities={}
+                entities={},
+                query_complexity=qc,
+                query_complexity_source=qc_src,
             )
         
         # Default to combined research
@@ -217,7 +289,9 @@ Return ONLY a JSON object (no markdown, no text before or after):
             suggested_tools=self._tools_with_kb(
                 ["lotus_search", "openalex_search"], active_kb_name
             ),
-            entities={}
+            entities={},
+            query_complexity=qc,
+            query_complexity_source=qc_src,
         )
 
     @staticmethod
