@@ -61,6 +61,11 @@ class RAGRequest(BaseModel):
     use_web_search: bool = False
     filters: Optional[SearchFilters] = None
     conversation_id: Optional[str] = None
+    refined_query: Optional[str] = None
+    kb_scope: Optional[str] = None
+    # v1: optional evaluator LLM (same client; different model/provider per call)
+    evaluator_provider: Optional[str] = None
+    evaluator_model: Optional[str] = None
     databases: List[str] = Field(
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
         description="List of databases to search"

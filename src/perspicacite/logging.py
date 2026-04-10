@@ -36,52 +36,67 @@ def setup_logging(config: LoggingConfig) -> None:
     """
     Configure structured logging.
 
+    Routes structlog through stdlib logging so that any FileHandler
+    attached to the root logger (e.g. by web_app_full.py) captures output.
+
     Args:
         config: Logging configuration
     """
+    log_level = _get_log_level(config.level)
+
     if not STRUCTLOG_AVAILABLE:
         # Fall back to standard logging
         logging.basicConfig(
-            level=_get_log_level(config.level),
+            level=log_level,
             format="%(levelname)s: %(message)s",
             stream=sys.stdout,
         )
         return
 
-    # Configure structlog (avoid stdlib.filter_by_level: it requires a stdlib
-    # Logger; PrintLoggerFactory yields PrintLogger without .disabled).
-    processors = [
+    # Choose a renderer for the final output
+    if config.format == "json":
+        renderer = structlog.processors.JSONRenderer()
+    else:
+        renderer = structlog.dev.ConsoleRenderer(colors=False)
+
+    # Shared processors that run for *all* structlog loggers
+    shared_processors = [
         structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
     ]
 
-    if config.format == "json":
-        processors.extend([
-            structlog.processors.dict_tracebacks,
-            structlog.processors.JSONRenderer(),
-        ])
-    else:
-        processors.extend([
-            structlog.dev.ConsoleRenderer(colors=True),
-        ])
-
     structlog.configure(
-        processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(
-            _get_log_level(config.level)
-        ),
+        processors=[
+            *shared_processors,
+            # Convert to stdlib logging record
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
-    # Also configure standard library logging
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=_get_log_level(config.level),
+    # Configure stdlib root logger so structlog records flow to
+    # whatever handlers are attached (StreamHandler, FileHandler, etc.)
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
+        foreign_pre_chain=shared_processors,
     )
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.setLevel(log_level)
+    # Only add our handler if the root logger has none yet (web_app sets its own)
+    if not root.handlers:
+        root.addHandler(handler)
 
 
 def _get_log_level(level: str) -> int:

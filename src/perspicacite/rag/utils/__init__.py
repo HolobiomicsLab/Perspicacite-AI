@@ -236,3 +236,113 @@ def format_references_academic(papers: List[dict]) -> str:
             ref_lines.append(f"{i}. {author_str}, {year}. {title}.")
 
     return "\n".join(ref_lines)
+
+
+def deduplicate_chunk_overlaps(
+    chunks: list[Any],
+    overlap_words: int = 200,
+) -> list[dict[str, Any]]:
+    """Remove overlapping text between consecutive chunks of the same paper.
+
+    The chunker uses a sliding window where the last ``overlap_words`` of chunk N
+    are identical to the first ``overlap_words`` of chunk N+1.  This function
+    detects and trims that overlap.
+
+    Args:
+        chunks: list of DocumentChunk objects sorted by (paper_id, chunk_index)
+        overlap_words: max overlap in words (default 200 = chunk_overlap default)
+
+    Returns:
+        list of dicts with keys: text, paper_id, chunk_index, metadata
+    """
+    if not chunks:
+        return []
+
+    # Group by paper_id
+    from collections import OrderedDict
+
+    groups: OrderedDict[str, list[Any]] = OrderedDict()
+    for chunk in chunks:
+        pid = getattr(chunk.metadata, "paper_id", "") if hasattr(chunk, "metadata") else ""
+        groups.setdefault(pid, []).append(chunk)
+
+    results: list[dict[str, Any]] = []
+    for pid, paper_chunks in groups.items():
+        # Already sorted by chunk_index from the caller
+        for i, chunk in enumerate(paper_chunks):
+            text = chunk.text if hasattr(chunk, "text") else str(chunk)
+            meta = chunk.metadata if hasattr(chunk, "metadata") else None
+
+            # Check overlap with previous chunk
+            if i > 0 and overlap_words > 0:
+                prev_text = paper_chunks[i - 1].text if hasattr(paper_chunks[i - 1], "text") else ""
+                prev_words = prev_text.split()
+                # Take the tail of previous chunk
+                tail = prev_words[-overlap_words:]
+                if tail:
+                    tail_str = " ".join(tail)
+                    # Check if this tail appears at the start of current text
+                    curr_words = text.split()
+                    for match_len in range(len(tail), 0, -1):
+                        candidate = " ".join(tail[:match_len])
+                        curr_prefix = " ".join(curr_words[:match_len])
+                        if candidate and candidate == curr_prefix:
+                            # Trim the overlap from current chunk
+                            text = " ".join(curr_words[match_len:])
+                            break
+
+            results.append({
+                "text": text,
+                "paper_id": pid,
+                "chunk_index": getattr(meta, "chunk_index", i) if meta else i,
+                "metadata": meta,
+            })
+
+    return results
+
+
+def format_paper_results_for_prompt(
+    papers: list[dict[str, Any]],
+    max_chars_per_paper: int = 4000,
+) -> str:
+    """Format paper-level results for LLM prompt.
+
+    Each paper is a delimited section with metadata + truncated full text.
+
+    Args:
+        papers: list of dicts from search_two_pass()
+        max_chars_per_paper: cap per paper in characters
+
+    Returns:
+        Formatted string for inclusion in LLM prompt
+    """
+    if not papers:
+        return "No relevant papers found."
+
+    sections: list[str] = []
+    for i, paper in enumerate(papers, 1):
+        title = paper.get("title", "Unknown")
+        authors = paper.get("authors", "")
+        year = paper.get("year", "")
+        doi = paper.get("doi", "")
+        score = paper.get("paper_score", 0)
+        full_text = paper.get("full_text", "")
+
+        header = f"[Paper {i}]"
+        if title:
+            header += f" {title}"
+        if authors:
+            header += f" — {authors}"
+        if year:
+            header += f" ({year})"
+        if doi:
+            header += f" | DOI: {doi}"
+        header += f" | relevance: {score:.2f}"
+
+        # Truncate full text
+        if len(full_text) > max_chars_per_paper:
+            full_text = full_text[:max_chars_per_paper] + "\n[...truncated]"
+
+        sections.append(f"{header}\n\n{full_text}")
+
+    return "\n\n---\n\n".join(sections)

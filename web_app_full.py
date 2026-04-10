@@ -196,6 +196,7 @@ class AppState:
             embedding_provider=self.embedding_provider,
             vector_store=self.vector_store,
             max_iterations=5,
+            use_two_pass=getattr(config.knowledge_base, "use_two_pass", True),
         )
         logger.info("Agentic orchestrator initialized")
 

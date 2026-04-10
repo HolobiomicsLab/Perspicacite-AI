@@ -51,6 +51,7 @@ class KnowledgeBaseConfig(BaseModel):
     chunking_method: Literal["token", "semantic", "agentic"] = "token"
     default_top_k: int = Field(default=10, ge=1, le=100)
     similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    use_two_pass: bool = Field(default=True, description="Enable two-pass retrieval for full paper context")
 
 
 class LLMProviderConfig(BaseModel):
@@ -66,6 +67,8 @@ class LLMConfig(BaseModel):
 
     default_provider: str = "deepseek"
     default_model: str = "deepseek-chat"  # DeepSeek V3
+    # v1 core/core.py get_response: truncate mandatory + base system prompt to this length (chars)
+    max_context_window: int = Field(default=10000, ge=2000, le=500000)
 
     providers: dict[str, LLMProviderConfig] = Field(default_factory=lambda: {
         "anthropic": LLMProviderConfig(
@@ -109,6 +112,15 @@ class RAGModeSettings(BaseModel):
     build_citation_graph: bool = False
     use_hybrid: bool = False  # Use hybrid retrieval (vector + BM25)
     max_papers: int = Field(default=10, ge=1, le=50)  # Max papers to include in response (agentic mode)
+    # v1 core: optional separate model for refine_response / evaluate_response
+    evaluator_provider: Optional[str] = None
+    evaluator_model: Optional[str] = None
+    # v1 core refine_response / profonde (clamped in mode code to 1–3 where applicable)
+    refinement_iterations: int = Field(default=2, ge=1, le=5)
+    # v1 profonde: mid-cycle plan review after consecutive step failures
+    enable_plan_review: bool = True
+    # v1 get_response / profonde relevancy features
+    use_relevancy_optimization: bool = True
 
 
 class RAGModesConfig(BaseModel):

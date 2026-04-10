@@ -24,6 +24,7 @@ from perspicacite.rag.utils import (
     prepare_sources,
     get_doc_citation,
     format_documents_for_prompt,
+    format_paper_results_for_prompt,
     get_system_prompt,
 )
 
@@ -57,6 +58,7 @@ class BasicRAGMode(BaseRAGMode):
             rag_settings = rag_settings.dict()
 
         self.use_hybrid = rag_settings.get("use_hybrid", True)
+        self.use_two_pass = getattr(config.knowledge_base, "use_two_pass", True)
 
     async def execute(
         self,
@@ -71,79 +73,75 @@ class BasicRAGMode(BaseRAGMode):
 
         Ported from: core/core.py::retrieve_documents() and get_response()
         """
-        logger.info("basic_rag_start", query=request.query, use_hybrid=self.use_hybrid)
+        logger.info("basic_rag_start", query=request.query, use_hybrid=self.use_hybrid, use_two_pass=self.use_two_pass)
 
-        # Step 1: Generate query embedding
-        query_embedding = await embedding_provider.embed([request.query])
+        collection = chroma_collection_name_for_kb(request.kb_name)
 
-        # Step 2: Retrieve documents using vector search
-        logger.info("basic_retrieve_documents", query=request.query[:100])
+        if self.use_two_pass:
+            # Two-pass retrieval — identify papers, then fetch all their chunks
+            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-        raw_results = await vector_store.search(
-            collection=chroma_collection_name_for_kb(request.kb_name),
-            query_embedding=query_embedding[0],
-            top_k=self.initial_docs,
-        )
+            dkb = DynamicKnowledgeBase(
+                vector_store=vector_store,
+                embedding_service=embedding_provider,
+            )
+            dkb.collection_name = collection
+            dkb._initialized = True
 
-        logger.info("basic_retrieved_raw", count=len(raw_results))
+            paper_results = await dkb.search_two_pass(
+                request.query, top_k=self.final_max_docs
+            )
+            logger.info("basic_two_pass", papers=len(paper_results))
+        else:
+            # Legacy chunk-level retrieval (no two-pass)
+            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-        # Step 3: Apply hybrid retrieval if enabled
-        if self.use_hybrid and raw_results and llm is not None:
-            try:
-                logger.info("basic_applying_hybrid", query=request.query[:100])
+            dkb = DynamicKnowledgeBase(
+                vector_store=vector_store,
+                embedding_service=embedding_provider,
+            )
+            dkb.collection_name = collection
+            dkb._initialized = True
 
-                # Extract vector scores
-                vector_scores = [getattr(r, "score", 0.5) for r in raw_results]
+            chunk_results = await dkb.search(request.query, top_k=self.final_max_docs)
+            paper_results = []
+            for r in chunk_results:
+                meta = r.get("metadata")
+                paper_results.append({
+                    "paper_id": getattr(meta, "paper_id", None) if meta else None,
+                    "paper_score": r.get("score", 0.0),
+                    "title": getattr(meta, "title", None) if meta else None,
+                    "authors": getattr(meta, "authors", None) if meta else None,
+                    "year": getattr(meta, "year", None) if meta else None,
+                    "doi": getattr(meta, "doi", None) if meta else None,
+                    "full_text": r.get("text", ""),
+                })
+            logger.info("basic_chunk_retrieval", chunks=len(chunk_results))
 
-                # Apply hybrid retrieval
-                hybrid_results = await hybrid_retrieval(
-                    query=request.query,
-                    documents=raw_results,
-                    vector_scores=vector_scores,
-                    use_llm_weights=True,
-                    llm=llm,
-                )
+        # Build sources from paper results
+        sources = []
+        for p in paper_results:
+            sources.append(SourceReference(
+                title=p.get("title") or "Untitled",
+                authors=p.get("authors"),
+                year=p.get("year"),
+                doi=p.get("doi"),
+                relevance_score=p.get("paper_score", 0.0),
+            ))
 
-                # Replace results with hybrid-scored versions
-                raw_results = [doc for doc, _ in hybrid_results]
-                for doc, hybrid_score in hybrid_results:
-                    doc.score = hybrid_score
+        # Step 2: Generate response using full paper context
+        if paper_results:
+            context = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
+        else:
+            context = "No relevant papers found."
 
-                logger.info("basic_hybrid_applied", num_results=len(raw_results))
-
-            except Exception as e:
-                logger.warning("basic_hybrid_error", error=str(e))
-
-        # Step 4: Basic document selection (deduplication by source)
-        selected_documents = []
-        source_counts = {}
-
-        for doc in raw_results:
-            # Extract source citation
-            citation = self._get_doc_citation(doc)
-
-            # Limit docs per source
-            source_counts[citation] = source_counts.get(citation, 0) + 1
-            if source_counts[citation] > self.max_docs_per_source:
-                continue
-
-            selected_documents.append(doc)
-
-            if len(selected_documents) >= self.final_max_docs:
-                break
-
-        logger.info("basic_selected_docs", count=len(selected_documents))
-
-        # Step 4: Generate response (no refinement for Basic mode)
-        answer = await self._generate_response(
+        answer = await self._generate_response_from_context(
             query=request.query,
-            documents=selected_documents,
+            context=context,
             llm=llm,
             request=request,
+            num_papers=len(paper_results),
         )
-
-        # Step 5: Prepare sources using utility function
-        sources = prepare_sources(selected_documents, max_docs=self.final_max_docs)
 
         # Step 6: Append references section to answer using utility function
         if sources:
@@ -171,54 +169,59 @@ class BasicRAGMode(BaseRAGMode):
         """Execute Basic RAG with true streaming output."""
         yield StreamEvent.status("Basic RAG: Retrieving documents...")
 
-        # Step 1: Generate query embedding and retrieve documents
-        query_embedding = await embedding_provider.embed([request.query])
+        collection = chroma_collection_name_for_kb(request.kb_name)
 
-        raw_results = await vector_store.search(
-            collection=chroma_collection_name_for_kb(request.kb_name),
-            query_embedding=query_embedding[0],
-            top_k=self.initial_docs,
-        )
+        if self.use_two_pass:
+            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-        # Apply hybrid retrieval if enabled
-        if self.use_hybrid and raw_results and llm is not None:
-            try:
-                from perspicacite.retrieval.hybrid import hybrid_retrieval
+            dkb = DynamicKnowledgeBase(
+                vector_store=vector_store,
+                embedding_service=embedding_provider,
+            )
+            dkb.collection_name = collection
+            dkb._initialized = True
 
-                vector_scores = [getattr(r, "score", 0.5) for r in raw_results]
-                hybrid_results = await hybrid_retrieval(
-                    query=request.query,
-                    documents=raw_results,
-                    vector_scores=vector_scores,
-                    use_llm_weights=True,
-                    llm=llm,
-                )
-                raw_results = [doc for doc, _ in hybrid_results]
-                for doc, hybrid_score in hybrid_results:
-                    doc.score = hybrid_score
-            except Exception as e:
-                logger.warning("basic_hybrid_error", error=str(e))
+            paper_results = await dkb.search_two_pass(
+                request.query, top_k=self.final_max_docs
+            )
+        else:
+            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-        # Step 2: Basic document selection
-        selected_documents = []
-        source_counts = {}
+            dkb = DynamicKnowledgeBase(
+                vector_store=vector_store,
+                embedding_service=embedding_provider,
+            )
+            dkb.collection_name = collection
+            dkb._initialized = True
 
-        for doc in raw_results:
-            citation = get_doc_citation(doc)
-            source_counts[citation] = source_counts.get(citation, 0) + 1
-            if source_counts[citation] > self.max_docs_per_source:
-                continue
-            selected_documents.append(doc)
-            if len(selected_documents) >= self.final_max_docs:
-                break
+            chunk_results = await dkb.search(request.query, top_k=self.final_max_docs)
+            paper_results = []
+            for r in chunk_results:
+                meta = r.get("metadata")
+                paper_results.append({
+                    "paper_id": getattr(meta, "paper_id", None) if meta else None,
+                    "paper_score": r.get("score", 0.0),
+                    "title": getattr(meta, "title", None) if meta else None,
+                    "authors": getattr(meta, "authors", None) if meta else None,
+                    "year": getattr(meta, "year", None) if meta else None,
+                    "doi": getattr(meta, "doi", None) if meta else None,
+                    "full_text": r.get("text", ""),
+                })
 
-        # Step 3: Prepare sources
-        sources = prepare_sources(selected_documents, max_docs=self.final_max_docs)
+        # Prepare sources
+        sources = []
+        for p in paper_results:
+            sources.append(SourceReference(
+                title=p.get("title") or "Untitled",
+                authors=p.get("authors"),
+                year=p.get("year"),
+                doi=p.get("doi"),
+                relevance_score=p.get("paper_score", 0.0),
+            ))
         for source in sources:
             yield StreamEvent.source(source)
 
-        # Step 4: Stream the response generation
-        if not selected_documents:
+        if not paper_results:
             yield StreamEvent.content("No relevant documents found to answer your question.")
             yield StreamEvent.done(
                 conversation_id="",
@@ -230,7 +233,7 @@ class BasicRAGMode(BaseRAGMode):
 
         yield StreamEvent.status("Basic RAG: Generating response...")
 
-        context = format_documents_for_prompt(selected_documents)
+        context = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
         messages = [
             {"role": "system", "content": get_system_prompt()},
             {"role": "user", "content": f"Documents:\n{context}\n\nQuestion: {request.query}"},
@@ -314,6 +317,47 @@ Instructions:
                 provider=request.provider,
                 max_tokens=2000,
                 temperature=0.3,
+            )
+            return response
+        except Exception as e:
+            logger.error("basic_response_generation_error", error=str(e))
+            return f"Error generating response: {e}"
+
+    async def _generate_response_from_context(
+        self,
+        query: str,
+        context: str,
+        llm: Any,
+        request: RAGRequest,
+        num_papers: int = 0,
+    ) -> str:
+        """Generate response from pre-formatted paper context."""
+        template = f"""Based on the following research papers, please answer this question:
+
+Question: {query}
+
+{context}
+
+---
+
+Instructions:
+- Provide a comprehensive answer with clear sections
+- Use markdown formatting (headings ##, bullet points -, minimal bold **)
+- Base your answer on the papers provided
+- Number of papers: {num_papers}
+- IMPORTANT: Extract ALL specific names, tools, methods, chemicals, organisms, or other entities mentioned in the papers that are relevant to the question. Do NOT say "specific names are not listed" if the papers contain them.
+- Be specific and concrete — cite specific tools, software, methods, or findings by name rather than giving vague generalizations."""
+
+        try:
+            response = await llm.complete(
+                messages=[
+                    {"role": "system", "content": get_system_prompt()},
+                    {"role": "user", "content": template},
+                ],
+                model=request.model,
+                provider=request.provider,
+                max_tokens=2000,
+                temperature=0.15,
             )
             return response
         except Exception as e:

@@ -28,13 +28,15 @@ from perspicacite.rag.prompts import (
 )
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.retrieval.hybrid import hybrid_retrieval
+from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
 from perspicacite.rag.utils import (
     format_references,
     prepare_sources,
     get_doc_citation,
     format_documents_for_prompt,
-    get_system_prompt,
+    format_paper_results_for_prompt,
 )
+from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_documents
 
 logger = get_logger("perspicacite.rag.modes.advanced")
 
@@ -71,6 +73,7 @@ class AdvancedRAGMode(BaseRAGMode):
         self.rephrases = 3  # Number of additional queries to generate
         self.use_refinement = rag_settings.get("enable_reflection", False)
         self.use_hybrid = rag_settings.get("use_hybrid", True)  # Enable hybrid retrieval by default
+        self.use_two_pass = getattr(config.knowledge_base, "use_two_pass", True)
 
         # WRRF constants from release package
         self.wrrf_k = 60
@@ -78,6 +81,133 @@ class AdvancedRAGMode(BaseRAGMode):
         # Sigmoid parameters for score normalization
         self.pth = 0.8  # threshold
         self.stp = 30  # steepness
+        # v1 get_response: relevancy reorder + focus instructions
+        self.use_relevancy_optimization = rag_settings.get("use_relevancy_optimization", True)
+        # v1 profonde: refinement_iterations clamped 1–3; core refine_response default 2
+        self.refinement_iterations = max(1, min(int(rag_settings.get("refinement_iterations", 2)), 3))
+        self.evaluator_model = rag_settings.get("evaluator_model")
+        self.evaluator_provider = rag_settings.get("evaluator_provider")
+        # v1 get_response: max length for mandatory + DEFAULT_SYSTEM_PROMPT before focus instructions
+        llm_cfg = getattr(config, "llm", None)
+        self.max_context_window = int(
+            getattr(llm_cfg, "max_context_window", None) or 10000
+        )
+
+    def _truncate_combined_prompt_base(self, combined_prompt: str) -> str:
+        """core/core.py get_response: truncate mandatory + system only (before focus)."""
+        if len(combined_prompt) <= self.max_context_window:
+            return combined_prompt
+        logger.warning(
+            "advanced_prompt_truncated",
+            original_len=len(combined_prompt),
+            limit=self.max_context_window,
+        )
+        return combined_prompt[: self.max_context_window]
+
+    @staticmethod
+    def _clean_refined_response(text: str) -> str:
+        """Approximate v1 LLMWrapper._clean_response when refinement exits early on high score."""
+        t = (text or "").strip()
+        if t.startswith("```"):
+            if t.startswith("```json"):
+                t = t.split("```json", 1)[1]
+            else:
+                t = t.split("```", 1)[1]
+            if t.rstrip().endswith("```"):
+                t = t.rsplit("```", 1)[0]
+        return t.strip()
+
+    def _v1_question_line(self, request: RAGRequest) -> str:
+        """core/core.py get_response question field."""
+        original_query = request.query
+        refined = getattr(request, "refined_query", None) or request.query
+        return (
+            f"User original question: {original_query}\n"
+            f"User refined question (based on conversation history): {refined}"
+        )
+
+    def _v1_metadata_dict(self, doc: Any) -> dict[str, Any]:
+        if hasattr(doc, "chunk") and hasattr(doc.chunk, "metadata"):
+            m = doc.chunk.metadata
+            if hasattr(m, "model_dump"):
+                d = m.model_dump()
+            elif isinstance(m, dict):
+                d = dict(m)
+            else:
+                d = {
+                    "citation": getattr(m, "citation", None) or getattr(m, "title", ""),
+                    "url": getattr(m, "url", "") or "",
+                    "chunk": str(getattr(m, "year", "") or getattr(m, "chunk", "")),
+                }
+            d.setdefault("citation", get_doc_citation(doc))
+            d.setdefault("url", "")
+            d.setdefault("chunk", "")
+            return d
+        return {"citation": "Unknown", "url": "", "chunk": ""}
+
+    def _v1_context_and_citations(self, documents: list[Any]) -> tuple[str, str]:
+        """Build context_with_citations + citation_list like core/core.py get_response."""
+        context_with_citations = ""
+        source_counter: Counter[tuple[str, str]] = Counter()
+        for doc in documents:
+            text = doc_page_content(doc)
+            md = self._v1_metadata_dict(doc)
+            cit = md.get("citation") or "Unknown"
+            url = md.get("url") or ""
+            context_with_citations += f"{text}, Citation: {cit})\n\n"
+            source_counter[(url, cit)] += 1
+
+        citations: list[str] = []
+        for (url, citation), count in source_counter.items():
+            chunk = "Unknown date"
+            for d in documents:
+                m = self._v1_metadata_dict(d)
+                if m.get("url") == url and m.get("citation") == citation:
+                    chunk = str(m.get("chunk", "Unknown date"))
+                    break
+            citations.append(f"{citation}. Accessed on: {chunk} (url: {url}). [{count} docs]")
+        citation_list = "\n".join(citations)
+        return context_with_citations, citation_list
+
+    def _build_v1_answer_chat_chunk_docs(
+        self,
+        request: RAGRequest,
+        documents: list[Any],
+    ) -> tuple[str, str, float]:
+        """
+        Same prompt structure as core/core.py get_response for chunk-level docs
+        (streaming path; no two-pass).
+        """
+        kb_title = getattr(request, "kb_name", None) or "Perspicacité"
+        kb_scope = getattr(request, "kb_scope", None) or "scientific research and education"
+        mandatory = get_mandatory_prompt(kb_title, kb_scope)
+        combined_prompt = self._truncate_combined_prompt_base(
+            mandatory + "\n" + DEFAULT_SYSTEM_PROMPT
+        )
+        if self.use_relevancy_optimization:
+            combined_prompt = combined_prompt + "\n" + FOCUS_INSTRUCTIONS_PROMPT
+
+        context_with_citations, citation_list = self._v1_context_and_citations(documents)
+        n_docs = len(documents)
+        n_sources = len({get_doc_citation(d) for d in documents})
+        question = self._v1_question_line(request)
+        user_template = f"""System prompt: {combined_prompt}
+Context: {context_with_citations}
+Format: {FORMAT_PROMPT}
+Question: {question}
+
+Additional information:
+- Total documents used: {n_docs}
+- Unique sources: {n_sources}
+Sources:
+{citation_list}
+"""
+        if self.use_relevancy_optimization:
+            qc = assess_query_complexity(getattr(request, "refined_query", None) or request.query)
+            temperature = 0.7 if qc > 0.7 else 0.3
+        else:
+            temperature = 0.3
+        return combined_prompt, user_template, temperature
 
     async def execute(
         self,
@@ -116,14 +246,72 @@ class AdvancedRAGMode(BaseRAGMode):
             llm=llm,
         )
 
-        logger.info("advanced_selected_docs", count=len(selected_documents))
+        logger.info("advanced_selected_docs", count=len(selected_documents), use_two_pass=self.use_two_pass)
 
-        # Step 3: Generate response (with optional refinement)
-        answer = await self._generate_response(
+        retrieval_docs_for_refine = list(selected_documents)
+        if self.use_relevancy_optimization and selected_documents:
+            selected_documents = reorder_documents_by_relevance(
+                getattr(request, "refined_query", None) or request.query,
+                selected_documents,
+            )
+
+        # Step 2b: Two-pass — fetch full text for selected papers
+        paper_results = []
+        if self.use_two_pass:
+            from perspicacite.rag.utils import deduplicate_chunk_overlaps
+
+            paper_ids = []
+            paper_scores: dict[str, float] = {}
+            paper_meta: dict[str, Any] = {}
+            for doc in selected_documents:
+                meta = getattr(doc, "chunk", None)
+                if meta and hasattr(meta, "metadata"):
+                    pid = getattr(meta.metadata, "paper_id", None)
+                    if pid and pid not in paper_ids:
+                        paper_ids.append(pid)
+                        score = getattr(doc, "wrrf_score", getattr(doc, "score", 0.5))
+                        paper_scores[pid] = score
+                        paper_meta[pid] = meta.metadata
+
+            if paper_ids:
+                all_chunks = await vector_store.get_chunks_by_paper_ids(
+                    chroma_collection_name_for_kb(request.kb_name), paper_ids
+                )
+                deduped = deduplicate_chunk_overlaps(all_chunks)
+                # Group by paper
+                from collections import OrderedDict
+                grouped: OrderedDict[str, list] = OrderedDict()
+                for d in deduped:
+                    grouped.setdefault(d["paper_id"], []).append(d)
+                for pid in paper_ids:
+                    chunks_list = grouped.get(pid, [])
+                    full_text = " ".join(c["text"] for c in chunks_list)
+                    meta = paper_meta.get(pid)
+                    paper_results.append({
+                        "paper_id": pid,
+                        "paper_score": paper_scores[pid],
+                        "title": getattr(meta, "title", None),
+                        "authors": getattr(meta, "authors", None),
+                        "year": getattr(meta, "year", None),
+                        "doi": getattr(meta, "doi", None),
+                        "chunks": chunks_list,
+                        "full_text": full_text,
+                    })
+
+        # Step 3: Generate response using full paper context
+        if paper_results:
+            context = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
+        else:
+            context = format_documents_for_prompt(selected_documents)
+
+        answer = await self._generate_response_from_context(
             query=request.query,
-            documents=selected_documents,
+            context=context,
             llm=llm,
             request=request,
+            num_papers=len(paper_results),
+            source_documents=retrieval_docs_for_refine if not paper_results else None,
+            paper_results=paper_results,
         )
 
         # Step 4: Apply refinement if enabled (Advanced mode feature)
@@ -132,13 +320,29 @@ class AdvancedRAGMode(BaseRAGMode):
             answer = await self._refine_response(
                 response=answer,
                 query=request.query,
-                documents=selected_documents,
+                context=context,
+                documents=retrieval_docs_for_refine,
                 llm=llm,
                 request=request,
+                max_iterations=self.refinement_iterations,
+                eval_model=getattr(request, "evaluator_model", None),
+                eval_provider=getattr(request, "evaluator_provider", None),
             )
 
         # Step 5: Prepare sources
-        sources = self._prepare_sources(selected_documents)
+        if paper_results:
+            sources = []
+            for p in paper_results:
+                from perspicacite.models.rag import SourceReference
+                sources.append(SourceReference(
+                    title=p.get("title") or "Untitled",
+                    authors=p.get("authors"),
+                    year=p.get("year"),
+                    doi=p.get("doi"),
+                    relevance_score=p.get("paper_score", 0.0),
+                ))
+        else:
+            sources = self._prepare_sources(selected_documents)
 
         # Step 6: Append references section to answer
         if sources:
@@ -186,6 +390,12 @@ class AdvancedRAGMode(BaseRAGMode):
             llm=llm,
         )
 
+        if self.use_relevancy_optimization and selected_documents:
+            selected_documents = reorder_documents_by_relevance(
+                getattr(request, "refined_query", None) or request.query,
+                selected_documents,
+            )
+
         # Step 3: Prepare sources
         sources = self._prepare_sources(selected_documents)
         for source in sources:
@@ -204,32 +414,39 @@ class AdvancedRAGMode(BaseRAGMode):
 
         yield StreamEvent.status("Advanced RAG: Generating response...")
 
-        context = format_documents_for_prompt(selected_documents)
+        combined_prompt, user_template, temperature = self._build_v1_answer_chat_chunk_docs(
+            request, selected_documents
+        )
         messages = [
-            {"role": "system", "content": get_system_prompt()},
-            {"role": "user", "content": f"Documents:\n{context}\n\nQuestion: {request.query}"},
+            {"role": "system", "content": combined_prompt},
+            {"role": "user", "content": user_template},
         ]
+        model = getattr(request, "model", "") or ""
+        is_o_series = model.startswith("o") or "gpt-5" in model
 
-        # Stream the LLM response
+        # Stream the LLM response (v1 get_response structure; no refinement when streaming)
         full_response = ""
         try:
-            async for chunk in llm.stream(
-                messages=messages,
-                model=request.model,
-                provider=request.provider,
-                max_tokens=2000,
-                temperature=0.3,
-            ):
+            stream_kwargs: dict[str, Any] = {
+                "messages": messages,
+                "model": request.model,
+                "provider": request.provider,
+                "max_tokens": 2000,
+            }
+            if not is_o_series:
+                stream_kwargs["temperature"] = temperature
+            async for chunk in llm.stream(**stream_kwargs):
                 full_response += chunk
                 yield StreamEvent.content(chunk)
         except Exception as e:
             logger.error("advanced_streaming_error", error=str(e))
-            # Fall back to non-streaming
-            answer = await self._generate_response(
+            # Fall back to non-streaming (same v1 template as execute)
+            answer = await self._generate_response_from_context(
                 query=request.query,
-                documents=selected_documents,
+                context="",
                 llm=llm,
                 request=request,
+                source_documents=selected_documents,
             )
             yield StreamEvent.content(answer)
             full_response = answer
@@ -335,15 +552,13 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
 
             scores_per_query[q_idx] = {}
 
-            # Apply hybrid retrieval if enabled (first query only to avoid redundancy)
-            if self.use_hybrid and q_idx == 0 and results and llm is not None:
+            # v1: hybrid for every query when advanced_mode + use_hybrid
+            if self.use_hybrid and results and llm is not None:
                 try:
                     logger.info("advanced_applying_hybrid", query=query[:100])
 
-                    # Extract vector scores
                     vector_scores = [getattr(r, "score", 0.5) for r in results]
 
-                    # Apply hybrid retrieval
                     hybrid_results = await hybrid_retrieval(
                         query=query,
                         documents=results,
@@ -352,7 +567,6 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                         llm=llm,
                     )
 
-                    # Replace results with hybrid-scored versions
                     results = [doc for doc, _ in hybrid_results]
                     for doc, hybrid_score in hybrid_results:
                         doc.score = hybrid_score
@@ -364,8 +578,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
 
             # Process results for this query
             for rank, doc in enumerate(results, start=1):
-                # Use content as doc_id for deduplication
-                doc_id = self._get_doc_content_hash(doc)
+                doc_id = doc_page_content(doc)
 
                 # Get relevance score (normalized)
                 score = getattr(doc, "score", 0.5)
@@ -393,49 +606,27 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 total_score += norm_score / (self.wrrf_k + rank)
             wrrf_scores[doc_id] = total_score
 
-        # Sort by WRRF score
         sorted_docs = sorted(wrrf_scores.items(), key=lambda x: x[1], reverse=True)
 
         if not sorted_docs:
             logger.warning("advanced_wrrf_no_documents")
             return []
 
-        # Select final documents with source diversity
-        selected_documents = []
-        source_counter = Counter()
-
-        for doc_id, score in sorted_docs:
-            if len(selected_documents) >= self.final_max_docs:
-                break
-
-            doc = documents_info[doc_id]
-            source = self._get_doc_citation(doc)
-
-            if source_counter[source] >= self.max_docs_per_source:
-                continue
-
-            # Attach the WRRF score to the document
-            doc.wrrf_score = score
-            selected_documents.append(doc)
-            source_counter[source] += 1
+        selected_documents = select_wrrf_merged_documents(
+            sorted_docs,
+            documents_info,
+            self.final_max_docs,
+            self.max_docs_per_source,
+        )
 
         logger.info(
             "advanced_wrrf_selected",
             total_docs=len(sorted_docs),
             selected=len(selected_documents),
-            unique_sources=len(source_counter),
             hybrid_used=self.use_hybrid,
         )
 
         return selected_documents
-
-    def _get_doc_content_hash(self, doc: Any) -> str:
-        """Get a hash/id for a document for deduplication."""
-        if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
-            return hash(doc.chunk.text[:200])  # Use first 200 chars as ID
-        if hasattr(doc, "content"):
-            return hash(str(doc.content)[:200])
-        return hash(str(doc))
 
     def _get_doc_citation(self, doc: Any) -> str:
         """Extract citation from document."""
@@ -501,36 +692,152 @@ Provide a comprehensive answer based on the documents above."""
             logger.error("advanced_response_generation_error", error=str(e))
             return f"Error generating response: {e}"
 
+    async def _generate_response_from_context(
+        self,
+        query: str,
+        context: str,
+        llm: Any,
+        request: RAGRequest,
+        num_papers: int = 0,
+        source_documents: list[Any] | None = None,
+        paper_results: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """core/core.py get_response template; two-pass uses same structure with paper dicts."""
+        if (
+            (not context or context == "No relevant papers found.")
+            and not paper_results
+            and not source_documents
+        ):
+            return "No relevant documents found to answer your question."
+
+        kb_title = getattr(request, "kb_name", None) or "Perspicacité"
+        kb_scope = getattr(request, "kb_scope", None) or "scientific research and education"
+        mandatory = get_mandatory_prompt(kb_title, kb_scope)
+        combined_prompt = self._truncate_combined_prompt_base(
+            mandatory + "\n" + DEFAULT_SYSTEM_PROMPT
+        )
+        if self.use_relevancy_optimization:
+            combined_prompt = combined_prompt + "\n" + FOCUS_INSTRUCTIONS_PROMPT
+
+        if paper_results:
+            context_with_citations = ""
+            sc = Counter()
+            for p in paper_results:
+                text = (p.get("full_text") or "")[:12000]
+                cit = p.get("title") or p.get("doi") or "Unknown"
+                doi = p.get("doi") or ""
+                url = f"https://doi.org/{doi}" if doi else ""
+                context_with_citations += f"{text}, Citation: {cit})\n\n"
+                sc[(url, str(cit))] += 1
+            citations: list[str] = []
+            for (url, citation), count in sc.items():
+                year = ""
+                for p in paper_results:
+                    if (p.get("title") or p.get("doi")) == citation or str(p.get("doi")) == citation:
+                        year = str(p.get("year") or "")
+                        break
+                citations.append(f"{citation}. Accessed on: {year} (url: {url}). [{count} docs]")
+            citation_list = "\n".join(citations)
+            n_docs = len(paper_results)
+            n_sources = len(sc)
+        elif source_documents:
+            context_with_citations, citation_list = self._v1_context_and_citations(source_documents)
+            n_docs = len(source_documents)
+            n_sources = len({get_doc_citation(d) for d in source_documents})
+        else:
+            context_with_citations = context
+            citation_list = ""
+            n_docs = num_papers or 1
+            n_sources = 1
+
+        question = self._v1_question_line(request)
+        template = f"""System prompt: {combined_prompt}
+Context: {context_with_citations}
+Format: {FORMAT_PROMPT}
+Question: {question}
+
+Additional information:
+- Total documents used: {n_docs}
+- Unique sources: {n_sources}
+Sources:
+{citation_list}
+"""
+
+        model = getattr(request, "model", "") or ""
+        is_o_series = model.startswith("o") or "gpt-5" in model
+        # v1 get_response: complexity-based temperature only if use_relevancy_optimization
+        if self.use_relevancy_optimization:
+            qc = assess_query_complexity(getattr(request, "refined_query", None) or request.query)
+            temperature = 0.7 if qc > 0.7 else 0.3
+        else:
+            temperature = 0.3
+        if is_o_series:
+            try:
+                return await llm.complete(
+                    messages=[
+                        {"role": "system", "content": combined_prompt},
+                        {"role": "user", "content": template},
+                    ],
+                    model=request.model,
+                    provider=request.provider,
+                    max_tokens=2000,
+                )
+            except Exception as e:
+                logger.error("advanced_response_generation_error", error=str(e))
+                return f"Error generating response: {e}"
+
+        try:
+            return await llm.complete(
+                messages=[
+                    {"role": "system", "content": combined_prompt},
+                    {"role": "user", "content": template},
+                ],
+                model=request.model,
+                provider=request.provider,
+                max_tokens=2000,
+                temperature=temperature,
+            )
+        except Exception as e:
+            logger.error("advanced_response_generation_error", error=str(e))
+            return f"Error generating response: {e}"
+
     async def _refine_response(
         self,
         response: str,
         query: str,
-        documents: list[Any],
-        llm: Any,
-        request: RAGRequest,
-        max_iterations: int = 2,
+        context: str = "",
+        documents: list[Any] | None = None,
+        llm: Any = None,
+        request: RAGRequest | None = None,
+        max_iterations: int | None = None,
+        eval_model: str | None = None,
+        eval_provider: str | None = None,
     ) -> str:
         """
         Refine response through iterative evaluation.
 
         Ported from: core/core.py::refine_response()
         """
+        mi = max_iterations if max_iterations is not None else self.refinement_iterations
         current_response = response
 
-        for i in range(max_iterations):
+        for i in range(mi):
             # Evaluate current response
             feedback = await self._evaluate_response(
                 response=current_response,
                 query=query,
                 documents=documents,
                 llm=llm,
+                request=request,
+                eval_model=eval_model,
+                eval_provider=eval_provider,
             )
 
             # Check if response is good enough
             overall_score = feedback.get("overall_score", 0)
             if overall_score >= 8:
                 logger.info("advanced_refinement_complete", score=overall_score, iteration=i + 1)
-                return current_response
+                return self._clean_refined_response(current_response)
 
             # Generate improved response
             current_response = await self._improve_response(
@@ -542,8 +849,35 @@ Provide a comprehensive answer based on the documents above."""
                 request=request,
             )
 
-        logger.info("advanced_refinement_max_iterations", iterations=max_iterations)
+        logger.info("advanced_refinement_max_iterations", iterations=mi)
+        # v1 refine_response: final evaluate_response (result logged; return is last draft)
+        try:
+            final_fb = await self._evaluate_response(
+                response=current_response,
+                query=query,
+                documents=documents,
+                llm=llm,
+                request=request,
+                eval_model=eval_model,
+                eval_provider=eval_provider,
+            )
+            logger.info("advanced_refinement_final_eval", overall_score=final_fb.get("overall_score"))
+        except Exception as e:
+            logger.debug("advanced_refinement_final_eval_skipped", error=str(e))
         return current_response
+
+    def _resolve_evaluator_model_provider(
+        self,
+        request: RAGRequest | None,
+        eval_model: str | None = None,
+        eval_provider: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        """v1 evaluator_llm: optional separate model/provider for evaluation calls."""
+        m = eval_model or (getattr(request, "evaluator_model", None) if request else None)
+        m = m or self.evaluator_model
+        p = eval_provider or (getattr(request, "evaluator_provider", None) if request else None)
+        p = p or self.evaluator_provider
+        return m, p
 
     async def _evaluate_response(
         self,
@@ -551,17 +885,23 @@ Provide a comprehensive answer based on the documents above."""
         query: str,
         documents: list[Any],
         llm: Any,
+        request: RAGRequest | None = None,
+        eval_model: str | None = None,
+        eval_provider: str | None = None,
     ) -> dict:
         """Evaluate response quality using v1 EVALUATE_RESPONSE_PROMPT."""
 
-        # Format documents for context (v1 style)
+        # Format documents for context (v1 evaluate_response: all docs)
         doc_texts = []
-        for i, doc in enumerate(documents[:3]):
-            if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
-                text = doc.chunk.text[:400]
+        for doc in documents or []:
+            if isinstance(doc, dict) and "full_text" in doc:
+                text = str(doc.get("full_text") or "")
+                citation = doc.get("title") or doc.get("doi") or "Unknown"
+            elif hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
+                text = doc.chunk.text
                 citation = get_doc_citation(doc)
             else:
-                text = str(doc)[:400]
+                text = str(doc)
                 citation = "Unknown"
             doc_texts.append(f"[Citation: {citation}]\n{text}")
         
@@ -579,14 +919,22 @@ Source documents:
 Evaluate the response according to the criteria and return a valid JSON."""
 
         try:
-            result = await llm.complete(
-                messages=[
+            eval_kw: dict[str, Any] = {
+                "messages": [
                     {"role": "system", "content": EVALUATE_RESPONSE_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=0.0,
-                max_tokens=800,
-            )
+                "temperature": 0.0,
+                "max_tokens": 800,
+            }
+            em, ep = self._resolve_evaluator_model_provider(request, eval_model, eval_provider)
+            if em and request is not None:
+                eval_kw["model"] = em
+                eval_kw["provider"] = ep or request.provider
+            elif request is not None:
+                eval_kw["model"] = request.model
+                eval_kw["provider"] = request.provider
+            result = await llm.complete(**eval_kw)
 
             import json
             import re
@@ -618,11 +966,20 @@ Evaluate the response according to the criteria and return a valid JSON."""
     ) -> str:
         """Generate improved response based on feedback using v1 format."""
 
-        # Format document summaries for context (v1 style)
+        # v1 refine_response: [{citation}]: first 300 chars per document, all docs
         doc_summaries = []
-        for i, doc in enumerate(documents[:3]):
-            excerpt = self._get_doc_excerpt(doc, max_len=300)
-            doc_summaries.append(f"Document {i+1}: {excerpt}")
+        for j, doc in enumerate(documents or [], 1):
+            if isinstance(doc, dict) and "full_text" in doc:
+                content = str(doc.get("full_text") or "")
+                citation = doc.get("title") or doc.get("doi") or f"Source {j}"
+            elif hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
+                content = doc.chunk.text
+                citation = get_doc_citation(doc)
+            else:
+                content = str(doc)
+                citation = f"Source {j}"
+            excerpt = content[:300] + ("..." if len(content) > 300 else "")
+            doc_summaries.append(f"[{citation}]: {excerpt}")
         doc_context = "\n\n".join(doc_summaries)
 
         user_message = f"""Original query: {query}
@@ -665,14 +1022,6 @@ Provide an improved response that addresses all the feedback points while stayin
     def _is_streaming(self, request: RAGRequest) -> bool:
         """Check if request is for streaming (placeholder)."""
         return False
-
-    def _get_doc_excerpt(self, doc: Any, max_len: int = 200) -> str:
-        """Get a short excerpt from a document for the refinement prompt."""
-        if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
-            return doc.chunk.text[:max_len]
-        elif hasattr(doc, "content"):
-            return str(doc.content)[:max_len]
-        return str(doc)[:max_len]
 
     def _prepare_sources(self, documents: list[Any]) -> list[SourceReference]:
         """Prepare source references from documents using utility function."""

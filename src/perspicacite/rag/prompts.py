@@ -95,25 +95,20 @@ DO NOT include any text outside the JSON structure.
 DO NOT use any line breaks within the analysis text.
 Always include all fields, even if some are empty lists or default values."""
 
-# Prompt for generating contextual queries (v1 Profound mode)
-GENERATE_CONTEXTUAL_QUERIES_PROMPT = """Generate targeted search queries to fill gaps in the information found.
-
-Consider:
-1. What specific information is still needed based on the missing aspects
-2. What alternative phrasings or related concepts might yield better results
-3. How to make queries more specific and technical
-
-Format response as JSON:
-{
-    "queries": ["query1", "query2", "query3"],
-    "reasoning": "brief explanation"
-}
-
-Guidelines:
-- Generate 2-4 queries
-- Focus on the missing aspects
-- Use scientific/technical terminology
-- Be specific and concise"""
+# Prompt for generating contextual queries — core/core.py::generate_contextual_queries (v1)
+GENERATE_CONTEXTUAL_QUERIES_PROMPT = """Generate targeted search queries based on the original query, initial documents, and identified gaps.
+    The queries should:
+    1. Focus on missing aspects
+    2. Use technical terminology from documents
+    3. Be specific and concise
+    4. Avoid redundancy with original query
+    5. Use alternative phrasings or related concepts
+    
+    Format response as JSON:
+    {
+        "queries": ["query1", "query2", ...],
+        "reasoning": "explanation of query generation strategy"
+    }"""
 
 # Prompt for refining responses (Advanced mode)
 REFINE_RESPONSE_SYSTEM_PROMPT = """You are an expert at improving responses based on specific evaluation feedback. 
@@ -258,7 +253,8 @@ Format response as JSON:
     "key_points": ["point1", "point2", ...],
     "missing_aspects": ["aspect1", "aspect2", ...],
     "purpose_fulfilled": boolean,
-    "question_answered": boolean
+    "question_answered": boolean,
+    "answer_confidence": 0.0
 }}"""
 
 # Prompt for creating research plan

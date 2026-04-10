@@ -304,6 +304,54 @@ class ChromaVectorStore:
             )
             return False
 
+    async def get_chunks_by_paper_ids(
+        self,
+        collection: str,
+        paper_ids: list[str],
+    ) -> list[DocumentChunk]:
+        """Fetch all chunks for given paper IDs using metadata filter.
+
+        Uses coll.get() with ``$in`` filter — no embedding needed.
+        Results are sorted by (paper_id, chunk_index) for contiguous reading.
+        """
+        if not paper_ids:
+            return []
+        try:
+            coll = self.client.get_collection(name=collection)
+            all_chunks: list[DocumentChunk] = []
+            batch_size = 400
+            for i in range(0, len(paper_ids), batch_size):
+                batch = paper_ids[i : i + batch_size]
+                result = coll.get(
+                    where={"paper_id": {"$in": batch}},
+                    include=["documents", "metadatas"],
+                )
+                for j, doc in enumerate(result["documents"]):
+                    meta = result["metadatas"][j] if result["metadatas"] else {}
+                    chunk = DocumentChunk(
+                        id=result["ids"][j],
+                        text=doc or "",
+                        metadata=_metadata_to_chunk(meta),
+                    )
+                    all_chunks.append(chunk)
+            all_chunks.sort(
+                key=lambda c: (c.metadata.paper_id or "", c.metadata.chunk_index or 0)
+            )
+            logger.info(
+                "get_chunks_by_paper_ids",
+                collection=collection,
+                paper_count=len(paper_ids),
+                chunk_count=len(all_chunks),
+            )
+            return all_chunks
+        except Exception as e:
+            logger.error(
+                "get_chunks_by_paper_ids_failed",
+                collection=collection,
+                error=str(e),
+            )
+            return []
+
     async def delete_documents(self, collection: str, ids: list[str]) -> int:
         """Delete documents by ID."""
         try:

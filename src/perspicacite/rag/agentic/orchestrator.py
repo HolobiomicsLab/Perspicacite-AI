@@ -165,6 +165,7 @@ class AgenticOrchestrator:
         vector_store,
         max_iterations: int = 5,
         use_hybrid: bool = True,
+        use_two_pass: bool = True,
         early_exit_confidence: float = 0.85,
         relevance_threshold: int = 3,
         max_papers_to_download: int = 10,
@@ -175,6 +176,7 @@ class AgenticOrchestrator:
         self.vector_store = vector_store
         self.max_iterations = max_iterations
         self.use_hybrid = use_hybrid
+        self.use_two_pass = True  # Default, overridden from config if available
         self.early_exit_confidence = early_exit_confidence
         
         # Paper download configuration
@@ -549,7 +551,9 @@ class AgenticOrchestrator:
                     )
                     dkb.collection_name = collection_name
                     dkb._initialized = True
-                    top_k = dkb.config.top_k
+                    # Dynamic top_k: planner can specify via tool_input
+                    planner_top_k = step.tool_input.get("top_k")
+                    top_k = planner_top_k if planner_top_k is not None else dkb.config.top_k
                     logger.info(
                         f"KB_SEARCH: top_k={top_k} min_relevance_score={dkb.config.min_relevance_score} "
                         f"embedding_model={getattr(self.embeddings, 'model_name', '?')!r}"
@@ -643,31 +647,78 @@ class AgenticOrchestrator:
                             )
 
                     if results:
-                        formatted_parts = [
-                            f"Found {len(results)} relevant documents in knowledge base:"
-                        ]
-                        for i, r in enumerate(results, 1):
-                            meta = r.get("metadata")
-                            title = (
-                                getattr(meta, "title", None) or "Unknown"
-                                if meta is not None
-                                else "Unknown"
-                            )
-                            authors = (
-                                getattr(meta, "authors", None) or "" if meta is not None else ""
-                            )
-                            year = getattr(meta, "year", None) or "" if meta is not None else ""
-                            doi = getattr(meta, "doi", None) or "" if meta is not None else ""
-                            score = r.get("score", 0)
-                            # Include more text content for better context (up to 1500 chars)
-                            raw_text = r.get("text", "") or ""
-                            text_content = raw_text[:1500]
+                        # Two-pass enrichment: fetch full paper text (if enabled)
+                        paper_ids = []
+                        paper_results = []
+                        if self.use_two_pass:
+                            for r in results:
+                                meta = r.get("metadata")
+                                pid = getattr(meta, "paper_id", None) if meta else r.get("paper_id")
+                                if pid and pid not in paper_ids:
+                                    paper_ids.append(pid)
 
-                            # Log warning if text is empty - this is a data quality issue
-                            if not raw_text.strip():
-                                logger.warning(
-                                    f"KB_SEARCH: Hit {i} has EMPTY text content for '{title}'"
-                                )
+                            if paper_ids:
+                                try:
+                                    from perspicacite.rag.utils import deduplicate_chunk_overlaps
+                                    all_chunks = await self.vector_store.get_chunks_by_paper_ids(
+                                        collection_name, paper_ids
+                                    )
+                                    if all_chunks:
+                                        deduped = deduplicate_chunk_overlaps(all_chunks)
+                                        from collections import OrderedDict
+                                        grouped: OrderedDict = OrderedDict()
+                                        for d in deduped:
+                                            grouped.setdefault(d["paper_id"], []).append(d)
+                                        for pid in paper_ids:
+                                            clist = grouped.get(pid, [])
+                                            full_text = " ".join(c["text"] for c in clist)
+                                            meta_obj = clist[0]["metadata"] if clist else None
+                                            # Find score from pass-1 results
+                                            score = 0.5
+                                            for r in results:
+                                                m = r.get("metadata")
+                                                rp = getattr(m, "paper_id", None) if m else r.get("paper_id")
+                                                if rp == pid:
+                                                    score = r.get("score", 0.5)
+                                                    break
+                                            paper_results.append({
+                                                "paper_id": pid,
+                                                "paper_score": score,
+                                                "title": getattr(meta_obj, "title", None) if meta_obj else None,
+                                                "authors": getattr(meta_obj, "authors", None) if meta_obj else None,
+                                                "year": getattr(meta_obj, "year", None) if meta_obj else None,
+                                                "doi": getattr(meta_obj, "doi", None) if meta_obj else None,
+                                                "full_text": full_text,
+                                                "source": "kb_search",
+                                            })
+                                        logger.info(
+                                            f"KB_SEARCH: two-pass enrichment: {len(paper_ids)} papers, "
+                                            f"{len(all_chunks)} chunks total"
+                                        )
+                                except Exception as e:
+                                    logger.warning(f"KB_SEARCH: two-pass enrichment failed: {e}")
+
+                        # Format results for the agent
+                        formatted_parts = [
+                            f"Found {len(paper_results or results)} relevant documents in knowledge base:"
+                        ]
+                        items = paper_results if paper_results else results
+                        for i, item in enumerate(items, 1):
+                            if isinstance(item, dict) and "full_text" in item:
+                                title = item.get("title") or "Unknown"
+                                authors = item.get("authors") or ""
+                                year = item.get("year") or ""
+                                doi = item.get("doi") or ""
+                                score = item.get("paper_score", 0)
+                                text_content = item["full_text"][:8000]
+                            else:
+                                meta = item.get("metadata")
+                                title = getattr(meta, "title", None) or "Unknown" if meta else "Unknown"
+                                authors = getattr(meta, "authors", None) or "" if meta else ""
+                                year = getattr(meta, "year", None) or "" if meta else ""
+                                doi = getattr(meta, "doi", None) or "" if meta else ""
+                                score = item.get("score", 0)
+                                text_content = (item.get("text", "") or "")[:1500]
 
                             formatted_parts.append(f"\n- {title} (relevance: {score:.2f})")
                             if authors:
@@ -678,7 +729,7 @@ class AgenticOrchestrator:
                                 formatted_parts.append(f"   DOI: {doi}")
                             if text_content:
                                 formatted_parts.append(f"   Content: {text_content}")
-                                if len(raw_text) > 1500:
+                                if len(item.get("full_text", item.get("text", ""))) > 8000:
                                     formatted_parts.append("   [... content truncated ...]")
                             else:
                                 formatted_parts.append("   Content: [No text content available]")

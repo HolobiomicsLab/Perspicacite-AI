@@ -161,7 +161,7 @@ SEARCH STRATEGY (follow this like a senior researcher would):
 Step Types:
 - lotus_search: Natural products, chemical structures
 - literature_search: Academic literature search via SciLEx (multi-API: Semantic Scholar, OpenAlex, PubMed, etc.)
-- kb_search: Search existing knowledge base
+- kb_search: Search existing knowledge base. Use top_k (1-20) in tool_input to control how many papers to retrieve (3-5 for targeted queries, 10-20 for broad surveys).
 - analyze: Process and extract insights
 - answer: Final response
 
@@ -181,7 +181,7 @@ Return JSON only (no markdown):
             "type": "lotus_search|literature_search|kb_search|analyze|synthesize|answer",
             "description": "what this step does",
             "tool": "tool_name",
-            "tool_input": {{"query": "CLEAN search query using ONLY original query terms"}},
+            "tool_input": {{"query": "CLEAN search query using ONLY original query terms", "top_k": 5}},
             "depends_on": [],
             "condition": null
         }}

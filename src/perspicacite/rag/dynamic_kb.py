@@ -271,6 +271,105 @@ Abstract:
 
         return filtered
 
+    async def search_two_pass(
+        self,
+        query: str,
+        top_k: int | None = None,
+        min_score: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Two-pass retrieval: identify relevant papers, then fetch all their chunks.
+
+        Pass 1 uses existing ``search()`` to find top papers (deduplicated by
+        paper_id).  Pass 2 fetches ALL chunks for those papers via
+        ``get_chunks_by_paper_ids()`` and removes chunk overlaps.
+
+        Returns:
+            Paper-level dicts with keys: paper_id, paper_score, title, authors,
+            year, doi, chunks, full_text.
+        """
+        if not self._initialized:
+            raise RuntimeError("Knowledge base not initialized")
+
+        top_k = top_k or self.config.top_k
+        min_score = min_score or self.config.min_relevance_score
+
+        # ── Pass 1: identify relevant papers ───────────────────────────
+        hit_chunks = await self.search(query, top_k=top_k, min_score=min_score)
+        if not hit_chunks:
+            return []
+
+        # Build paper_id → best score mapping
+        paper_scores: dict[str, float] = {}
+        paper_meta: dict[str, Any] = {}
+        for hit in hit_chunks:
+            pid = hit["paper_id"]
+            score = hit["score"]
+            if pid not in paper_scores or score > paper_scores[pid]:
+                paper_scores[pid] = score
+                meta = hit["metadata"]
+                paper_meta[pid] = meta
+
+        paper_ids = list(paper_scores.keys())
+
+        # ── Pass 2: fetch all chunks for those papers ──────────────────
+        all_chunks = await self.vector_store.get_chunks_by_paper_ids(
+            self.collection_name, paper_ids
+        )
+        if not all_chunks:
+            # Fallback: return pass-1 results as-is
+            return [
+                {
+                    "paper_id": hit["paper_id"],
+                    "paper_score": hit["score"],
+                    "title": getattr(hit["metadata"], "title", None),
+                    "authors": getattr(hit["metadata"], "authors", None),
+                    "year": getattr(hit["metadata"], "year", None),
+                    "doi": getattr(hit["metadata"], "doi", None),
+                    "chunks": [{"chunk_index": 0, "text": hit["text"]}],
+                    "full_text": hit["text"],
+                }
+                for hit in hit_chunks
+            ]
+
+        # Remove chunk overlaps
+        from perspicacite.rag.utils import deduplicate_chunk_overlaps
+
+        deduped = deduplicate_chunk_overlaps(
+            all_chunks, overlap_words=self.config.chunk_overlap
+        )
+
+        # Group by paper_id and build result
+        from collections import OrderedDict
+
+        grouped: OrderedDict[str, list[dict]] = OrderedDict()
+        for d in deduped:
+            grouped.setdefault(d["paper_id"], []).append(d)
+
+        # Preserve pass-1 score ranking
+        results: list[dict[str, Any]] = []
+        for pid in paper_ids:
+            chunks_list = grouped.get(pid, [])
+            full_text = " ".join(c["text"] for c in chunks_list)
+            meta = paper_meta.get(pid)
+            results.append({
+                "paper_id": pid,
+                "paper_score": paper_scores[pid],
+                "title": getattr(meta, "title", None),
+                "authors": getattr(meta, "authors", None),
+                "year": getattr(meta, "year", None),
+                "doi": getattr(meta, "doi", None),
+                "chunks": chunks_list,
+                "full_text": full_text,
+            })
+
+        logger.info(
+            "search_two_pass_complete",
+            query=query[:80],
+            papers=len(results),
+            chunks=len(deduped),
+        )
+        return results
+
     async def cleanup(self) -> None:
         """Clean up the session collection."""
         if not self._initialized:

@@ -2593,12 +2593,21 @@
 
         function createThinkingMessage() {
             const container = document.getElementById('chat-container');
+            const modeEl = document.getElementById('mode-dropdown');
+            const mode = modeEl ? modeEl.value : 'basic';
+            const modeLabels = {
+                'basic': '📖 Basic Retrieval',
+                'advanced': '🔍 Advanced Analysis',
+                'profound': '🔬 Profound Research',
+                'agentic': '🤖 Agent Thinking',
+            };
+            const label = modeLabels[mode] || '🧠 Processing';
             const div = document.createElement('div');
             div.className = 'message assistant thinking-message';
             div.innerHTML = `
                 <div class="thinking-header-bar" onclick="toggleThinkingMessage(this.parentElement)">
                     <span class="thinking-toggle">▶</span>
-                    <span>🧠 Agent Thinking</span>
+                    <span>${label}</span>
                     <span class="thinking-count"></span>
                 </div>
                 <div class="thinking-content collapsed">
