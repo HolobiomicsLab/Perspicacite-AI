@@ -281,7 +281,7 @@ Return JSON only (no markdown):
             else:
                 logger.info("Planner LLM response on failure: (none)")
             
-            return self._build_fallback_plan(
+            return await self._build_fallback_plan(
                 query,
                 intent_result,
                 available_tools,
@@ -290,7 +290,7 @@ Return JSON only (no markdown):
                 query_complexity=getattr(intent_result, "query_complexity", "simple"),
             )
 
-    def _build_fallback_plan(
+    async def _build_fallback_plan(
         self,
         query: str,
         intent_result,
@@ -319,7 +319,7 @@ Return JSON only (no markdown):
         elif intent == Intent.PAPERS_ONLY:
             if "literature_search" in available_tools:
                 sub_queries = (
-                    self._composite_subqueries(clean_query)
+                    await self.composite_subqueries_with_llm(clean_query)
                     if query_complexity == "composite"
                     else [clean_query]
                 )
@@ -336,13 +336,15 @@ Return JSON only (no markdown):
         
         elif intent == Intent.COMBINED_RESEARCH:
             step_counter = 1
+            composite_subs = (
+                await self.composite_subqueries_with_llm(clean_query)
+                if query_complexity == "composite"
+                else None
+            )
             if active_kb_name and "kb_search" in available_tools:
-                kb_queries = (
-                    self._composite_subqueries(clean_query)
-                    if query_complexity == "composite"
-                    else [clean_query]
-                )
-                kb_queries = list(dict.fromkeys(kb_queries))[:3]
+                kb_queries = list(dict.fromkeys(
+                    composite_subs if composite_subs else [clean_query]
+                ))[:3]
                 for sub_q in kb_queries:
                     fallback_steps.append(Step(
                         id=f"step_kb_{step_counter}",
@@ -363,14 +365,11 @@ Return JSON only (no markdown):
                     depends_on=[],
                 ))
                 step_counter += 1
-            
+
             if "literature_search" in available_tools:
-                sub_queries = (
-                    self._composite_subqueries(clean_query)
-                    if query_complexity == "composite"
-                    else self._decompose_query(clean_query)
-                )
-                sub_queries = list(dict.fromkeys(sub_queries))[:3]
+                sub_queries = list(dict.fromkeys(
+                    composite_subs if composite_subs else self._decompose_query(clean_query)
+                ))[:3]
                 for sub_q in sub_queries:
                     fallback_steps.append(Step(
                         id=f"step{step_counter}",
@@ -448,7 +447,7 @@ Return JSON only (no markdown):
 
     @staticmethod
     def _composite_subqueries(clean_query: str) -> List[str]:
-        """Split a comparison / multi-entity query into 2–3 search phrases using only the given text."""
+        """Split a comparison / multi-entity query into 2-3 search phrases (regex only)."""
         q = (clean_query or "").strip()
         if not q:
             return [clean_query]
@@ -466,6 +465,42 @@ Return JSON only (no markdown):
             if len(a) > 3 and len(b) > 3:
                 return [a, b][:3]
         return [q]
+
+    async def composite_subqueries_with_llm(self, clean_query: str) -> List[str]:
+        """Split a composite query into 2-3 search phrases.
+
+        Tries regex first via ``_composite_subqueries``.  If that yields only a
+        single phrase (regex couldn't find a split point), falls back to a
+        lightweight LLM call to decompose the query.
+        """
+        regex_result = self._composite_subqueries(clean_query)
+        if len(regex_result) >= 2:
+            return regex_result
+
+        prompt = (
+            "Split the following research query into 2-3 distinct, "
+            "non-overlapping search phrases. Each phrase should target a "
+            "different aspect or entity in the query. Use ONLY words from "
+            "the original query — do not invent synonyms or add terms.\n\n"
+            f'Query: "{clean_query}"\n\n'
+            'Return JSON: {"sub_queries": ["phrase1", "phrase2"]}\n'
+            "Valid JSON only:"
+        )
+        try:
+            raw = await self.llm.complete(prompt, temperature=0.0, max_tokens=256)
+            cleaned = _strip_markdown_fences(raw)
+            data = json.loads(cleaned)
+            subs = data.get("sub_queries", [])
+            subs = [s.strip() for s in subs if isinstance(s, str) and len(s.strip()) > 2]
+            if len(subs) >= 2:
+                logger.info(
+                    f"LLM composite decomposition: {clean_query!r} → {subs[:3]}"
+                )
+                return subs[:3]
+        except Exception as e:
+            logger.warning(f"LLM composite decomposition failed: {e}")
+
+        return regex_result
     
     async def replan(
         self,

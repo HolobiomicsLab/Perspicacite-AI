@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 # Cap per-paper extraction LLM calls during final answer (map-reduce style).
 MAP_REDUCE_MAX_PAPERS = 8
 
+# Maximum number of replan iterations before forcing answer generation.
+MAX_REPLANS = 3
+
 
 @dataclass
 class EvidenceFacet:
@@ -44,6 +47,31 @@ class EvidenceFacet:
         if n <= 2:
             return "partial"
         return "covered"
+
+    @property
+    def confidence(self) -> float:
+        """Heuristic confidence score in [0, 1] for this facet.
+
+        Blends entry count, average relevance score, and full-text availability.
+        """
+        if not self.entries:
+            return 0.0
+
+        n = len(self.entries)
+        count_score = min(n / 5, 1.0)
+
+        relevance_scores = [
+            e.get("relevance_score", 3) for e in self.entries
+        ]
+        avg_rel = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 3.0
+        rel_score = min(max((avg_rel - 1) / 4, 0.0), 1.0)  # map [1,5] → [0,1]
+
+        full_text_count = sum(
+            1 for e in self.entries if e.get("pdf_downloaded") or e.get("full_text")
+        )
+        ft_score = min(full_text_count / max(n, 1), 1.0)
+
+        return round(0.45 * count_score + 0.35 * rel_score + 0.20 * ft_score, 4)
 
     def _entry_key(self, e: Dict[str, Any]) -> str:
         doi = (e.get("doi") or "").strip().lower()
@@ -113,6 +141,17 @@ class EvidenceStore:
     def gap_summary(self) -> Dict[str, str]:
         """Return {facet_key: status} for all facets."""
         return {k: f.status for k, f in self.facets.items()}
+
+    def facet_confidences(self) -> Dict[str, float]:
+        """Return {facet_key: confidence} for all facets."""
+        return {k: f.confidence for k, f in self.facets.items()}
+
+    def overall_confidence(self) -> float:
+        """Weighted-average confidence across facets (equal weight)."""
+        if not self.facets:
+            return 0.0
+        confs = [f.confidence for f in self.facets.values()]
+        return sum(confs) / len(confs)
 
     def to_prompt_block(self, max_entries_per_facet: int = 7, max_chars: int = 3200) -> str:
         """Render per-facet evidence + status for the replanner."""
@@ -424,7 +463,9 @@ class AgenticOrchestrator:
             if not has_kb_step:
                 clean_query = ResearchPlanner._clean_query_for_search(query)
                 if qcomp == "composite":
-                    subs = list(dict.fromkeys(ResearchPlanner._composite_subqueries(clean_query)))[:3]
+                    subs = list(dict.fromkeys(
+                        await self.planner.composite_subqueries_with_llm(clean_query)
+                    ))[:3]
                     for i, sq in enumerate(subs):
                         plan.steps.insert(
                             i,
@@ -454,7 +495,7 @@ class AgenticOrchestrator:
                         f"Injected kb_search as step1 for KB {kb_name!r} tool_input.query={clean_query!r}"
                     )
             elif qcomp == "composite":
-                self._maybe_upgrade_single_kb_to_composite_parallel(plan, query, kb_name)
+                await self._maybe_upgrade_single_kb_to_composite_parallel(plan, query, kb_name)
             plan.estimated_steps = len(plan.steps)
 
         logger.info(f"Orchestrator plan reasoning ({len(plan.reasoning)} chars): {plan.reasoning}")
@@ -468,6 +509,7 @@ class AgenticOrchestrator:
         # Step 3: Execute plan iteratively
         step_results: Dict[str, Any] = {}
         completed_steps: List[Step] = []
+        replan_count = 0
 
         for iteration in range(self.max_iterations):
             logger.info(f"\n--- Iteration {iteration + 1}/{self.max_iterations} ---")
@@ -549,6 +591,21 @@ class AgenticOrchestrator:
                 )
                 for s in batch_for_eval
             )
+
+            if trigger_eval and session.evidence:
+                yield {
+                    "type": "evidence_update",
+                    "facets": {
+                        k: {
+                            "status": f.status,
+                            "entry_count": len(f.entries),
+                            "confidence": f.confidence,
+                        }
+                        for k, f in session.evidence.facets.items()
+                    },
+                    "overall_confidence": round(session.evidence.overall_confidence(), 3),
+                }
+
             if trigger_eval:
                 eval_result = await self._evaluate_progress(
                     query,
@@ -566,6 +623,13 @@ class AgenticOrchestrator:
                 )
 
                 if decision == "replan":
+                    if replan_count >= MAX_REPLANS:
+                        logger.info(
+                            f"Replan budget exhausted ({replan_count}/{MAX_REPLANS}), "
+                            "forcing answer with current evidence"
+                        )
+                        break
+                    replan_count += 1
                     ev_summary = (
                         session.evidence.to_prompt_block()
                         if session.evidence
@@ -580,7 +644,15 @@ class AgenticOrchestrator:
                         evidence_summary=ev_summary or None,
                     )
                     self._register_evidence_facets(session, plan)
-                    yield {"type": "thinking", "message": "Adjusting research plan..."}
+                    yield {"type": "thinking", "message": f"Adjusting research plan (replan {replan_count}/{MAX_REPLANS})..."}
+                    yield {
+                        "type": "replan",
+                        "iteration": replan_count,
+                        "max_replans": MAX_REPLANS,
+                        "reason": eval_result.get("evaluation_text", ""),
+                        "gap_facets": eval_result.get("gap_facets", []),
+                        "new_step_count": len(plan.steps),
+                    }
                 elif decision == "answer":
                     logger.info("Sufficient results, moving to answer")
                     break
@@ -636,8 +708,14 @@ class AgenticOrchestrator:
         
         # Generate final answer
         yield {"type": "thinking", "message": "Synthesizing answer..."}
-        answer = await self._generate_answer(
+        answer, citation_map = await self._generate_answer(
             query=query, plan=plan, step_results=step_results, session=session, papers=papers
+        )
+
+        overall_conf = (
+            session.evidence.overall_confidence()
+            if session.evidence
+            else None
         )
 
         session.add_message(
@@ -650,7 +728,15 @@ class AgenticOrchestrator:
             },
         )
 
-        yield {"type": "answer", "content": answer, "session_id": session.session_id}
+        answer_event: Dict[str, Any] = {
+            "type": "answer",
+            "content": answer,
+            "session_id": session.session_id,
+            "citations": citation_map,
+        }
+        if overall_conf is not None:
+            answer_event["confidence"] = round(overall_conf, 3)
+        yield answer_event
 
         # Yield found papers so the UI can offer "Add to KB"
         # Only include papers that:
@@ -663,16 +749,18 @@ class AgenticOrchestrator:
         if relevant_papers:
             yield {"type": "papers_found", "papers": relevant_papers}
 
-    def _maybe_upgrade_single_kb_to_composite_parallel(
+    async def _maybe_upgrade_single_kb_to_composite_parallel(
         self, plan: Plan, query: str, kb_name: str
     ) -> None:
         """Replace one root parallel kb_search with multiple facets when query is composite.
 
         The LLM planner often emits a single kb_search even for comparisons; this enforces
-        the parallel wave when _composite_subqueries yields 2+ distinct phrases.
+        the parallel wave when composite_subqueries_with_llm yields 2+ distinct phrases.
         """
         clean = ResearchPlanner._clean_query_for_search(query)
-        subs = list(dict.fromkeys(ResearchPlanner._composite_subqueries(clean)))[:3]
+        subs = list(dict.fromkeys(
+            await self.planner.composite_subqueries_with_llm(clean)
+        ))[:3]
         if len(subs) < 2:
             return
 
@@ -751,10 +839,11 @@ class AgenticOrchestrator:
     def _get_next_parallel_batch(
         self, plan: Plan, completed: List[Step], results: Dict[str, Any]
     ) -> List[Step]:
-        """Return the next step(s) to run.
+        """Return all steps whose dependencies are satisfied (general DAG).
 
-        Parallel-eligible: multiple search steps (KB or literature) with no
-        ``depends_on`` that are all ready simultaneously.
+        Any ready steps that are *not* of type ANSWER run concurrently.
+        ANSWER steps are always executed alone (they need all prior context).
+        If only a single step is ready, it runs by itself.
         """
         completed_ids = {s.id for s in completed}
         ready: List[Step] = []
@@ -765,14 +854,10 @@ class AgenticOrchestrator:
                 ready.append(step)
         if not ready:
             return []
-        search_parallel = [
-            s
-            for s in ready
-            if s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH) and not s.depends_on
-        ]
-        if len(search_parallel) > 1:
-            return search_parallel
-        return [ready[0]]
+        answers = [s for s in ready if s.type == StepType.ANSWER]
+        if answers:
+            return [answers[0]]
+        return ready
 
     def _evaluate_condition(self, condition: str, results: Dict[str, Any]) -> bool:
         """Evaluate a step condition."""
@@ -1186,17 +1271,30 @@ class AgenticOrchestrator:
         gap_facets = [k for k, v in gaps.items() if v in ("gap", "partial")]
         result["gap_facets"] = gap_facets
 
-        remaining_search = any(
-            s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH)
-            for s in remaining_steps
-        )
+        remaining_search = [
+            s for s in remaining_steps
+            if s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH)
+        ]
 
         if gap_facets and remaining_search:
-            facet_labels = "; ".join(f'"{f}" ({gaps[f]})' for f in gap_facets[:4])
-            logger.info(f"Facet gaps detected, forcing replan: {facet_labels}")
-            result["decision"] = "replan"
-            result["evaluation_text"] = f"Facets still uncovered: {facet_labels}"
-            return result
+            covered_by_remaining: Set[str] = set()
+            if session and session.evidence:
+                for s in remaining_search:
+                    f = session.evidence.facet_for_step(s.id)
+                    if f:
+                        covered_by_remaining.add(f.query.lower()[:120] or "main")
+            uncovered_gaps = [f for f in gap_facets if f not in covered_by_remaining]
+            if uncovered_gaps:
+                facet_labels = "; ".join(f'"{f}" ({gaps[f]})' for f in uncovered_gaps[:4])
+                logger.info(f"Facet gaps with no remaining steps, forcing replan: {facet_labels}")
+                result["decision"] = "replan"
+                result["evaluation_text"] = f"Facets still uncovered: {facet_labels}"
+                return result
+            else:
+                logger.info(
+                    f"Gap facets exist but remaining plan steps already target them: "
+                    f"{list(covered_by_remaining)[:4]} — continuing"
+                )
 
         # --- Quality assessor (per-batch documents) ---
         has_search = any(
@@ -1407,27 +1505,47 @@ Provide a synthesized summary that combines the key insights from all sources.""
             blocks.append(f"### Paper [{li}] {str(p.get('title', ''))[:90]}\n{t}")
         return "\n\n".join(blocks)
 
+    def _build_facet_overview(self, session: AgentSession) -> str:
+        """Build a structured overview of evidence per facet for the answer prompt.
+
+        For composite queries this gives the LLM a roadmap: which sub-questions
+        were investigated, what evidence quality each has, guiding it to cover
+        all facets and flag gaps.
+        """
+        if not session.evidence or len(session.evidence.facets) <= 1:
+            return ""
+        sections: List[str] = []
+        sections.append("Research facets investigated:")
+        for key, facet in session.evidence.facets.items():
+            status = facet.status.upper()
+            n = len(facet.entries)
+            titles = [str(e.get("title", ""))[:80] for e in facet.entries[:4]]
+            title_list = "; ".join(t for t in titles if t) or "(none)"
+            sections.append(f"  [{status}] \"{facet.query}\" — {n} source(s): {title_list}")
+        return "\n".join(sections)
+
     async def _generate_answer(
         self, query: str, plan: Plan, step_results: Dict[str, Any], session: AgentSession,
         papers: Optional[List[Dict[str, Any]]] = None
-    ) -> str:
-        """Generate final answer using all results."""
+    ) -> tuple[str, Dict[str, Any]]:
+        """Generate final answer and return ``(answer_text, citation_map)``."""
 
         logger.info("\n--- Generating Answer ---")
         logger.info(f"Query: {query}")
         logger.info(f"Step results available: {list(step_results.keys())}")
 
-        # Use pre-processed papers if provided, otherwise extract from results
         if papers is None:
             papers = self._extract_papers_from_results(step_results)
             papers = await self._score_papers_for_relevance(query, papers, min_score=3)
-        
+
         numbered_paper_list = self._build_numbered_paper_list(papers)
 
-        # Build context from step results
         context_parts = []
 
-        # Prioritize LOTUS results (always included as-is)
+        facet_overview = self._build_facet_overview(session)
+        if facet_overview:
+            context_parts.append(facet_overview)
+
         if "lotus" in step_results:
             lotus_result = step_results["lotus"]
             logger.info(f"LOTUS result length: {len(str(lotus_result))} chars")
@@ -1467,8 +1585,15 @@ Provide a synthesized summary that combines the key insights from all sources.""
         if not context.strip():
             logger.warning("Context is empty! No research results to use.")
 
-        # Include conversation context
         conversation_context = session.get_context_string()
+
+        facet_guideline = ""
+        if facet_overview:
+            facet_guideline = (
+                "10. The query has multiple facets (see \"Research facets investigated\" above). "
+                "Address EACH facet in your answer. If a facet is marked [GAP] or [PARTIAL], "
+                "acknowledge the limited evidence rather than omitting that aspect.\n"
+            )
 
         prompt = f"""You are a scientific research assistant. Generate a comprehensive answer based on the research results provided.
 
@@ -1496,7 +1621,7 @@ Answer Generation Guidelines:
 7. Structure your answer logically with clear sections if appropriate
 8. Cite using [N] from the numbered list only for sources you actually use; you do not need to mention every listed paper if some are redundant.
 9. **DO NOT include a Citations or References section at the end of your answer** - a properly formatted references section will be automatically appended separately.
-
+{facet_guideline}
 Important: Do not provide an answer if the question contains hate speech, offensive language, discriminatory remarks, or harmful content.
 
 Generate your answer:"""
@@ -1508,14 +1633,122 @@ Generate your answer:"""
         logger.info(f"Answer generated, length: {len(answer)} chars")
         logger.info(f"Answer content:\n{answer}")
 
-        # Append references section if we have papers (uses same paper order)
+        answer, citation_map = self._verify_citations(answer, papers)
+
+        cited_indices = {c["index"] for c in citation_map["cited"]}
+        if cited_indices and cited_indices != set(range(1, len(papers) + 1)):
+            answer, papers = self._compact_citations(answer, papers, cited_indices)
+            citation_map["compacted"] = True
+            logger.info(
+                f"Compacted citations: {len(cited_indices)} cited out of "
+                f"{citation_map['total_papers']} → renumbered to [1]-[{len(papers)}]"
+            )
+
         if papers:
             references_section = self._format_references_section(papers)
             if references_section:
                 answer = answer.rstrip() + "\n\n" + references_section
                 logger.info(f"References section added, total length: {len(answer)} chars")
 
-        return answer
+        return answer, citation_map
+
+    _CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+    @classmethod
+    def _verify_citations(
+        cls, answer: str, papers: List[Dict[str, Any]]
+    ) -> tuple[str, Dict[str, Any]]:
+        """Validate citation markers in the generated answer.
+
+        Handles both single ``[N]`` and multi-citation ``[N, M]`` brackets.
+        Returns ``(cleaned_answer, citation_map)`` where:
+        - Invalid references (N > number of papers or N < 1) are stripped.
+        - Empty brackets left after stripping are removed.
+        - ``citation_map`` records which papers were cited, uncited, and any
+          invalid references that were removed.
+        """
+        valid_range = set(range(1, len(papers) + 1))
+
+        found_refs: Set[int] = set()
+        for m in cls._CITE_RE.finditer(answer):
+            for num_str in m.group(1).split(","):
+                found_refs.add(int(num_str.strip()))
+
+        valid_refs = found_refs & valid_range
+        invalid_refs = found_refs - valid_range
+
+        if invalid_refs:
+            def _strip_invalid(m: re.Match) -> str:
+                nums = [int(s.strip()) for s in m.group(1).split(",")]
+                kept = [n for n in nums if n in valid_range]
+                if not kept:
+                    return ""
+                return "[" + ", ".join(str(n) for n in kept) + "]"
+
+            answer = cls._CITE_RE.sub(_strip_invalid, answer)
+            answer = re.sub(r"  +", " ", answer)
+            logger.warning(
+                f"Citation verification: stripped {len(invalid_refs)} invalid ref(s): "
+                f"{sorted(invalid_refs)}"
+            )
+
+        cited_indices = sorted(valid_refs)
+        uncited_indices = sorted(valid_range - valid_refs)
+
+        citation_map: Dict[str, Any] = {
+            "cited": [
+                {"index": i, "title": papers[i - 1].get("title", ""), "doi": papers[i - 1].get("doi", "")}
+                for i in cited_indices
+            ],
+            "uncited": [
+                {"index": i, "title": papers[i - 1].get("title", "")}
+                for i in uncited_indices
+            ],
+            "invalid_stripped": sorted(invalid_refs),
+            "total_papers": len(papers),
+            "cited_count": len(cited_indices),
+        }
+
+        if papers and len(uncited_indices) > len(papers) * 0.5:
+            logger.warning(
+                f"Citation coverage low: {len(cited_indices)}/{len(papers)} papers cited "
+                f"({len(uncited_indices)} uncited) — possible over-retrieval"
+            )
+        else:
+            logger.info(
+                f"Citation verification: {len(cited_indices)}/{len(papers)} papers cited, "
+                f"{len(invalid_refs)} invalid stripped"
+            )
+
+        return answer, citation_map
+
+    @classmethod
+    def _compact_citations(
+        cls,
+        answer: str,
+        papers: List[Dict[str, Any]],
+        cited_indices: set[int],
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Remove uncited papers and renumber citation markers to be consecutive.
+
+        Handles both single ``[N]`` and multi-citation ``[N, M]`` brackets.
+        Given ``cited_indices={1, 3}`` out of 3 papers, the answer's ``[1]``
+        stays ``[1]``, ``[3]`` becomes ``[2]``, and ``[1, 3]`` becomes
+        ``[1, 2]``.  Only cited papers are returned in the new list.
+        """
+        old_to_new: Dict[int, int] = {}
+        compacted_papers: List[Dict[str, Any]] = []
+        for new_idx, old_idx in enumerate(sorted(cited_indices), 1):
+            old_to_new[old_idx] = new_idx
+            compacted_papers.append(papers[old_idx - 1])
+
+        def _renumber(m: re.Match) -> str:
+            nums = [int(s.strip()) for s in m.group(1).split(",")]
+            renumbered = [old_to_new.get(n, n) for n in nums]
+            return "[" + ", ".join(str(n) for n in renumbered) + "]"
+
+        answer = cls._CITE_RE.sub(_renumber, answer)
+        return answer, compacted_papers
 
     def _build_numbered_paper_list(
         self, papers: List[Dict[str, Any]], max_abstract_chars: int = 800

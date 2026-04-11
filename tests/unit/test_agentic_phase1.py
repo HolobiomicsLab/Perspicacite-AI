@@ -561,17 +561,17 @@ class TestGetNextParallelBatch:
         batch = orch._get_next_parallel_batch(plan, [s1], {})
         assert batch == []
 
-    def test_non_search_parallel_not_batched(self):
-        """Only parallel search steps (KB + LITERATURE) are batched; other types return first ready."""
+    def test_non_search_steps_also_batched(self):
+        """Phase 3 DAG scheduler: ALL non-ANSWER steps batch when deps satisfied."""
         orch = self._make_orchestrator()
         plan = self._plan([
             Step(id="a1", type=StepType.ANALYZE, description="", depends_on=[]),
             Step(id="a2", type=StepType.ANALYZE, description="", depends_on=[]),
         ])
         batch = orch._get_next_parallel_batch(plan, [], {})
-        # Non-search parallel steps: only first ready returned
-        assert len(batch) == 1
-        assert batch[0].id == "a1"
+        # General DAG: both ANALYZE steps have no deps → both ready
+        assert len(batch) == 2
+        assert {s.id for s in batch} == {"a1", "a2"}
 
 
 # ---------------------------------------------------------------------------
@@ -659,9 +659,12 @@ class TestMaybeUpgradeSingleKbToCompositeParallel:
 
     def _make_orchestrator(self):
         orch = AgenticOrchestrator.__new__(AgenticOrchestrator)
+        # Needs a planner with composite_subqueries_with_llm (regex-only for tests)
+        orch.planner = ResearchPlanner(None)
         return orch
 
-    def test_upgrades_single_kb_step(self):
+    @pytest.mark.asyncio
+    async def test_upgrades_single_kb_step(self):
         orch = self._make_orchestrator()
         plan = Plan(
             steps=[
@@ -672,7 +675,7 @@ class TestMaybeUpgradeSingleKbToCompositeParallel:
             reasoning="test",
             estimated_steps=2,
         )
-        orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "FBMN vs GNPS", "test_kb")
+        await orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "FBMN vs GNPS", "test_kb")
         # Single KB step should be replaced with 2 composite steps
         kb_steps = [s for s in plan.steps if s.type == StepType.KB_SEARCH]
         assert len(kb_steps) == 2
@@ -681,7 +684,8 @@ class TestMaybeUpgradeSingleKbToCompositeParallel:
         new_ids = {s.id for s in kb_steps}
         assert set(ans.depends_on) == new_ids
 
-    def test_no_upgrade_for_simple_query(self):
+    @pytest.mark.asyncio
+    async def test_no_upgrade_for_simple_query(self):
         orch = self._make_orchestrator()
         plan = Plan(
             steps=[
@@ -692,12 +696,13 @@ class TestMaybeUpgradeSingleKbToCompositeParallel:
             reasoning="test",
             estimated_steps=2,
         )
-        orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "feature-based molecular networking", "test_kb")
+        await orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "feature-based molecular networking", "test_kb")
         # Should NOT upgrade — not a composite query
         kb_steps = [s for s in plan.steps if s.type == StepType.KB_SEARCH]
         assert len(kb_steps) == 1
 
-    def test_no_upgrade_when_multiple_kb_steps(self):
+    @pytest.mark.asyncio
+    async def test_no_upgrade_when_multiple_kb_steps(self):
         orch = self._make_orchestrator()
         plan = Plan(
             steps=[
@@ -710,12 +715,13 @@ class TestMaybeUpgradeSingleKbToCompositeParallel:
             reasoning="test",
             estimated_steps=3,
         )
-        orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "A vs B", "test_kb")
+        await orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "A vs B", "test_kb")
         # Already has multiple KB steps, should not change
         kb_steps = [s for s in plan.steps if s.type == StepType.KB_SEARCH]
         assert len(kb_steps) == 2
 
-    def test_preserves_top_k(self):
+    @pytest.mark.asyncio
+    async def test_preserves_top_k(self):
         orch = self._make_orchestrator()
         plan = Plan(
             steps=[
@@ -726,7 +732,7 @@ class TestMaybeUpgradeSingleKbToCompositeParallel:
             reasoning="test",
             estimated_steps=2,
         )
-        orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "A vs B", "test_kb")
+        await orch._maybe_upgrade_single_kb_to_composite_parallel(plan, "A vs B", "test_kb")
         kb_steps = [s for s in plan.steps if s.type == StepType.KB_SEARCH]
         for s in kb_steps:
             assert s.tool_input.get("top_k") == 15

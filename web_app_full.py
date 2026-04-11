@@ -34,16 +34,25 @@ from perspicacite.memory.session_store import SessionStore
 from perspicacite.models.kb import KnowledgeBase, ChunkConfig, chroma_collection_name_for_kb
 from perspicacite.models.rag import RAGMode
 
-# Configure logging with file output
+# Configure logging with file output.
+# Must use explicit root-logger setup instead of basicConfig, because
+# early imports (session_store → perspicacite.logging → structlog) can
+# attach handlers before basicConfig runs, making it a silent no-op.
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 log_file = log_dir / f"web_app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
-)
+_log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+_file_handler = logging.FileHandler(log_file)
+_file_handler.setFormatter(_log_fmt)
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(_log_fmt)
+
+_root = logging.getLogger()
+_root.setLevel(logging.INFO)
+_root.addHandler(_file_handler)
+_root.addHandler(_stream_handler)
+
 logger = logging.getLogger("perspicacite.web")
 
 
