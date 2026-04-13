@@ -25,7 +25,30 @@ from perspicacite.rag.agentic.planner import (
     ResearchPlanner,
     Step,
     StepType,
+    coerce_step_type,
 )
+
+
+# ---------------------------------------------------------------------------
+# coerce_step_type (replanner / LLM synonyms)
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceStepType:
+    def test_document_retrieval_maps_to_kb_search(self):
+        assert coerce_step_type("document_retrieval") == StepType.KB_SEARCH
+
+    def test_kb_search_literal(self):
+        assert coerce_step_type("kb_search") == StepType.KB_SEARCH
+
+    def test_tool_field_document_retrieval(self):
+        assert coerce_step_type("unknown_type", tool="document_retrieval") == StepType.KB_SEARCH
+
+    def test_unknown_defaults_to_literature_search(self):
+        assert coerce_step_type("totally_fake_step_xyz") == StepType.LITERATURE_SEARCH
+
+    def test_explicit_type_wins_over_tool(self):
+        assert coerce_step_type("literature_search", tool="kb_search") == StepType.LITERATURE_SEARCH
 
 
 # ---------------------------------------------------------------------------

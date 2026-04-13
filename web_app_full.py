@@ -25,7 +25,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -482,13 +482,21 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
     # Generate session_id if not provided
     session_id = request.session_id or str(uuid.uuid4())
 
+    conv_hist = (
+        [{"role": m.role, "content": m.content} for m in request.messages]
+        if request.messages
+        else None
+    )
+
     # Create RAG request
     rag_request = RAGReq(
-        query=request.query, 
-        kb_name=request.kb_name or "default", 
-        mode=rag_mode, 
+        query=request.query,
+        kb_name=request.kb_name or "default",
+        mode=rag_mode,
         stream=True,
-        databases=request.databases
+        databases=request.databases,
+        conversation_history=conv_hist,
+        max_papers_retrieval=request.max_papers,
     )
 
     # Execute using RAGEngine streaming
@@ -514,6 +522,14 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
                 # Accumulate answer content
                 delta = json.loads(event.data)["delta"]
                 full_answer += delta
+                # Live token deltas for the UI (base64 avoids mid-chunk JSON breakage)
+                token_payload = {
+                    "type": "token",
+                    "session_id": session_id,
+                    "conversation_id": conversation_id,
+                    "delta_b64": base64.b64encode(delta.encode("utf-8")).decode("ascii"),
+                }
+                yield f"data: {json.dumps(token_payload, separators=(',', ':'))}\n\n"
 
             elif event.event == "done":
                 # Send final answer as base64

@@ -304,6 +304,66 @@ class ChromaVectorStore:
             )
             return False
 
+    async def peek_paper_metadata_row(
+        self, collection: str, paper_id: str
+    ) -> dict[str, Any] | None:
+        """Return one raw metadata dict for a paper_id (any chunk), or None."""
+        try:
+            coll = self.client.get_collection(name=collection)
+            r = coll.get(
+                where={"paper_id": paper_id},
+                limit=1,
+                include=["metadatas"],
+            )
+            metas = r.get("metadatas") or []
+            return metas[0] if metas else None
+        except Exception as e:
+            logger.error(
+                "peek_paper_metadata_failed",
+                collection=collection,
+                paper_id=paper_id,
+                error=str(e),
+            )
+            return None
+
+    async def list_paper_metadata(self, collection: str) -> list[dict[str, Any]]:
+        """One merged row per ``paper_id`` for title/DOI resolution (RAG scope)."""
+        try:
+            coll = self.client.get_collection(name=collection)
+            result = coll.get(include=["metadatas"])
+        except Exception as e:
+            logger.error(
+                "list_paper_metadata_failed",
+                collection=collection,
+                error=str(e),
+            )
+            return []
+
+        metas = result.get("metadatas") or []
+        by_pid: dict[str, dict[str, Any]] = {}
+        for m in metas:
+            if not m:
+                continue
+            pid = m.get("paper_id")
+            if not pid:
+                continue
+            cur = by_pid.get(pid)
+            if cur is None:
+                by_pid[pid] = {
+                    "paper_id": pid,
+                    "title": m.get("title"),
+                    "authors": m.get("authors"),
+                    "year": m.get("year"),
+                    "doi": m.get("doi"),
+                }
+            else:
+                for k in ("title", "authors", "doi"):
+                    if m.get(k) and not cur.get(k):
+                        cur[k] = m[k]
+                if m.get("year") is not None and cur.get("year") is None:
+                    cur["year"] = m["year"]
+        return list(by_pid.values())
+
     async def get_chunks_by_paper_ids(
         self,
         collection: str,

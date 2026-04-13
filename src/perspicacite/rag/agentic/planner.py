@@ -31,6 +31,69 @@ class StepType(Enum):
     ANSWER = "answer"
 
 
+_STEP_TYPE_VALUE_SET = frozenset(m.value for m in StepType)
+
+
+def coerce_step_type(raw: Any, *, tool: Optional[str] = None) -> StepType:
+    """Map LLM output to ``StepType`` (handles synonyms the model invents)."""
+    if isinstance(raw, StepType):
+        return raw
+    key = (raw if isinstance(raw, str) else str(raw or "")).strip().lower()
+    key = re.sub(r"[\s-]+", "_", key)
+
+    tool_key = (tool or "").strip().lower()
+    tool_key = re.sub(r"[\s-]+", "_", tool_key)
+
+    # Explicit canonical type from the model wins over the tool field.
+    if key in _STEP_TYPE_VALUE_SET:
+        return StepType(key)
+
+    type_aliases: dict[str, StepType] = {
+        # Replanner often emits these; they are not enum values.
+        "document_retrieval": StepType.KB_SEARCH,
+        "document_retrieval_step": StepType.KB_SEARCH,
+        "doc_retrieval": StepType.KB_SEARCH,
+        "retrieve_documents": StepType.KB_SEARCH,
+        "vector_search": StepType.KB_SEARCH,
+        "rag_search": StepType.KB_SEARCH,
+        "kb_retrieval": StepType.KB_SEARCH,
+        "corpus_search": StepType.KB_SEARCH,
+        "knowledge_base_search": StepType.KB_SEARCH,
+        "paper_retrieval": StepType.LITERATURE_SEARCH,
+        "literature_retrieval": StepType.LITERATURE_SEARCH,
+        "academic_search": StepType.LITERATURE_SEARCH,
+        "scholar_search": StepType.LITERATURE_SEARCH,
+        "pubmed_search": StepType.LITERATURE_SEARCH,
+        "openalex_search": StepType.LITERATURE_SEARCH,
+        "final_answer": StepType.ANSWER,
+        "respond": StepType.ANSWER,
+    }
+    tool_aliases: dict[str, StepType] = {
+        "document_retrieval": StepType.KB_SEARCH,
+        "doc_retrieval": StepType.KB_SEARCH,
+        "retrieve_documents": StepType.KB_SEARCH,
+        "vector_search": StepType.KB_SEARCH,
+        "rag": StepType.KB_SEARCH,
+    }
+    if key in type_aliases:
+        coerced = type_aliases[key]
+        logger.info(f"Planner: coerced step type {raw!r} → {coerced.value}")
+        return coerced
+    if tool_key in tool_aliases:
+        coerced = tool_aliases[tool_key]
+        logger.info(f"Planner: coerced step type from tool {tool!r} → {coerced.value}")
+        return coerced
+    if tool_key in _STEP_TYPE_VALUE_SET:
+        return StepType(tool_key)
+    try:
+        return StepType(key)
+    except ValueError:
+        logger.warning(
+            f"Planner: unknown step type {raw!r} tool={tool!r}; defaulting to literature_search"
+        )
+        return StepType.LITERATURE_SEARCH
+
+
 @dataclass
 class Step:
     """A single research step."""
@@ -250,7 +313,10 @@ Return JSON only (no markdown):
 
             steps = []
             for step_data in steps_data:
-                step_type = StepType(step_data.get("type", "answer"))
+                step_type = coerce_step_type(
+                    step_data.get("type", "answer"),
+                    tool=step_data.get("tool"),
+                )
                 steps.append(Step(
                     id=step_data["id"],
                     type=step_type,
@@ -557,6 +623,12 @@ Instructions:
   specifically says more depth is needed.
 - When adding steps, target the gap facets with specific queries.
 
+For each added step, "type" MUST be exactly one of these strings (no synonyms):
+lotus_search, literature_search, download_papers, kb_search, web_search, analyze, synthesize, answer
+- Use kb_search for curated knowledge-base / in-corpus retrieval (including "full paper in KB").
+- Use literature_search for academic API search (OpenAlex, Semantic Scholar, PubMed, etc.).
+- Do NOT use invented names such as document_retrieval — use kb_search or literature_search instead.
+
 Choose ONE action:
 1. "continue" – current plan still has useful remaining steps
 2. "add_steps" – add targeted searches for gap/partial facets
@@ -569,9 +641,9 @@ Return JSON:
     "additional_steps": [
         {{
             "id": "new_step1",
-            "type": "tool_type",
+            "type": "kb_search|literature_search|lotus_search|download_papers|web_search|analyze|synthesize|answer",
             "description": "...",
-            "tool": "tool_name",
+            "tool": "kb_search|literature_search|... (must match type)",
             "tool_input": {{}},
             "depends_on": []
         }}
@@ -619,11 +691,22 @@ Valid JSON only:"""
             if action == "add_steps":
                 new_steps = []
                 for step_data in result.get("additional_steps", []):
+                    st = coerce_step_type(
+                        step_data.get("type"),
+                        tool=step_data.get("tool"),
+                    )
+                    tool_name = step_data.get("tool")
+                    if st == StepType.KB_SEARCH and (not tool_name or tool_name == step_data.get("type")):
+                        tool_name = "kb_search"
+                    elif st == StepType.LITERATURE_SEARCH and (
+                        not tool_name or tool_name == step_data.get("type")
+                    ):
+                        tool_name = "literature_search"
                     new_steps.append(Step(
                         id=step_data["id"],
-                        type=StepType(step_data["type"]),
+                        type=st,
                         description=step_data["description"],
-                        tool=step_data.get("tool"),
+                        tool=tool_name,
                         tool_input=step_data.get("tool_input", {}),
                         depends_on=step_data.get("depends_on", [])
                     ))

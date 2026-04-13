@@ -7,7 +7,7 @@ import uuid
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, AsyncGenerator, Set
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple
 from datetime import datetime
 
 from .intent import IntentClassifier, Intent
@@ -27,6 +27,31 @@ MAP_REDUCE_MAX_PAPERS = 8
 
 # Maximum number of replan iterations before forcing answer generation.
 MAX_REPLANS = 3
+
+
+def _query_seeks_workflow_detail(query: str) -> bool:
+    """True when the user likely needs ordered pipeline / methods, not abstract themes."""
+    q = (query or "").lower()
+    needles = (
+        "workflow",
+        "pipeline",
+        "processing pipeline",
+        "procedure",
+        "step by step",
+        "step-by-step",
+        "stages",
+        "methodology",
+        "methods",
+        "describe in detail",
+        "explain in detail",
+        "how does",
+        "how do",
+        "architecture",
+        "sequence of",
+        "outline the",
+        "outline of",
+    )
+    return any(n in q for n in needles)
 
 
 @dataclass
@@ -249,13 +274,18 @@ class DocumentQualityAssessor:
 
         # Format documents for assessment
         doc_texts = []
+        # KB / rich hits may need thousands of chars for workflow or methods questions;
+        # 500 chars caused false "insufficient" when full text existed but was never shown.
+        _assess_doc_cap = 8000
         for i, doc in enumerate(documents[:5]):  # Limit to top 5
             if hasattr(doc, "chunk"):
-                text = doc.chunk.text[:500] if hasattr(doc.chunk, "text") else str(doc.chunk)[:500]
+                raw = doc.chunk.text if hasattr(doc.chunk, "text") else str(doc.chunk)
+                text = raw[:_assess_doc_cap]
             elif isinstance(doc, dict):
-                text = doc.get("text", doc.get("content", str(doc)))[:500]
+                raw = doc.get("text", doc.get("content", str(doc)))
+                text = raw[:_assess_doc_cap] if isinstance(raw, str) else str(raw)[:_assess_doc_cap]
             else:
-                text = str(doc)[:500]
+                text = str(doc)[:_assess_doc_cap]
             doc_texts.append(f"Document {i + 1}:\n{text}")
 
         doc_content = "\n\n---\n\n".join(doc_texts)
@@ -414,6 +444,11 @@ class AgenticOrchestrator:
 
         # Clear accumulated papers from previous requests
         self._found_papers = []
+        if not hasattr(session, 'found_papers_archive'):
+            session.found_papers_archive = []
+        # Pre-populate with papers from previous turns
+        self._found_papers = list(session.found_papers_archive)
+        session.original_query = query
 
         # Step 1: Classify intent
         yield {"type": "thinking", "message": "Analyzing your query..."}
@@ -546,7 +581,7 @@ class AgenticOrchestrator:
                     "step": s.id,
                     "tool": s.tool or s.type.value,
                     "description": s.description,
-                    "query": s.tool_input.get("query", ""),
+                    "query": (s.tool_input or {}).get("query", ""),
                 }
 
             if len(to_run) == 1:
@@ -673,7 +708,7 @@ class AgenticOrchestrator:
         else:
             yield {"type": "thinking", "message": f"Scoring {len(papers)} papers for relevance..."}
             papers = await self._score_papers_for_relevance(query, papers, min_score=3)
-            included_count = len([p for p in papers if p.get("relevance_score", 3) >= 3])
+            included_count = len([p for p in papers if p.get("relevance_score", 0) >= 3])
             yield {"type": "thinking", "message": f"Relevance filtering: {included_count}/{len(papers)} papers included"}
         
         # Download full text for relevant papers (threshold-based, not hard limit)
@@ -742,9 +777,11 @@ class AgenticOrchestrator:
         # Only include papers that:
         # 1. Passed relevance filtering (score >= 3)
         # 2. Are NOT already in the KB (source != "kb_search")
+        # Default 0: missing score means scoring failed or paper was excluded — do not
+        # treat as "passed" (previously default 3 falsely showed all hits as relevant).
         relevant_papers = [
-            p for p in papers 
-            if p.get("relevance_score", 3) >= 3 and p.get("source") != "kb_search"
+            p for p in papers
+            if p.get("relevance_score", 0) >= 3 and p.get("source") != "kb_search"
         ]
         if relevant_papers:
             yield {"type": "papers_found", "papers": relevant_papers}
@@ -1070,6 +1107,7 @@ class AgenticOrchestrator:
                         formatted_parts = [
                             f"Found {len(paper_results or results)} relevant documents in knowledge base:"
                         ]
+                        _kb_format_cap = 48000
                         items = paper_results if paper_results else results
                         for i, item in enumerate(items, 1):
                             if isinstance(item, dict) and "full_text" in item:
@@ -1078,7 +1116,10 @@ class AgenticOrchestrator:
                                 year = item.get("year") or ""
                                 doi = item.get("doi") or ""
                                 score = item.get("paper_score", 0)
-                                text_content = item["full_text"][:8000]
+                                joined_full = item.get("full_text") or ""
+                                fmt_cap = _kb_format_cap
+                                text_content = joined_full[:fmt_cap]
+                                pid = item.get("paper_id")
                             else:
                                 meta = item.get("metadata")
                                 title = getattr(meta, "title", None) or "Unknown" if meta else "Unknown"
@@ -1086,7 +1127,20 @@ class AgenticOrchestrator:
                                 year = getattr(meta, "year", None) or "" if meta else ""
                                 doi = getattr(meta, "doi", None) or "" if meta else ""
                                 score = item.get("score", 0)
-                                text_content = (item.get("text", "") or "")[:1500]
+                                joined_full = item.get("text", "") or ""
+                                fmt_cap = 1500
+                                text_content = joined_full[:fmt_cap]
+                                pid = (
+                                    getattr(meta, "paper_id", None) if meta else None
+                                ) or item.get("paper_id")
+
+                            logger.info(
+                                "KB_SEARCH: content_lengths "
+                                f"doc={i}/{len(items)} paper_id={pid!r} "
+                                f"joined_full_len={len(joined_full)} "
+                                f"formatted_content_len={len(text_content)} cap={fmt_cap} "
+                                f"truncated={len(joined_full) > len(text_content)}"
+                            )
 
                             formatted_parts.append(f"\n- {title} (relevance: {score:.2f})")
                             if authors:
@@ -1097,7 +1151,7 @@ class AgenticOrchestrator:
                                 formatted_parts.append(f"   DOI: {doi}")
                             if text_content:
                                 formatted_parts.append(f"   Content: {text_content}")
-                                if len(item.get("full_text", item.get("text", ""))) > 8000:
+                                if len(joined_full) > _kb_format_cap:
                                     formatted_parts.append("   [... content truncated ...]")
                             else:
                                 formatted_parts.append("   Content: [No text content available]")
@@ -1109,7 +1163,8 @@ class AgenticOrchestrator:
                                         "authors": [a.strip() for a in authors.split(",")] if authors else [],
                                         "year": year,
                                         "doi": doi,
-                                        "abstract": text_content[:500] if text_content else "",
+                                        "abstract": (text_content[:4000] if text_content else ""),
+                                        "full_text": joined_full,
                                         "source": "kb_search",
                                         "relevance_score": 4,
                                         "_step_id": step.id,
@@ -1122,7 +1177,7 @@ class AgenticOrchestrator:
                                         {
                                             "title": title,
                                             "doi": doi,
-                                            "excerpt": (text_content[:600] if text_content else ""),
+                                            "excerpt": (text_content[:4000] if text_content else ""),
                                             "step_id": step.id,
                                             "source": "kb_search",
                                         }
@@ -1377,16 +1432,16 @@ class AgenticOrchestrator:
 
         docs: List[Dict[str, Any]] = []
         seen: set[str] = set()
+        _content_cap = 12000
         for p in papers[-limit * 2 :]:
             title = str(p.get("title") or "Unknown")
             key = title.strip().lower()[:100]
             if key in seen:
                 continue
             seen.add(key)
-            content = (
-                (p.get("abstract") or "")[:500]
-                or (p.get("full_text") or "")[:500]
-            )
+            ft = (p.get("full_text") or "").strip()
+            ab = (p.get("abstract") or "").strip()
+            content = (ft[:_content_cap] if ft else ab[:_content_cap]) or ab[:500] or ""
             docs.append({
                 "title": title,
                 "content": content,
@@ -1459,6 +1514,26 @@ Provide a synthesized summary that combines the key insights from all sources.""
             body = body[:14000] + "\n[truncated]"
         if len(body) < 400:
             return ""
+        if _query_seeks_workflow_detail(query):
+            extract_instructions = (
+                "The research question asks for workflow, pipeline, methodology, or procedural detail.\n"
+                "Output **numbered steps (1., 2., 3., …)** in the order given in the text (chronological "
+                "or data-flow order). Each step: one or two sentences, grounded only in the excerpt.\n"
+                "Include named components when present (software, databases, file formats, algorithms, "
+                "repositories, scoring rules). Prefer 4–12 steps when the text supports them.\n"
+                "If the excerpt only states high-level goals without concrete operational stages, give "
+                "the **maximum detail the text allows** in numbered form and end with a line: "
+                "(excerpt lacks finer pipeline detail)\n"
+                "If nothing in the text helps at all, reply exactly: (no relevant content for this question)\n"
+                "Do not invent steps; use only the text above."
+            )
+        else:
+            extract_instructions = (
+                "Output 3–8 bullet points of facts that directly help answer the research question. "
+                "Each bullet must be self-contained. If nothing is relevant, reply exactly: "
+                "(no relevant content for this question)\n"
+                "Do not invent information; use only the text above."
+            )
         prompt = (
             f'Research question: "{query}"\n\n'
             f"You extract from ONE paper. Citation index for this paper in the final answer: [{list_index}]\n"
@@ -1466,10 +1541,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
             "Text:\n---\n"
             f"{body}\n"
             "---\n\n"
-            "Output 3–8 bullet points of facts that directly help answer the research question. "
-            "Each bullet must be self-contained. If nothing is relevant, reply exactly: "
-            "(no relevant content for this question)\n"
-            "Do not invent information; use only the text above."
+            f"{extract_instructions}"
         )
         return await self.llm.complete(prompt, temperature=0.15)
 
@@ -1566,11 +1638,12 @@ Provide a synthesized summary that combines the key insights from all sources.""
                     context_parts.append(f"{step_id}:\n{result_str[:3000]}")
 
             full_text_parts = []
+            ft_cap = 14000 if _query_seeks_workflow_detail(query) else 8000
             for i, paper in enumerate(papers, 1):
                 if paper.get("full_text"):
                     full_text_parts.append(
                         f"[Paper {i}: {paper.get('title', 'Unknown')[:80]}...]\n"
-                        f"Full text excerpt:\n{paper['full_text'][:8000]}..."
+                        f"Full text excerpt:\n{paper['full_text'][:ft_cap]}..."
                     )
             if full_text_parts:
                 context_parts.append(
@@ -1594,6 +1667,27 @@ Provide a synthesized summary that combines the key insights from all sources.""
                 "Address EACH facet in your answer. If a facet is marked [GAP] or [PARTIAL], "
                 "acknowledge the limited evidence rather than omitting that aspect.\n"
             )
+
+        workflow_guideline = ""
+        if _query_seeks_workflow_detail(query):
+            workflow_guideline = (
+                "10. The question asks for workflow, methodology, pipeline, or procedural detail. "
+                "Answer with a **clear numbered list of stages** (1., 2., …) in the order described "
+                "in the research results, using concrete names and actions from the text (systems, "
+                "data objects, algorithms, repositories). Do **not** replace this with a short "
+                "paragraph of generic themes (e.g. only \"tracking\" and \"prioritization\") when "
+                "the results contain more specific steps—surface those steps.\n"
+                "11. If the research results lack operational detail (only motivation or high-level "
+                "goals), say so explicitly and summarize only what is literally supported; do not "
+                "fill gaps with plausible-sounding but unsourced narrative.\n"
+            )
+            if facet_guideline:
+                # Renumber so facet rule stays 10 and workflow rules follow.
+                workflow_guideline = workflow_guideline.replace("10. ", "11. ", 1).replace(
+                    "11. If the research",
+                    "12. If the research",
+                    1,
+                )
 
         prompt = f"""You are a scientific research assistant. Generate a comprehensive answer based on the research results provided.
 
@@ -1621,7 +1715,7 @@ Answer Generation Guidelines:
 7. Structure your answer logically with clear sections if appropriate
 8. Cite using [N] from the numbered list only for sources you actually use; you do not need to mention every listed paper if some are redundant.
 9. **DO NOT include a Citations or References section at the end of your answer** - a properly formatted references section will be automatically appended separately.
-{facet_guideline}
+{facet_guideline}{workflow_guideline}
 Important: Do not provide an answer if the question contains hate speech, offensive language, discriminatory remarks, or harmful content.
 
 Generate your answer:"""
@@ -1803,22 +1897,25 @@ Generate your answer:"""
 
         Each paper is scored 1-5:
         1 = Completely irrelevant
-        2 = Tangential, unlikely to help answer query
-        3 = Somewhat relevant, partial answer
+        2 = Tangential -- shares field keywords but does not address the question
+        3 = Substantively addresses a significant subtopic
         4 = Relevant, contributes to answer
         5 = Highly relevant, directly addresses query
 
         Only papers with score >= min_score are included in synthesis.
+        KB-sourced papers (source=="kb_search") are always retained.
         """
         if not papers:
             return []
 
-        # Build paper list for LLM
+        n_papers = len(papers)
+
+        # Build paper list for LLM -- use full abstract (no truncation)
         paper_lines = []
         for i, paper in enumerate(papers, 1):
             title = paper.get("title", "Unknown Title")
             abstract = paper.get("abstract", "") or "No abstract available."
-            paper_lines.append(f"[{i}] Title: {title}\n   Abstract: {abstract[:500]}")
+            paper_lines.append(f"[{i}] Title: {title}\n   Abstract: {abstract}")
 
         paper_list_str = "\n\n".join(paper_lines)
 
@@ -1826,41 +1923,57 @@ Generate your answer:"""
             "You are evaluating research papers for relevance to a user's query.\n\n"
             f'User Query: "{query}"\n\n'
             f"Papers to evaluate:\n{paper_list_str}\n\n"
-            "For each paper, score its relevance to the query on this scale:\n"
-            "1 = Completely irrelevant\n"
-            "2 = Tangential, unlikely to help answer query\n"
-            "3 = Somewhat relevant, partial answer\n"
-            "4 = Relevant, contributes to answer\n"
-            "5 = Highly relevant, directly addresses query\n\n"
-            "Respond with ONLY a JSON object mapping paper numbers to their scores and brief reasoning.\n"
-            'Format: {"scores": {"1": {"score": N, "reason": "..."}, "2": {"score": N, "reason": "..."}, ...}}\n'
-            'Include a "reason" explaining why this score was given.\n'
-            "Only include papers that exist in the list above."
+            "Score each paper's relevance on this scale:\n"
+            "1 = Completely irrelevant to the query\n"
+            "2 = Tangential -- shares general field keywords but does not address "
+            "the specific question\n"
+            "3 = Substantively addresses a significant subtopic of the query, but "
+            "may not fully answer it. Mere domain overlap is a 2, not a 3.\n"
+            "4 = Relevant -- directly contributes to answering the query\n"
+            "5 = Highly relevant -- directly and comprehensively addresses the query\n\n"
+            "Rules:\n"
+            "- If the query names a specific system, method, or entity, only score 4+ "
+            "if the paper discusses THAT entity. Named-entity mismatch = max 2.\n"
+            "- Sharing general field keywords (e.g. 'metabolomics', 'pipeline') without "
+            "addressing the specific question is NOT sufficient for 3+.\n"
+            "- Base your score ONLY on the title and abstract text provided. "
+            "Do not infer relevance from the paper's general research area.\n"
+            f"- You MUST provide a score for EVERY paper numbered 1 through {n_papers}. "
+            "Do not skip any paper.\n\n"
+            "Example calibration: Query \"CRISPR gene editing in wheat\" ->\n"
+            "  Paper \"RNA editing in rice\" = 2 (related technique, wrong organism "
+            "and mechanism)\n"
+            "  Paper \"CRISPR-Cas9 optimization in bread wheat\" = 5\n\n"
+            "Respond with ONLY a JSON object:\n"
+            '{"scores": {"1": {"score": N, "reason": "..."}, '
+            '"2": {"score": N, "reason": "..."}, ...}}'
         )
 
-        try:
-            response = await self.llm.complete(prompt, temperature=0.1)
-            import json, re
+        def _parse_and_filter(response_text: str) -> Tuple[list, bool]:
+            """Parse LLM response and return (filtered_papers, is_complete)."""
+            import json as _json, re as _re
 
-            # Parse JSON from response
-            json_match = re.search(r"\{.*\}", response, re.DOTALL)
+            json_match = _re.search(r"\{.*\}", response_text, _re.DOTALL)
             if not json_match:
-                logger.warning(
-                    f"Could not parse relevance scores from LLM response: {response[:200]}"
-                )
-                return papers  # Fall back to returning all papers
+                return papers, False
 
-            scores_data = json.loads(json_match.group())
+            scores_data = _json.loads(json_match.group())
             scores = scores_data.get("scores", {})
 
-            # Filter and annotate papers
+            # Check completeness: every paper 1..n must have a score
+            all_keys = {str(i) for i in range(1, n_papers + 1)}
+            returned_keys = set(scores.keys())
+            is_complete = returned_keys >= all_keys
+
             filtered = []
             for i, paper in enumerate(papers, 1):
                 paper_key = str(i)
+                is_kb = paper.get("source") == "kb_search"
+
                 if paper_key in scores:
                     score_info = scores[paper_key]
                     score = (
-                        score_info.get("score", 3)
+                        score_info.get("score", 0)
                         if isinstance(score_info, dict)
                         else int(score_info)
                     )
@@ -1868,30 +1981,107 @@ Generate your answer:"""
                     paper["relevance_reason"] = (
                         score_info.get("reason", "") if isinstance(score_info, dict) else ""
                     )
-
-                    if score >= min_score:
-                        filtered.append(paper)
-                        logger.info(
-                            f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - INCLUDED"
-                        )
-                    else:
-                        logger.info(
-                            f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - FILTERED"
-                        )
                 else:
-                    # Default to included if no score found
-                    paper["relevance_score"] = 3
-                    paper["relevance_reason"] = "No score provided"
+                    # No score returned for this paper
+                    if is_kb:
+                        paper["relevance_score"] = min_score
+                        paper["relevance_reason"] = "No LLM score (KB paper, retained)"
+                    else:
+                        paper["relevance_score"] = 0
+                        paper["relevance_reason"] = "No LLM score provided"
+                        logger.info(
+                            f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
+                            f"score: MISSING - DISCARDED (non-KB, no score)"
+                        )
+                        continue
+
+                score = paper["relevance_score"]
+
+                # KB papers are always retained
+                if is_kb:
+                    paper["relevance_score"] = max(score, min_score)
+                    if "KB paper" not in paper.get("relevance_reason", ""):
+                        paper["relevance_reason"] = (
+                            f"{paper['relevance_reason']} (KB paper, retained)"
+                        ).strip()
                     filtered.append(paper)
+                    logger.info(
+                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
+                        f"score: {paper['relevance_score']} - INCLUDED (KB paper)"
+                    )
+                elif score >= min_score:
+                    filtered.append(paper)
+                    logger.info(
+                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
+                        f"score: {score} - INCLUDED"
+                    )
+                else:
+                    logger.info(
+                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
+                        f"score: {score} - FILTERED"
+                    )
 
             logger.info(
-                f"Relevance filtering: {len(filtered)}/{len(papers)} papers included (min_score={min_score})"
+                f"Relevance filtering: {len(filtered)}/{n_papers} papers included "
+                f"(min_score={min_score}, complete={is_complete})"
             )
+            return filtered, is_complete
+
+        try:
+            response = await self.llm.complete(prompt, temperature=0.1)
+            filtered, is_complete = _parse_and_filter(response)
+
+            # If scores are incomplete, retry once with stricter instruction
+            if not is_complete:
+                logger.warning(
+                    f"Relevance scorer returned incomplete scores "
+                    f"({len(filtered)}/{n_papers} kept). Retrying once."
+                )
+                retry_prompt = (
+                    prompt
+                    + "\n\nIMPORTANT: Your previous response was missing scores for "
+                    f"some papers. You MUST return exactly {n_papers} entries with "
+                    f'keys "1" through "{n_papers}". Try again.'
+                )
+                response = await self.llm.complete(retry_prompt, temperature=0.1)
+                retry_filtered, retry_complete = _parse_and_filter(response)
+                if retry_complete or len(retry_filtered) > len(filtered):
+                    filtered = retry_filtered
+                    is_complete = retry_complete
+
             return filtered
 
         except Exception as e:
             logger.error(f"Error scoring papers for relevance: {e}")
-            return papers  # Fall back to returning all papers on error
+            # Never treat unscored literature as relevance-approved (UI + downstream use
+            # relevance_score). KB hits are pre-trusted; literature without a successful
+            # score is excluded from the paper list so synthesis falls back to raw step
+            # text rather than unfiltered OpenAlex/SciLEx blobs.
+            retained: List[Dict[str, Any]] = []
+            for p in papers:
+                if p.get("source") == "kb_search":
+                    p.setdefault("relevance_score", min_score)
+                    p.setdefault(
+                        "relevance_reason",
+                        "KB paper retained after relevance scoring error",
+                    )
+                    retained.append(p)
+                else:
+                    p["relevance_score"] = 0
+                    p["relevance_reason"] = "Excluded: relevance scoring error"
+            if retained:
+                logger.warning(
+                    "Relevance scoring failed: returning %d KB paper(s) only; "
+                    "excluding %d literature paper(s) without scores.",
+                    len(retained),
+                    len(papers) - len(retained),
+                )
+                return retained
+            logger.warning(
+                "Relevance scoring failed with no KB papers; returning no scored papers "
+                "(answer may use raw search result text only)."
+            )
+            return []
 
     def _format_references_section(self, papers: List[Dict[str, Any]]) -> str:
         """Format a references section in academic citation style using shared utility.
@@ -2145,10 +2335,11 @@ Generate your answer:"""
         return f"unknown:{id(p)}"
 
     def _paper_quality_tuple(self, p: Dict[str, Any]) -> tuple:
-        """Higher is better: more abstract, more citations, newer, non-bioRxiv DOI."""
+        """Higher is better: more in-corpus text, more abstract, citations, newer."""
         doi = self._normalize_doi_for_dedupe(p.get("doi"))
         is_biorxiv = doi.startswith("10.1101") if doi else False
         return (
+            len(p.get("full_text") or ""),
             len(p.get("abstract") or ""),
             p.get("cited_by_count") or 0,
             p.get("year") or 0,

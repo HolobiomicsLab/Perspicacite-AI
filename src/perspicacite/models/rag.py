@@ -1,7 +1,7 @@
 """RAG models."""
 
 from enum import Enum
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -69,6 +69,16 @@ class RAGRequest(BaseModel):
     databases: List[str] = Field(
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
         description="List of databases to search"
+    )
+    conversation_history: Optional[List[Dict[str, str]]] = Field(
+        default=None,
+        description="Recent chat turns (role/content) for query rewrite and generation context",
+    )
+    max_papers_retrieval: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Hard cap on papers loaded in two-pass; None uses mode default",
     )
 
     def __repr__(self) -> str:

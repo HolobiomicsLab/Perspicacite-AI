@@ -19,6 +19,12 @@ from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
 )
 from perspicacite.retrieval.hybrid import hybrid_retrieval
+from perspicacite.rag.conversation_helpers import (
+    build_user_message_with_history,
+    compute_retrieval_query,
+    format_conversation_block,
+)
+from perspicacite.rag.query_scope import resolve_paper_scope_for_query
 from perspicacite.rag.utils import (
     format_references,
     prepare_sources,
@@ -76,6 +82,16 @@ class BasicRAGMode(BaseRAGMode):
         logger.info("basic_rag_start", query=request.query, use_hybrid=self.use_hybrid, use_two_pass=self.use_two_pass)
 
         collection = chroma_collection_name_for_kb(request.kb_name)
+        retrieval_query, refined = await compute_retrieval_query(request, llm)
+        if refined:
+            request.refined_query = refined  # type: ignore[misc]
+        scope = await resolve_paper_scope_for_query(
+            retrieval_query,
+            collection,
+            vector_store,
+            max_papers_override=getattr(request, "max_papers_retrieval", None),
+        )
+        cap = min(5, getattr(request, "max_papers_retrieval", None) or 5)
 
         if self.use_two_pass:
             # Two-pass retrieval — identify papers, then fetch all their chunks
@@ -89,7 +105,10 @@ class BasicRAGMode(BaseRAGMode):
             dkb._initialized = True
 
             paper_results = await dkb.search_two_pass(
-                request.query, top_k=self.final_max_docs
+                retrieval_query,
+                top_k=self.final_max_docs,
+                paper_scope=scope,
+                max_papers_cap=cap,
             )
             logger.info("basic_two_pass", papers=len(paper_results))
         else:
@@ -103,7 +122,7 @@ class BasicRAGMode(BaseRAGMode):
             dkb.collection_name = collection
             dkb._initialized = True
 
-            chunk_results = await dkb.search(request.query, top_k=self.final_max_docs)
+            chunk_results = await dkb.search(retrieval_query, top_k=self.final_max_docs)
             paper_results = []
             for r in chunk_results:
                 meta = r.get("metadata")
@@ -141,6 +160,7 @@ class BasicRAGMode(BaseRAGMode):
             llm=llm,
             request=request,
             num_papers=len(paper_results),
+            preamble=scope.scope_note,
         )
 
         # Step 6: Append references section to answer using utility function
@@ -170,6 +190,16 @@ class BasicRAGMode(BaseRAGMode):
         yield StreamEvent.status("Basic RAG: Retrieving documents...")
 
         collection = chroma_collection_name_for_kb(request.kb_name)
+        retrieval_query, refined = await compute_retrieval_query(request, llm)
+        if refined:
+            request.refined_query = refined  # type: ignore[misc]
+        scope = await resolve_paper_scope_for_query(
+            retrieval_query,
+            collection,
+            vector_store,
+            max_papers_override=getattr(request, "max_papers_retrieval", None),
+        )
+        cap = min(5, getattr(request, "max_papers_retrieval", None) or 5)
 
         if self.use_two_pass:
             from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
@@ -182,7 +212,10 @@ class BasicRAGMode(BaseRAGMode):
             dkb._initialized = True
 
             paper_results = await dkb.search_two_pass(
-                request.query, top_k=self.final_max_docs
+                retrieval_query,
+                top_k=self.final_max_docs,
+                paper_scope=scope,
+                max_papers_cap=cap,
             )
         else:
             from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
@@ -194,7 +227,7 @@ class BasicRAGMode(BaseRAGMode):
             dkb.collection_name = collection
             dkb._initialized = True
 
-            chunk_results = await dkb.search(request.query, top_k=self.final_max_docs)
+            chunk_results = await dkb.search(retrieval_query, top_k=self.final_max_docs)
             paper_results = []
             for r in chunk_results:
                 meta = r.get("metadata")
@@ -234,9 +267,14 @@ class BasicRAGMode(BaseRAGMode):
         yield StreamEvent.status("Basic RAG: Generating response...")
 
         context = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
+        hist = format_conversation_block(getattr(request, "conversation_history", None))
+        user_body = f"Documents:\n{context}\n\nQuestion: {request.query}"
+        if scope.scope_note:
+            user_body = f"{scope.scope_note}\n\n{user_body}"
+        user_content = build_user_message_with_history(history_block=hist, body=user_body)
         messages = [
             {"role": "system", "content": get_system_prompt()},
-            {"role": "user", "content": f"Documents:\n{context}\n\nQuestion: {request.query}"},
+            {"role": "user", "content": user_content},
         ]
 
         # Stream the LLM response
@@ -254,11 +292,13 @@ class BasicRAGMode(BaseRAGMode):
         except Exception as e:
             logger.error("basic_streaming_error", error=str(e))
             # Fall back to non-streaming
-            answer = await self._generate_response(
+            answer = await self._generate_response_from_context(
                 query=request.query,
-                documents=selected_documents,
+                context=context,
                 llm=llm,
                 request=request,
+                num_papers=len(paper_results),
+                preamble=scope.scope_note,
             )
             yield StreamEvent.content(answer)
             full_response = answer
@@ -330,6 +370,8 @@ Instructions:
         llm: Any,
         request: RAGRequest,
         num_papers: int = 0,
+        *,
+        preamble: str | None = None,
     ) -> str:
         """Generate response from pre-formatted paper context."""
         template = f"""Based on the following research papers, please answer this question:
@@ -347,12 +389,17 @@ Instructions:
 - Number of papers: {num_papers}
 - IMPORTANT: Extract ALL specific names, tools, methods, chemicals, organisms, or other entities mentioned in the papers that are relevant to the question. Do NOT say "specific names are not listed" if the papers contain them.
 - Be specific and concrete — cite specific tools, software, methods, or findings by name rather than giving vague generalizations."""
+        hist = format_conversation_block(getattr(request, "conversation_history", None))
+        body = template
+        if preamble:
+            body = f"{preamble}\n\n{body}"
+        user_content = build_user_message_with_history(history_block=hist, body=body)
 
         try:
             response = await llm.complete(
                 messages=[
                     {"role": "system", "content": get_system_prompt()},
-                    {"role": "user", "content": template},
+                    {"role": "user", "content": user_content},
                 ],
                 model=request.model,
                 provider=request.provider,

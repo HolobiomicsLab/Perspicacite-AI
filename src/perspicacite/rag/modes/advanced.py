@@ -27,6 +27,8 @@ from perspicacite.rag.prompts import (
     FOCUS_INSTRUCTIONS_PROMPT,
 )
 from perspicacite.models.kb import chroma_collection_name_for_kb
+from perspicacite.rag.conversation_helpers import compute_retrieval_query, format_conversation_block
+from perspicacite.rag.query_scope import merge_scope_with_candidates, resolve_paper_scope_for_query
 from perspicacite.retrieval.hybrid import hybrid_retrieval
 from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
 from perspicacite.rag.utils import (
@@ -224,12 +226,24 @@ Sources:
         """
         logger.info("advanced_rag_start", query=request.query)
 
+        kb_collection = chroma_collection_name_for_kb(request.kb_name)
+        retrieval_query, refined = await compute_retrieval_query(request, llm)
+        if refined:
+            request.refined_query = refined  # type: ignore[misc]
+        scope = await resolve_paper_scope_for_query(
+            retrieval_query,
+            kb_collection,
+            vector_store,
+            max_papers_override=getattr(request, "max_papers_retrieval", None),
+        )
+        cap = min(5, getattr(request, "max_papers_retrieval", None) or 5)
+
         # Step 1: Generate similar/rephrased queries
         # This is the key difference from Basic mode
-        logger.info("advanced_generate_queries", original=request.query[:100])
+        logger.info("advanced_generate_queries", original=retrieval_query[:100])
 
         all_queries = await self._generate_similar_queries(
-            original_query=request.query, llm=llm, number=self.rephrases
+            original_query=retrieval_query, llm=llm, number=self.rephrases
         )
 
         logger.info("advanced_queries_generated", count=len(all_queries), queries=all_queries)
@@ -274,8 +288,11 @@ Sources:
                         paper_meta[pid] = meta.metadata
 
             if paper_ids:
+                ordered = merge_scope_with_candidates(
+                    paper_ids, paper_scores, scope, cap
+                )
                 all_chunks = await vector_store.get_chunks_by_paper_ids(
-                    chroma_collection_name_for_kb(request.kb_name), paper_ids
+                    chroma_collection_name_for_kb(request.kb_name), ordered
                 )
                 deduped = deduplicate_chunk_overlaps(all_chunks)
                 # Group by paper
@@ -283,7 +300,7 @@ Sources:
                 grouped: OrderedDict[str, list] = OrderedDict()
                 for d in deduped:
                     grouped.setdefault(d["paper_id"], []).append(d)
-                for pid in paper_ids:
+                for pid in ordered:
                     chunks_list = grouped.get(pid, [])
                     full_text = " ".join(c["text"] for c in chunks_list)
                     meta = paper_meta.get(pid)
@@ -312,6 +329,7 @@ Sources:
             num_papers=len(paper_results),
             source_documents=retrieval_docs_for_refine if not paper_results else None,
             paper_results=paper_results,
+            preamble=scope.scope_note,
         )
 
         # Step 4: Apply refinement if enabled (Advanced mode feature)
@@ -359,6 +377,76 @@ Sources:
             web_search_used=False,
         )
 
+    def _advanced_paper_stream_messages(
+        self,
+        request: RAGRequest,
+        paper_results: list[dict[str, Any]],
+        *,
+        preamble: str | None,
+    ) -> tuple[list[dict[str, str]], float, bool]:
+        """Messages for two-pass paper streaming (aligned with ``_generate_response_from_context``)."""
+        kb_title = getattr(request, "kb_name", None) or "Perspicacité"
+        kb_scope = getattr(request, "kb_scope", None) or "scientific research and education"
+        mandatory = get_mandatory_prompt(kb_title, kb_scope)
+        combined_prompt = self._truncate_combined_prompt_base(
+            mandatory + "\n" + DEFAULT_SYSTEM_PROMPT
+        )
+        if self.use_relevancy_optimization:
+            combined_prompt = combined_prompt + "\n" + FOCUS_INSTRUCTIONS_PROMPT
+
+        context_with_citations = ""
+        sc: Counter[tuple[str, str]] = Counter()
+        for p in paper_results:
+            text = (p.get("full_text") or "")[:12000]
+            cit = p.get("title") or p.get("doi") or "Unknown"
+            doi = p.get("doi") or ""
+            url = f"https://doi.org/{doi}" if doi else ""
+            context_with_citations += f"{text}, Citation: {cit})\n\n"
+            sc[(url, str(cit))] += 1
+        citations: list[str] = []
+        for (url, citation), count in sc.items():
+            year = ""
+            for p in paper_results:
+                if (p.get("title") or p.get("doi")) == citation or str(p.get("doi")) == citation:
+                    year = str(p.get("year") or "")
+                    break
+            citations.append(f"{citation}. Accessed on: {year} (url: {url}). [{count} docs]")
+        citation_list = "\n".join(citations)
+        n_docs = len(paper_results)
+        n_sources = len(sc)
+
+        question = self._v1_question_line(request)
+        template = f"""System prompt: {combined_prompt}
+Context: {context_with_citations}
+Format: {FORMAT_PROMPT}
+Question: {question}
+
+Additional information:
+- Total documents used: {n_docs}
+- Unique sources: {n_sources}
+Sources:
+{citation_list}
+"""
+        hist = format_conversation_block(getattr(request, "conversation_history", None))
+        if hist:
+            template = f"{hist}\n\n---\n\n{template}"
+        if preamble:
+            template = f"{preamble.strip()}\n\n{template}"
+
+        req_model = getattr(request, "model", "") or ""
+        is_o_series = req_model.startswith("o") or "gpt-5" in req_model
+        if self.use_relevancy_optimization:
+            qc = assess_query_complexity(getattr(request, "refined_query", None) or request.query)
+            temperature = 0.7 if qc > 0.7 else 0.3
+        else:
+            temperature = 0.3
+
+        messages = [
+            {"role": "system", "content": combined_prompt},
+            {"role": "user", "content": template},
+        ]
+        return messages, temperature, is_o_series
+
     async def execute_stream(
         self,
         request: RAGRequest,
@@ -372,9 +460,21 @@ Sources:
 
         yield StreamEvent.status("Advanced RAG: Generating query variations...")
 
+        kb_collection = chroma_collection_name_for_kb(request.kb_name)
+        retrieval_query, refined = await compute_retrieval_query(request, llm)
+        if refined:
+            request.refined_query = refined  # type: ignore[misc]
+        scope = await resolve_paper_scope_for_query(
+            retrieval_query,
+            kb_collection,
+            vector_store,
+            max_papers_override=getattr(request, "max_papers_retrieval", None),
+        )
+        cap = min(5, getattr(request, "max_papers_retrieval", None) or 5)
+
         # Step 1: Generate similar/rephrased queries
         all_queries = await self._generate_similar_queries(
-            original_query=request.query, llm=llm, number=self.rephrases
+            original_query=retrieval_query, llm=llm, number=self.rephrases
         )
 
         yield StreamEvent.status(
@@ -386,7 +486,7 @@ Sources:
             queries=all_queries,
             vector_store=vector_store,
             embedding_provider=embedding_provider,
-            kb_name=chroma_collection_name_for_kb(request.kb_name),
+            kb_name=kb_collection,
             llm=llm,
         )
 
@@ -396,8 +496,65 @@ Sources:
                 selected_documents,
             )
 
+        paper_results: list[dict[str, Any]] = []
+        if self.use_two_pass and selected_documents:
+            from perspicacite.rag.utils import deduplicate_chunk_overlaps
+
+            paper_ids: list[str] = []
+            paper_scores: dict[str, float] = {}
+            paper_meta: dict[str, Any] = {}
+            for doc in selected_documents:
+                meta = getattr(doc, "chunk", None)
+                if meta and hasattr(meta, "metadata"):
+                    pid = getattr(meta.metadata, "paper_id", None)
+                    if pid and pid not in paper_ids:
+                        paper_ids.append(pid)
+                        score = getattr(doc, "wrrf_score", getattr(doc, "score", 0.5))
+                        paper_scores[pid] = score
+                        paper_meta[pid] = meta.metadata
+            if paper_ids:
+                ordered = merge_scope_with_candidates(
+                    paper_ids, paper_scores, scope, cap
+                )
+                all_chunks = await vector_store.get_chunks_by_paper_ids(
+                    kb_collection, ordered
+                )
+                deduped = deduplicate_chunk_overlaps(all_chunks)
+                from collections import OrderedDict
+
+                grouped: OrderedDict[str, list] = OrderedDict()
+                for d in deduped:
+                    grouped.setdefault(d["paper_id"], []).append(d)
+                for pid in ordered:
+                    chunks_list = grouped.get(pid, [])
+                    full_text = " ".join(c["text"] for c in chunks_list)
+                    meta = paper_meta.get(pid)
+                    paper_results.append({
+                        "paper_id": pid,
+                        "paper_score": paper_scores[pid],
+                        "title": getattr(meta, "title", None),
+                        "authors": getattr(meta, "authors", None),
+                        "year": getattr(meta, "year", None),
+                        "doi": getattr(meta, "doi", None),
+                        "chunks": chunks_list,
+                        "full_text": full_text,
+                    })
+
         # Step 3: Prepare sources
-        sources = self._prepare_sources(selected_documents)
+        if paper_results:
+            sources = []
+            for p in paper_results:
+                sources.append(
+                    SourceReference(
+                        title=p.get("title") or "Untitled",
+                        authors=p.get("authors"),
+                        year=p.get("year"),
+                        doi=p.get("doi"),
+                        relevance_score=p.get("paper_score", 0.0),
+                    )
+                )
+        else:
+            sources = self._prepare_sources(selected_documents)
         for source in sources:
             yield StreamEvent.source(source)
 
@@ -414,15 +571,20 @@ Sources:
 
         yield StreamEvent.status("Advanced RAG: Generating response...")
 
-        combined_prompt, user_template, temperature = self._build_v1_answer_chat_chunk_docs(
-            request, selected_documents
-        )
-        messages = [
-            {"role": "system", "content": combined_prompt},
-            {"role": "user", "content": user_template},
-        ]
-        model = getattr(request, "model", "") or ""
-        is_o_series = model.startswith("o") or "gpt-5" in model
+        if paper_results:
+            messages, temperature, is_o_series = self._advanced_paper_stream_messages(
+                request, paper_results, preamble=scope.scope_note
+            )
+        else:
+            combined_prompt, user_template, temperature = self._build_v1_answer_chat_chunk_docs(
+                request, selected_documents
+            )
+            messages = [
+                {"role": "system", "content": combined_prompt},
+                {"role": "user", "content": user_template},
+            ]
+            model = getattr(request, "model", "") or ""
+            is_o_series = model.startswith("o") or "gpt-5" in model
 
         # Stream the LLM response (v1 get_response structure; no refinement when streaming)
         full_response = ""
@@ -441,13 +603,25 @@ Sources:
         except Exception as e:
             logger.error("advanced_streaming_error", error=str(e))
             # Fall back to non-streaming (same v1 template as execute)
-            answer = await self._generate_response_from_context(
-                query=request.query,
-                context="",
-                llm=llm,
-                request=request,
-                source_documents=selected_documents,
-            )
+            if paper_results:
+                ctx = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
+                answer = await self._generate_response_from_context(
+                    query=request.query,
+                    context=ctx,
+                    llm=llm,
+                    request=request,
+                    num_papers=len(paper_results),
+                    paper_results=paper_results,
+                    preamble=scope.scope_note,
+                )
+            else:
+                answer = await self._generate_response_from_context(
+                    query=request.query,
+                    context="",
+                    llm=llm,
+                    request=request,
+                    source_documents=selected_documents,
+                )
             yield StreamEvent.content(answer)
             full_response = answer
 
@@ -701,6 +875,8 @@ Provide a comprehensive answer based on the documents above."""
         num_papers: int = 0,
         source_documents: list[Any] | None = None,
         paper_results: list[dict[str, Any]] | None = None,
+        *,
+        preamble: str | None = None,
     ) -> str:
         """core/core.py get_response template; two-pass uses same structure with paper dicts."""
         if (
@@ -762,6 +938,11 @@ Additional information:
 Sources:
 {citation_list}
 """
+        hist = format_conversation_block(getattr(request, "conversation_history", None))
+        if hist:
+            template = f"{hist}\n\n---\n\n{template}"
+        if preamble:
+            template = f"{preamble.strip()}\n\n{template}"
 
         model = getattr(request, "model", "") or ""
         is_o_series = model.startswith("o") or "gpt-5" in model

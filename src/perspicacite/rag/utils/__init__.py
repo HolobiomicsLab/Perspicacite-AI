@@ -161,6 +161,8 @@ def get_system_prompt() -> str:
     """
     return """You are a scientific AI assistant. Provide clear, well-structured answers using markdown formatting.
 
+If the provided documents do not contain enough information to answer confidently, say what is missing instead of guessing.
+
 FORMAT REQUIREMENTS:
 1. Start with a brief overview/introduction (2-3 sentences)
 2. Use ## for main section headings (e.g., ## Overview, ## Key Points)

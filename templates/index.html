@@ -2464,6 +2464,25 @@
                                 'result',
                                 data.result_summary
                             );
+                        } else if (data.type === 'token') {
+                            const delta = data.delta_b64
+                                ? decodeUtf8FromBase64(data.delta_b64)
+                                : (data.delta || '');
+                            if (delta) {
+                                if (!assistantDiv) {
+                                    assistantDiv = addMessage('assistant', '');
+                                }
+                                assistantMessage += delta;
+                                assistantDiv.innerHTML = formatMessage(assistantMessage);
+                                if (data.session_id) sessionId = data.session_id;
+                                if (data.conversation_id) {
+                                    conversationId = data.conversation_id;
+                                    const activeItem = document.querySelector('.chat-history-item.active');
+                                    if (activeItem && !activeItem.dataset.convId) {
+                                        activeItem.dataset.convId = conversationId;
+                                    }
+                                }
+                            }
                         } else if (data.type === 'answer') {
                             if (!assistantDiv) {
                                 assistantDiv = addMessage('assistant', '');

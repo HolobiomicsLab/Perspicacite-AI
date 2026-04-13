@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
+from perspicacite.rag.query_scope import PaperScopeResult, merge_scope_with_candidates
+from perspicacite.retrieval.chroma_store import _metadata_to_chunk
 
 if TYPE_CHECKING:
     from perspicacite.models.papers import Paper
@@ -276,12 +278,18 @@ Abstract:
         query: str,
         top_k: int | None = None,
         min_score: float | None = None,
+        *,
+        paper_scope: PaperScopeResult | None = None,
+        max_papers_cap: int | None = None,
     ) -> list[dict[str, Any]]:
         """Two-pass retrieval: identify relevant papers, then fetch all their chunks.
 
         Pass 1 uses existing ``search()`` to find top papers (deduplicated by
         paper_id).  Pass 2 fetches ALL chunks for those papers via
         ``get_chunks_by_paper_ids()`` and removes chunk overlaps.
+
+        Optional ``paper_scope`` merges user-referenced papers (quoted title / DOI)
+        with vector hits and caps how many full papers are loaded.
 
         Returns:
             Paper-level dicts with keys: paper_id, paper_score, title, authors,
@@ -292,44 +300,71 @@ Abstract:
 
         top_k = top_k or self.config.top_k
         min_score = min_score or self.config.min_relevance_score
+        hard_cap = min(max_papers_cap or top_k, 5)
 
         # ── Pass 1: identify relevant papers ───────────────────────────
         hit_chunks = await self.search(query, top_k=top_k, min_score=min_score)
-        if not hit_chunks:
-            return []
 
-        # Build paper_id → best score mapping
         paper_scores: dict[str, float] = {}
         paper_meta: dict[str, Any] = {}
-        for hit in hit_chunks:
-            pid = hit["paper_id"]
-            score = hit["score"]
-            if pid not in paper_scores or score > paper_scores[pid]:
-                paper_scores[pid] = score
-                meta = hit["metadata"]
-                paper_meta[pid] = meta
 
-        paper_ids = list(paper_scores.keys())
+        if hit_chunks:
+            for hit in hit_chunks:
+                pid = hit["paper_id"]
+                score = hit["score"]
+                if pid not in paper_scores or score > paper_scores[pid]:
+                    paper_scores[pid] = score
+                    meta = hit["metadata"]
+                    paper_meta[pid] = meta
+
+        if paper_scope and paper_scope.forced_paper_ids and not hit_chunks:
+            for pid in paper_scope.forced_paper_ids:
+                paper_scores[pid] = 0.55
+                row = await self.vector_store.peek_paper_metadata_row(
+                    self.collection_name, pid
+                )
+                if row:
+                    paper_meta[pid] = _metadata_to_chunk(row)
+
+        if not paper_scores:
+            return []
+
+        candidate_order = sorted(
+            paper_scores.keys(), key=lambda p: -paper_scores[p]
+        )
+        paper_ids = merge_scope_with_candidates(
+            candidate_order, paper_scores, paper_scope, hard_cap
+        )
+
+        for pid in paper_ids:
+            if pid not in paper_meta:
+                row = await self.vector_store.peek_paper_metadata_row(
+                    self.collection_name, pid
+                )
+                if row:
+                    paper_meta[pid] = _metadata_to_chunk(row)
 
         # ── Pass 2: fetch all chunks for those papers ──────────────────
         all_chunks = await self.vector_store.get_chunks_by_paper_ids(
             self.collection_name, paper_ids
         )
         if not all_chunks:
-            # Fallback: return pass-1 results as-is
-            return [
-                {
-                    "paper_id": hit["paper_id"],
-                    "paper_score": hit["score"],
-                    "title": getattr(hit["metadata"], "title", None),
-                    "authors": getattr(hit["metadata"], "authors", None),
-                    "year": getattr(hit["metadata"], "year", None),
-                    "doi": getattr(hit["metadata"], "doi", None),
-                    "chunks": [{"chunk_index": 0, "text": hit["text"]}],
-                    "full_text": hit["text"],
-                }
-                for hit in hit_chunks
-            ]
+            # Fallback: return pass-1 results as-is (if any)
+            if hit_chunks:
+                return [
+                    {
+                        "paper_id": hit["paper_id"],
+                        "paper_score": hit["score"],
+                        "title": getattr(hit["metadata"], "title", None),
+                        "authors": getattr(hit["metadata"], "authors", None),
+                        "year": getattr(hit["metadata"], "year", None),
+                        "doi": getattr(hit["metadata"], "doi", None),
+                        "chunks": [{"chunk_index": 0, "text": hit["text"]}],
+                        "full_text": hit["text"],
+                    }
+                    for hit in hit_chunks
+                ]
+            return []
 
         # Remove chunk overlaps
         from perspicacite.rag.utils import deduplicate_chunk_overlaps
@@ -345,7 +380,7 @@ Abstract:
         for d in deduped:
             grouped.setdefault(d["paper_id"], []).append(d)
 
-        # Preserve pass-1 score ranking
+        # Preserve merged ordering
         results: list[dict[str, Any]] = []
         for pid in paper_ids:
             chunks_list = grouped.get(pid, [])
