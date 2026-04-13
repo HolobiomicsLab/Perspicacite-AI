@@ -173,7 +173,7 @@ async def retrieve_paper_content(
             arxiv_id = url.split("/abs/")[-1].split("?")[0].split("#")[0]
 
         if arxiv_id:
-            html_text, html_sections = await fetch_arxiv_html(arxiv_id, client)
+            html_text, html_sections, _html_title = await fetch_arxiv_html(arxiv_id, client)
             if html_text and len(html_text.strip()) > 200:
                 return PaperContent(
                     success=True,

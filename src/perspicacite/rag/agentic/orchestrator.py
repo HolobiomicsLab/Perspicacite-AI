@@ -28,6 +28,10 @@ MAP_REDUCE_MAX_PAPERS = 8
 # Maximum number of replan iterations before forcing answer generation.
 MAX_REPLANS = 3
 
+# URL detection patterns for pre-fetch.
+_URL_RE = re.compile(r"https?://\S+")
+_DOI_IN_URL_RE = re.compile(r"10\.\d{4,9}/[^\s\])>'\"]+")
+
 
 def _query_seeks_workflow_detail(query: str) -> bool:
     """True when the user likely needs ordered pipeline / methods, not abstract themes."""
@@ -450,6 +454,18 @@ class AgenticOrchestrator:
         self._found_papers = list(session.found_papers_archive)
         session.original_query = query
 
+        # --- URL pre-processing (deterministic, before planning) ---
+        url_paper = await self._try_resolve_url(query)
+        if url_paper:
+            title = url_paper.get("title", "the paper")
+            yield {"type": "thinking", "message": f"Fetching paper: {title[:80]}..."}
+            self._found_papers.append(url_paper)
+            yield {"type": "thinking", "message": f"Retrieved: {title[:80]}"}
+            logger.info(f"URL pre-fetch: {title[:80]} ({len(url_paper.get('full_text', ''))} chars)")
+        else:
+            if _URL_RE.search(query):
+                yield {"type": "thinking", "message": "Could not fetch paper directly, searching databases instead..."}
+
         # Step 1: Classify intent
         yield {"type": "thinking", "message": "Analyzing your query..."}
 
@@ -838,6 +854,108 @@ class AgenticOrchestrator:
             len(new_steps),
             subs,
         )
+
+    # ------------------------------------------------------------------
+    # URL pre-processing
+    # ------------------------------------------------------------------
+
+    async def _try_resolve_url(self, query: str) -> Optional[Dict[str, Any]]:
+        """Detect paper URL in query, fetch content, return paper dict or None.
+
+        Priority:
+        1. arXiv URL → extract ID, fetch HTML version
+        2. DOI in URL (doi.org/... or publisher URLs containing a DOI) → unified retrieval
+        3. Publisher URL without DOI → give up (future: scrape meta tags)
+        """
+        url_match = _URL_RE.search(query)
+        if not url_match:
+            return None
+
+        url = url_match.group(0).rstrip(".,;:)")
+
+        # 1. arXiv URL → extract ID directly
+        from perspicacite.pipeline.download.arxiv import (
+            get_arxiv_id_from_url,
+            fetch_arxiv_html,
+        )
+        arxiv_id = get_arxiv_id_from_url(url)
+
+        if arxiv_id:
+            # Strip version suffix for fetching (arXiv serves latest by default)
+            bare_id = arxiv_id.split("v")[0] if re.match(r".*v\d+$", arxiv_id) else arxiv_id
+            full_text, sections, html_title = await fetch_arxiv_html(bare_id)
+            if full_text:
+                title, doi_resolved = await self._resolve_arxiv_metadata(bare_id)
+                # Prefer: OpenAlex title > HTML <title> tag > arXiv ID fallback
+                final_title = title or html_title or f"arXiv:{arxiv_id}"
+                return {
+                    "title": final_title,
+                    "doi": doi_resolved or f"10.48550/arXiv.{bare_id}",
+                    "full_text": full_text,
+                    "sections": sections,
+                    "source": "url_fetch",
+                    "relevance_score": 5,
+                    "arxiv_id": bare_id,
+                    "_step_id": "url_prefetch",
+                }
+
+        # 2. DOI in URL (doi.org/... or publisher URLs containing a DOI)
+        doi: Optional[str] = None
+        doi_match = _DOI_IN_URL_RE.search(url)
+        if doi_match:
+            doi = doi_match.group(0)
+
+        if doi:
+            from perspicacite.pipeline.download.unified import retrieve_paper_content
+            from perspicacite.pipeline.parsers.pdf import PDFParser
+
+            parser = PDFParser()
+            try:
+                result = await retrieve_paper_content(
+                    doi=doi,
+                    pdf_parser=parser,
+                    unpaywall_email="perspicacite@example.com",
+                )
+                if result.success and result.full_text:
+                    return {
+                        "title": (result.metadata or {}).get("title", doi),
+                        "doi": doi,
+                        "full_text": result.full_text,
+                        "sections": getattr(result, "sections", None),
+                        "source": "url_fetch",
+                        "relevance_score": 5,
+                        "content_type": result.content_type,
+                        "_step_id": "url_prefetch",
+                    }
+            except Exception as e:
+                logger.warning(f"URL pre-fetch via retrieve_paper_content failed for {doi}: {e}")
+
+        return None
+
+    async def _resolve_arxiv_metadata(
+        self, arxiv_id: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Resolve title + DOI from arXiv ID via OpenAlex.
+
+        Lightweight — one API call.
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(
+                    f"https://api.openalex.org/works/arxiv:{arxiv_id}",
+                    params={"mailto": "perspicacite@example.com"},
+                )
+                if r.status_code == 200:
+                    work = r.json()
+                    title = work.get("title")
+                    ids = work.get("ids") or {}
+                    doi = (ids.get("doi") or "").replace("https://doi.org/", "")
+                    return title, doi or None
+        except Exception as e:
+            logger.debug(f"OpenAlex arXiv metadata lookup failed for {arxiv_id}: {e}")
+        return None, None
 
     def _register_evidence_facets(self, session: AgentSession, plan: Plan) -> None:
         """Create evidence facets from search steps in the plan.

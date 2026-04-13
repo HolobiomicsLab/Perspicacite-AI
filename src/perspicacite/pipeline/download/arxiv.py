@@ -7,6 +7,8 @@ Website: https://arxiv.org/
 API Docs: https://info.arxiv.org/help/api/index.html
 """
 
+import re
+
 import httpx
 
 from perspicacite.logging import get_logger
@@ -29,6 +31,22 @@ def is_arxiv_url(url: str) -> bool:
     if not url:
         return False
     return "arxiv.org" in url.lower()
+
+
+# Regex for arXiv URL patterns:
+# /abs/2604.06788, /html/2604.06788v1, /pdf/2604.06788, /format/2604.06788
+_ARXIV_URL_RE = re.compile(
+    r"arxiv\.org/(?:abs|html|pdf|format)/(\d{4}\.\d{4,5}(?:v\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def get_arxiv_id_from_url(url: str) -> str | None:
+    """Extract arXiv ID from any arXiv URL (/abs/, /html/, /pdf/, /format/)."""
+    if not url:
+        return None
+    m = _ARXIV_URL_RE.search(url)
+    return m.group(1) if m else None
 
 
 def get_arxiv_id_from_doi(doi: str) -> str | None:
@@ -155,7 +173,7 @@ async def download_from_arxiv(
 async def fetch_arxiv_html(
     arxiv_id: str,
     http_client: httpx.AsyncClient | None = None,
-) -> tuple[str | None, dict[str, str] | None]:
+) -> tuple[str | None, dict[str, str] | None, dict[str, str | None] | None]:
     """Fetch and parse arXiv HTML version of a paper.
 
     arXiv serves HTML at https://arxiv.org/html/{id} for many papers.
@@ -166,7 +184,8 @@ async def fetch_arxiv_html(
         http_client: Optional HTTP client
 
     Returns:
-        (full_text, sections) or (None, None) if unavailable.
+        (full_text, sections, page_title) or (None, None, None) if unavailable.
+        page_title is extracted from the HTML <title> tag or first <h1>.
     """
     client = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     should_close = http_client is None
@@ -181,7 +200,7 @@ async def fetch_arxiv_html(
                 arxiv_id=arxiv_id,
                 status=response.status_code,
             )
-            return None, None
+            return None, None, None
 
         html = response.text
 
@@ -191,10 +210,31 @@ async def fetch_arxiv_html(
             # Fallback: just extract raw text
             text = response.text
             if len(text) > 500:
-                return text, None
-            return None, None
+                return text, None, None
+            return None, None, None
 
         soup = BeautifulSoup(html, "html.parser")
+
+        # Extract page title from <title> or first <h1> before decomposing elements
+        page_title: str | None = None
+        title_tag = soup.find("title")
+        if title_tag:
+            raw_title = title_tag.get_text(strip=True)
+            # arXiv <title> often has format "Title [arXiv:ID]" or "Title - arXiv"
+            for sep in (" [arXiv:", " - arXiv", " | arXiv"):
+                if sep in raw_title:
+                    raw_title = raw_title[: raw_title.index(sep)].strip()
+            if raw_title:
+                page_title = raw_title
+        if not page_title:
+            h1 = soup.find("h1", class_="title") or soup.find("h1")
+            if h1:
+                h1_text = h1.get_text(strip=True)
+                # Strip "Title:" prefix that arXiv sometimes adds
+                if h1_text.lower().startswith("title:"):
+                    h1_text = h1_text[6:].strip()
+                if len(h1_text) > 5:
+                    page_title = h1_text
 
         # Remove non-content elements
         for tag in soup(["script", "style", "nav", "header", "footer"]):
@@ -252,14 +292,14 @@ async def fetch_arxiv_html(
                 text_length=len(full_text),
                 sections=len(sections),
             )
-            return full_text, sections if sections else None
+            return full_text, sections if sections else None, page_title
 
         logger.info("arxiv_html_too_short", arxiv_id=arxiv_id)
-        return None, None
+        return None, None, None
 
     except Exception as e:
         logger.error("arxiv_html_error", arxiv_id=arxiv_id, error=str(e))
-        return None, None
+        return None, None, None
     finally:
         if should_close:
             await client.aclose()
