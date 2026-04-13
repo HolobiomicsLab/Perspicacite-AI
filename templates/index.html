@@ -1596,6 +1596,19 @@
                 downloadCapControl.classList.remove('visible');
             }
         }
+
+        /**
+         * Align currentMode with the mode <select>. The API body uses currentMode; the
+         * dropdown is the user's source of truth. After bfcache or soft reload, browsers
+         * may restore the select without firing onchange, leaving currentMode stuck at
+         * the script default ('basic') while the UI still shows Agentic.
+         */
+        function syncRagModeFromDropdown() {
+            const el = document.getElementById('mode-dropdown');
+            if (el && el.value) {
+                setMode(el.value);
+            }
+        }
         
         function updateDownloadCapDisplay(value) {
             document.getElementById('download-cap-value').textContent = value;
@@ -2341,6 +2354,8 @@
             const query = input.value.trim();
             
             if (!query) return;
+
+            syncRagModeFromDropdown();
             
             isProcessing = true;
             input.value = '';
@@ -3171,6 +3186,8 @@
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;
         }
+
+        syncRagModeFromDropdown();
     </script>
 
     <!-- Delete KB Confirmation Modal -->
