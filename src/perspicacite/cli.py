@@ -236,6 +236,70 @@ def create_kb(
     )
 
 
+@cli.command("add-to-kb")
+@click.argument("name")
+@click.option(
+    "--from-bibtex",
+    "-b",
+    type=click.Path(exists=True, path_type=Path),
+    required=True,
+    help="BibTeX file to import (.bib)",
+)
+@click.option(
+    "--session-db",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="SQLite DB for KB metadata (default: data/perspicacite.db)",
+)
+@click.option(
+    "--chroma-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Chroma persist directory (default: from config database.chroma_path)",
+)
+@click.pass_context
+def add_to_kb(
+    ctx: click.Context,
+    name: str,
+    from_bibtex: Path,
+    session_db: Path | None,
+    chroma_dir: Path | None,
+) -> None:
+    """Add papers from a BibTeX file to an existing knowledge base."""
+    config = ctx.obj["config"]
+
+    session_db = session_db or Path("data/perspicacite.db")
+    chroma_dir = chroma_dir or config.database.chroma_path
+
+    click.echo(f"Adding papers from {from_bibtex} to knowledge base '{name}'...")
+
+    try:
+        result = asyncio.run(
+            _add_bibtex_to_existing_kb(
+                config=config,
+                kb_name=name,
+                bib_path=from_bibtex,
+                session_db=session_db,
+                chroma_dir=chroma_dir,
+            )
+        )
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        logger.exception("add_to_kb_failed", error=str(e))
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"\n  Papers added: {result['new_papers']}, new chunks: {result['chunks_added']}")
+    st = result["pdf_stats"]
+    click.echo(
+        f"  PDF download: attempted={st['attempted']} success={st['success']} "
+        f"failed={st['failed']} no_doi={st['skipped_no_doi']}"
+    )
+    click.echo(f"  KB total: {result['total_papers']} papers, {result['total_chunks']} chunks")
+
+
 @cli.command()
 @click.pass_context
 def list_kb(ctx: click.Context) -> None:
@@ -342,6 +406,25 @@ async def _create_kb_from_bibtex(
         kb_name=kb_name,
         bib_path=bib_path,
         description=description,
+        session_db=session_db,
+        chroma_dir=chroma_dir,
+    )
+
+
+async def _add_bibtex_to_existing_kb(
+    config: Any,
+    *,
+    kb_name: str,
+    bib_path: Path,
+    session_db: Path,
+    chroma_dir: Path,
+) -> dict[str, Any]:
+    from perspicacite.pipeline.bibtex_kb import add_bibtex_to_existing_kb
+
+    return await add_bibtex_to_existing_kb(
+        config,
+        kb_name=kb_name,
+        bib_path=bib_path,
         session_db=session_db,
         chroma_dir=chroma_dir,
     )

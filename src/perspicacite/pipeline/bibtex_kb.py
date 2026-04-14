@@ -314,3 +314,108 @@ async def create_kb_from_bibtex(
         "pdf_stats": pdf_stats,
         "bib_path": str(bib_path),
     }
+
+
+async def add_bibtex_to_existing_kb(
+    config: Any,
+    *,
+    kb_name: str,
+    bib_path: Path,
+    session_db: Path,
+    chroma_dir: Path,
+) -> dict[str, Any]:
+    """Add papers from a BibTeX file to an existing knowledge base.
+
+    Raises FileNotFoundError if the KB doesn't exist.
+    """
+    from perspicacite.config.schema import Config
+    from perspicacite.llm import LiteLLMEmbeddingProvider
+    from perspicacite.memory.session_store import SessionStore
+    from perspicacite.retrieval.chroma_store import ChromaVectorStore
+
+    if not isinstance(config, Config):
+        raise TypeError("config must be a Config instance")
+
+    safe_name = sanitize_kb_display_name(kb_name)
+
+    session_store = SessionStore(session_db)
+    await session_store.init_db()
+
+    kb = await session_store.get_kb_metadata(safe_name)
+    if not kb:
+        raise FileNotFoundError(f"Knowledge base '{kb_name}' not found. Create it first with 'perspicacite create-kb'.")
+
+    collection_name = kb.collection_name
+
+    # Parse bibtex
+    entries = load_bibtex_entries(bib_path)
+    papers = entries_to_papers(entries)
+    if not papers:
+        return {"name": safe_name, "papers": 0, "chunks_added": 0, "skipped": 0, "pdf_stats": {}}
+
+    logger.info("add_bibtex_start", kb=safe_name, bib=str(bib_path), entries=len(papers))
+
+    # Download PDFs
+    pdf_cfg = config.pdf_download
+    pdf_parser = PDFParser()
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as http_client:
+        pdf_stats = await enrich_papers_with_pdf(
+            papers,
+            http_client=http_client,
+            pdf_parser=pdf_parser,
+            unpaywall_email=pdf_cfg.unpaywall_email,
+            alternative_endpoint=pdf_cfg.alternative_endpoint,
+            wiley_tdm_token=pdf_cfg.wiley_tdm_token,
+            aaas_api_key=pdf_cfg.aaas_api_key,
+            rsc_api_key=pdf_cfg.rsc_api_key,
+            springer_api_key=pdf_cfg.springer_api_key,
+        )
+
+    # Connect to existing KB collection
+    embedding_provider = LiteLLMEmbeddingProvider(
+        model=config.knowledge_base.embedding_model,
+    )
+    vector_store = ChromaVectorStore(
+        persist_dir=str(chroma_dir),
+        embedding_provider=embedding_provider,
+    )
+
+    dkb_config = KnowledgeBaseConfig(
+        vector_size=embedding_provider.dimension,
+        chunk_size=config.knowledge_base.chunk_size,
+        chunk_overlap=config.knowledge_base.chunk_overlap,
+        chunking_method=config.knowledge_base.chunking_method,
+    )
+    dkb = DynamicKnowledgeBase(
+        vector_store,
+        embedding_provider,
+        config=dkb_config,
+    )
+    dkb.collection_name = collection_name
+    dkb._initialized = True
+
+    chunks_added = await dkb.add_papers(papers, include_full_text=True)
+
+    # Update counts incrementally
+    kb.paper_count = (kb.paper_count or 0) + len(papers)
+    kb.chunk_count = (kb.chunk_count or 0) + chunks_added
+    await session_store.save_kb_metadata(kb)
+
+    logger.info(
+        "add_bibtex_done",
+        kb=safe_name,
+        new_papers=len(papers),
+        new_chunks=chunks_added,
+        total_papers=kb.paper_count,
+        total_chunks=kb.chunk_count,
+    )
+
+    return {
+        "name": safe_name,
+        "new_papers": len(papers),
+        "chunks_added": chunks_added,
+        "pdf_stats": pdf_stats,
+        "total_papers": kb.paper_count,
+        "total_chunks": kb.chunk_count,
+        "bib_path": str(bib_path),
+    }

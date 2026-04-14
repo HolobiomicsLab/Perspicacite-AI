@@ -1414,13 +1414,17 @@
                 
                 <!-- Knowledge Base -->
                 <div class="kb-section">
-                    <h3>📚 Knowledge Base</h3>
-                    <select id="kb-select" class="kb-select" onchange="selectKB(this.value)">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="margin-bottom: 0;">📚 Knowledge Base</h3>
+                        <button class="kb-create-toggle" onclick="toggleCreateKB()" title="Create new KB" style="font-size: 16px; padding: 2px 6px;">+</button>
+                    </div>
+                    <select id="kb-select" class="kb-select" onchange="selectKB(this.value)" style="margin-top: 8px;">
                         <option value="">No KB (web search only)</option>
                     </select>
                     <div id="kb-info" class="kb-info" style="display:none;"></div>
                     <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
-                        <button class="kb-create-toggle" onclick="toggleCreateKB()">+ Create new KB</button>
+                        <button id="kb-add-bibtex-btn" class="kb-create-toggle" style="display:none;" onclick="document.getElementById('kb-add-bibtex-file').click()">Add from BibTeX</button>
+                        <input type="file" id="kb-add-bibtex-file" accept=".bib" style="display:none" onchange="addToKBFromBibtex(this.files[0])">
                         <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
                     </div>
                     <div id="kb-create-form" class="kb-create-form">
@@ -1955,11 +1959,13 @@
             selectedKb = name || null;
             const infoDiv = document.getElementById('kb-info');
             const deleteBtn = document.getElementById('kb-delete-btn');
+            const addBibtexBtn = document.getElementById('kb-add-bibtex-btn');
             if (selectedKb) {
                 fetch(`/api/kb/${selectedKb}`).then(r => r.json()).then(data => {
                     if (data.error) {
                         infoDiv.style.display = 'none';
                         deleteBtn.style.display = 'none';
+                        addBibtexBtn.style.display = 'none';
                         return;
                     }
                     infoDiv.style.display = 'block';
@@ -1968,9 +1974,11 @@
                         `${data.paper_count} papers, ${data.chunk_count} chunks`;
                 });
                 deleteBtn.style.display = 'inline';
+                addBibtexBtn.style.display = 'inline';
             } else {
                 infoDiv.style.display = 'none';
                 deleteBtn.style.display = 'none';
+                addBibtexBtn.style.display = 'none';
             }
             
             // Update survey "Add to KB" button if survey is visible
@@ -2046,6 +2054,61 @@
                 }
             });
         })();
+
+        async function addToKBFromBibtex(file) {
+            if (!file) return;
+            if (!selectedKb) {
+                showToast('Please select a knowledge base first');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const bibtex = e.target.result;
+                const entryCount = (bibtex.match(/@\w+\s*\{/g) || []).length;
+                showToast(`Importing ${entryCount} papers to "${selectedKb}"...`);
+
+                try {
+                    const resp = await fetch('/api/kb/' + encodeURIComponent(selectedKb) + '/bibtex', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ bibtex })
+                    });
+
+                    const data = await resp.json();
+                    if (!resp.ok || data.error) {
+                        const msg = data.detail
+                            ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
+                            : (data.error || 'Unknown error');
+                        throw new Error(msg);
+                    }
+
+                    const added = data.added_papers || 0;
+                    const dupes = data.skipped_duplicates || 0;
+                    const pdfOk = data.pdf_download ? data.pdf_download.success : 0;
+                    const pdfFail = data.pdf_download ? data.pdf_download.failed : 0;
+
+                    let summary = `Added ${added} of ${entryCount} papers to "${selectedKb}"`;
+                    if (dupes) summary += ` (${dupes} duplicates skipped)`;
+                    if (pdfOk) summary += ` — ${pdfOk} PDFs downloaded`;
+                    showToast(summary);
+
+                    // Refresh KB info
+                    selectKB(selectedKb);
+                    await loadKBs();
+                    document.getElementById('kb-select').value = selectedKb;
+                } catch (err) {
+                    showToast('Error: ' + err.message);
+                }
+            };
+            reader.onerror = function() {
+                showToast('Error reading file');
+            };
+            reader.readAsText(file);
+
+            // Reset file input so the same file can be re-selected
+            document.getElementById('kb-add-bibtex-file').value = '';
+        }
 
         async function createKBFromBibtex() {
             const name = document.getElementById('kb-bibtex-name-input').value.trim();
