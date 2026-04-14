@@ -1,0 +1,95 @@
+gg# `/api/chat` Non-Streaming Path — Bug Report & Fixes
+
+**Date:** 2026-04-14  
+**File:** `web_app_full.py` — `chat_endpoint()` (non-streaming branch, `stream=False`)
+
+---
+
+## Summary
+
+When an external client calls `POST /api/chat` with `stream: false`, the server
+must consume the entire internal SSE generator before returning a JSON response.
+Three server-side bugs in this non-streaming consumer caused the endpoint to
+return **empty or incorrect responses**, and a fourth issue caused it to
+**waste server resources** after the client had already disconnected.
+
+---
+
+## Bug 1 — `papers_found` count always zero
+
+| | |
+|---|---|
+| **Severity** | Medium — data loss in response |
+| **Location** | `chat_endpoint()`, non-streaming branch |
+| **Root cause** | The consumer extracted the count with `data.get("count", 0)`, but the orchestrator yields `{"type": "papers_found", "papers": [...]}` — there is no `"count"` key. |
+| **Effect** | The `papers_found` field in the JSON response was always `0` (or fell back to `len(sources)`), losing the actual paper list. |
+| **Fix** | ```python papers_list = data.get("papers", [])``` ```python papers_found = data.get("count", len(papers_list))``` |
+
+---
+
+## Bug 2 — Token deltas silently dropped (basic / advanced / profound modes)
+
+| | |
+|---|---|
+| **Severity** | High — empty answer for non-agentic modes |
+| **Location** | `chat_endpoint()`, non-streaming branch |
+| **Root cause** | For `basic`, `advanced`, and `profound` modes, the `_stream_rag_mode()` generator emits `"token"` SSE events (base64-encoded deltas) as the LLM streams, followed by a final `"answer"` event with the assembled text. The non-streaming consumer only checked for `"answer"` events — it ignored `"token"` events entirely. If the `"done"` event arrived before the `"answer"` event (or if the `"answer"` event failed to emit due to an exception), the accumulated token content was lost. |
+| **Effect** | In edge cases the response could return `{"answer": ""}` even though the LLM had fully generated the text. |
+| **Fix** | Added `answer_tokens` accumulator for `"token"` events; after the loop, if `answer` is still empty, join the token deltas: ```python if not answer and answer_tokens: answer = "".join(answer_tokens)``` |
+
+---
+
+## Bug 3 — Error events silently swallowed → empty answer instead of HTTP error
+
+| | |
+|---|---|
+| **Severity** | High — client cannot distinguish "no results" from "server failure" |
+| **Location** | `chat_endpoint()`, non-streaming branch |
+| **Root cause** | When the pipeline failed (LLM error, search timeout, etc.), the internal SSE stream emitted a `{"type": "error", "message": "..."}` event. The non-streaming consumer had **no handler** for `"error"` events — it simply skipped them. |
+| **Effect** | The endpoint returned `{"answer": "", "sources": [], ...}` with HTTP 200. The client saw an empty answer and had no way to know the pipeline had actually crashed. |
+| **Fix** | Added `error_message` capture for `"error"` events. After the loop, if an error occurred and no answer was produced, the endpoint now raises `HTTPException(status_code=502, detail=error_message)` so the client receives a proper error response. |
+
+---
+
+## Bug 4 — No client disconnect detection → wasted resources
+
+| | |
+|---|---|
+| **Severity** | Medium — resource waste (LLM tokens, API quotas, compute) |
+| **Location** | `chat_endpoint()`, non-streaming branch |
+| **Root cause** | The agentic pipeline (intent classification → planning → literature search → PDF download → relevance scoring → answer synthesis) can run 1–5+ minutes. If the client disconnects mid-request (e.g. timeout), the server continued running the **entire** pipeline to completion — all LLM calls, all API searches, all downloads — then discarded the result because the client was already gone. There was no check for `Request.is_disconnected()`. |
+| **Effect** | Wasted LLM API tokens, search API quotas, CPU, and network bandwidth. Visible in server logs as "request processed in background AFTER client received nothing." |
+| **Fix** | Added `raw_request: Request` parameter to the endpoint. Every 5 events, the consumer checks `await raw_request.is_disconnected()` and breaks out of the loop early if the client is gone: ```python if event_count % 5 == 0: if await raw_request.is_disconnected(): logger.warning("Client disconnected – aborting pipeline") break``` |
+
+---
+
+## Client-Side Contributing Factor
+
+While the above are genuine server bugs, the **primary trigger** for the user-visible
+symptom ("No relevant scientific context") was the client's **30-second timeout**
+(`_REQUEST_TIMEOUT = 30` in the original `client_example.py`). The non-streaming
+endpoint cannot return a response until the full pipeline completes — which takes
+1–5+ minutes for agentic mode. The client timed out at 30 s, received a
+`TimeoutException`, and returned `None`.
+
+The client was also updated (separately from the server fixes):
+
+- **Default to SSE streaming** — intermediate "thinking" events keep the connection
+  alive, resetting the read-timeout counter every few seconds.
+- **Generous timeouts** — connect=30 s, read=600 s (10 min between events).
+
+---
+
+## Verification
+
+After applying all fixes, a live smoke-test with `client_example.py` against the
+running `web_app_full.py` completed successfully:
+
+```
+Elapsed: 155.0s
+Scientific knowledge retrieved: 4727 chars
+```
+
+The streaming connection stayed alive throughout the full pipeline (intent → search →
+download → synthesis), with "thinking" events visible every few seconds in the client
+log.

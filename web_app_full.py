@@ -293,7 +293,7 @@ async def get_chat_interface():
 # =============================================================================
 
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest, raw_request: Request):
     """
     Main chat endpoint with true agentic orchestration.
 
@@ -334,9 +334,20 @@ async def chat_endpoint(request: ChatRequest):
         # Non-streaming: consume the SSE stream internally, return JSON
         answer = ""
         sources = []
-        papers_found = 0
+        papers_list = []
+        answer_tokens = []
+        error_message = None
+        event_count = 0
 
         async for event in agentic_chat_stream(request, conversation_id):
+            event_count += 1
+
+            # Bug 4: Check for client disconnect every 5 events
+            if event_count % 5 == 0:
+                if await raw_request.is_disconnected():
+                    logger.warning("client_disconnected_aborting_pipeline")
+                    break
+
             if not event.startswith("data:"):
                 continue
             try:
@@ -345,21 +356,50 @@ async def chat_endpoint(request: ChatRequest):
                 continue
 
             event_type = data.get("type", "")
+
             if event_type == "answer":
                 content_b64 = data.get("content_b64")
                 if content_b64:
                     answer = base64.b64decode(content_b64).decode("utf-8", errors="replace")
                 elif "content" in data:
                     answer = str(data["content"])
+
+            elif event_type == "token":
+                # Bug 2: Accumulate token deltas as fallback
+                delta_b64 = data.get("delta_b64")
+                if delta_b64:
+                    try:
+                        delta = base64.b64decode(delta_b64).decode("utf-8", errors="replace")
+                        answer_tokens.append(delta)
+                    except Exception:
+                        pass
+                elif "delta" in data:
+                    answer_tokens.append(str(data["delta"]))
+
             elif event_type == "source":
                 sources.append(data.get("source", {}))
+
             elif event_type == "papers_found":
-                papers_found = data.get("count", 0)
+                # Bug 1: Use "papers" key, not "count"
+                papers_list = data.get("papers", [])
+
+            elif event_type == "error":
+                # Bug 3: Capture error instead of swallowing
+                error_message = data.get("message", "Unknown pipeline error")
+                logger.warning("non_streaming_pipeline_error", error=error_message)
+
+        # Bug 2: If no "answer" event arrived, fall back to accumulated tokens
+        if not answer and answer_tokens:
+            answer = "".join(answer_tokens)
+
+        # Bug 3: If pipeline errored with no answer, return HTTP 502
+        if not answer and error_message:
+            raise HTTPException(status_code=502, detail=error_message)
 
         return {
             "answer": answer,
             "sources": sources,
-            "papers_found": papers_found or len(sources),
+            "papers_found": len(papers_list) or len(sources),
             "conversation_id": conversation_id,
         }
 
