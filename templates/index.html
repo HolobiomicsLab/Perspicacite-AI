@@ -1879,6 +1879,28 @@
                     <span class="chat-kb">${selectedKb || 'Web Search'}</span>
                     <span class="chat-date">Now</span>
                 `;
+                newChatItem.onclick = function() {
+                    // Deactivate all items, activate this one
+                    document.querySelectorAll('.chat-history-item').forEach(i => i.classList.remove('active'));
+                    this.classList.add('active');
+                    // Reset state
+                    sessionId = null;
+                    conversationId = null;
+                    messages = [];
+                    // Show welcome message
+                    const container = document.getElementById('chat-container');
+                    container.innerHTML = `
+                        <div class="message assistant">
+                            Hello! I'm Perspicacité — an AI literature assistant. I will:
+                            <br><br>
+                            • Search your selected Knowledge Base first (curated by you)<br>
+                            • Fall back to web literature search (OpenAlex) when your KB is insufficient<br>
+                            • Ground answers in retrieved papers and maintain conversation context<br>
+                            • Let you curate: add selected retrieved papers back into your KB<br><br>
+                            Try: "What are key metabolites in jasmine?" or "Summarize feature-based molecular networking (FBMN)"
+                        </div>
+                    `;
+                };
                 historyList.appendChild(newChatItem);
 
                 // Add each conversation to the list
