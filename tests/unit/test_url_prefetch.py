@@ -4,6 +4,7 @@ Tests:
 - get_arxiv_id_from_url(): regex-based arXiv ID extraction
 - AgenticOrchestrator._try_resolve_url(): URL detection and paper fetching
 - AgenticOrchestrator._resolve_arxiv_metadata(): OpenAlex metadata lookup
+- AgenticOrchestrator._generate_single_paper_answer(): single-paper answer path
 
 Run: PYTHONPATH=src pytest tests/unit/test_url_prefetch.py -v
 """
@@ -438,3 +439,81 @@ class TestResolveArxivMetadata:
         title, doi = await orch._resolve_arxiv_metadata("2604.06788")
         assert title == "Paper Without DOI"
         assert doi is None
+
+
+# ---------------------------------------------------------------------------
+# _generate_single_paper_answer
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSinglePaperAnswer:
+    """Tests for single-paper answer fast path."""
+
+    def _make_orchestrator(self):
+        return AgenticOrchestrator.__new__(AgenticOrchestrator)
+
+    def _make_session(self):
+        from perspicacite.rag.agentic.orchestrator import AgentSession
+        session = AgentSession.__new__(AgentSession)
+        session.messages = []
+        session.knowledge_base = None
+        session.research_findings = []
+        session.evidence = None
+        return session
+
+    @pytest.mark.asyncio
+    async def test_summary_request_uses_summary_prompt(self, monkeypatch):
+        """is_summary_request=True triggers summary mode in the prompt."""
+        orch = self._make_orchestrator()
+        session = self._make_session()
+
+        captured_prompt = {}
+
+        async def mock_complete(prompt, **kwargs):
+            captured_prompt["prompt"] = prompt
+            return "This is a comprehensive summary of the paper."
+
+        from unittest.mock import MagicMock
+        orch.llm = MagicMock()
+        orch.llm.complete = mock_complete
+        orch._format_references_section = lambda papers: "[1] Test Paper"
+
+        papers = [{"title": "Test Paper", "doi": "10.1/test", "full_text": "A" * 500}]
+
+        answer, citation_map = await orch._generate_single_paper_answer(
+            "https://arxiv.org/abs/2604.06788", papers, session,
+            is_summary_request=True,
+        )
+
+        assert "comprehensive overview" in captured_prompt["prompt"]
+        assert "A" * 500 in captured_prompt["prompt"]
+        assert citation_map["single_paper"] is True
+        assert citation_map["cited_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_specific_question_uses_query(self, monkeypatch):
+        """is_summary_request=False passes the query through as-is."""
+        orch = self._make_orchestrator()
+        session = self._make_session()
+
+        captured_prompt = {}
+
+        async def mock_complete(prompt, **kwargs):
+            captured_prompt["prompt"] = prompt
+            return "The paper uses a multi-agent approach."
+
+        from unittest.mock import MagicMock
+        orch.llm = MagicMock()
+        orch.llm.complete = mock_complete
+        orch._format_references_section = lambda papers: ""
+
+        papers = [{"title": "Test Paper", "doi": "10.1/test", "full_text": "Methodology section here."}]
+
+        answer, citation_map = await orch._generate_single_paper_answer(
+            "what methodology does this paper use?",
+            papers, session,
+            is_summary_request=False,
+        )
+
+        # Should use the original query, not the summary prompt
+        assert "what methodology" in captured_prompt["prompt"]

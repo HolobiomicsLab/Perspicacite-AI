@@ -26,6 +26,7 @@ class StepType(Enum):
     DOWNLOAD_PAPERS = "download_papers"
     KB_SEARCH = "kb_search"
     WEB_SEARCH = "web_search"
+    PAPER_LOOKUP = "paper_lookup"  # Direct paper retrieval by DOI/arXiv ID/PMID via Semantic Scholar
     ANALYZE = "analyze"
     SYNTHESIZE = "synthesize"
     ANSWER = "answer"
@@ -67,6 +68,9 @@ def coerce_step_type(raw: Any, *, tool: Optional[str] = None) -> StepType:
         "openalex_search": StepType.LITERATURE_SEARCH,
         "final_answer": StepType.ANSWER,
         "respond": StepType.ANSWER,
+        "semantic_scholar_lookup": StepType.PAPER_LOOKUP,
+        "paper_search_by_id": StepType.PAPER_LOOKUP,
+        "lookup_paper": StepType.PAPER_LOOKUP,
     }
     tool_aliases: dict[str, StepType] = {
         "document_retrieval": StepType.KB_SEARCH,
@@ -147,10 +151,11 @@ class ResearchPlanner:
         conversation_history: Optional[List[dict]] = None,
         previous_findings: Optional[str] = None,
         active_kb_name: Optional[str] = None,
+        available_papers: Optional[List[Dict[str, Any]]] = None,
     ) -> Plan:
         """
         Create a dynamic research plan.
-        
+
         Args:
             query: User query
             intent_result: Classified intent
@@ -158,6 +163,7 @@ class ResearchPlanner:
             conversation_history: Previous messages
             previous_findings: Summary of previous research
             active_kb_name: If set, planner must lead with kb_search for that KB
+            available_papers: Pre-fetched papers already available (e.g. from URL pre-processing)
 
         Returns:
             Plan with steps to execute
@@ -174,6 +180,22 @@ class ResearchPlanner:
         
         if previous_findings:
             context_parts.append(f"\nPrevious findings:\n{previous_findings[:500]}")
+
+        if available_papers:
+            paper_lines = []
+            for p in available_papers[:5]:
+                line = f'  - "{p.get("title", "Unknown")}"'
+                if p.get("doi"):
+                    line += f" (DOI: {p['doi']})"
+                if p.get("full_text"):
+                    line += " [FULL TEXT AVAILABLE]"
+                elif p.get("abstract"):
+                    line += " [ABSTRACT AVAILABLE]"
+                paper_lines.append(line)
+            context_parts.append(
+                "Already available papers (pre-fetched, no search needed):\n"
+                + "\n".join(paper_lines)
+            )
         
         context = "\n".join(context_parts)
 
@@ -248,8 +270,11 @@ Step Types:
 - lotus_search: Natural products, chemical structures
 - literature_search: Academic literature search via SciLEx (multi-API: Semantic Scholar, OpenAlex, PubMed, etc.)
 - kb_search: Search existing knowledge base. Use top_k (1-20) in tool_input to control how many papers to retrieve (3-5 for targeted queries, 10-20 for broad surveys).
+- paper_lookup: Look up a specific paper by identifier (DOI, arXiv ID, PMID). Use tool_input: {{"paper_id": "DOI:10.1234/..."}} or {{"paper_id": "ArXiv:2604.06788"}}. Use this when the user references a specific paper by ID or URL.
 - analyze: Process and extract insights
 - answer: Final response
+
+IMPORTANT: If "Already available papers" are listed and they address the query, set can_answer_from_history to true and plan ONLY an answer step (no search steps). The system already has the paper content.
 
 Intent-Specific:
 - NATURAL_PRODUCTS_ONLY: lotus_search → answer

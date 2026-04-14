@@ -493,6 +493,7 @@ class AgenticOrchestrator:
         available_tools = [t for t in self.tools.list_tools() if t != "lotus_search"] + [
             "literature_search",
             "kb_search",
+            "paper_lookup",
         ]
         logger.info(f"Available tools: {available_tools}")
         previous_findings = self._summarize_findings(session.research_findings)
@@ -504,6 +505,7 @@ class AgenticOrchestrator:
             conversation_history=session.get_conversation_history(),
             previous_findings=previous_findings,
             active_kb_name=kb_name,
+            available_papers=[url_paper] if url_paper else None,
         )
 
         # If a KB is selected, always search it first (don't rely on the LLM planner).
@@ -555,7 +557,32 @@ class AgenticOrchestrator:
         self._register_evidence_facets(session, plan)
 
         if plan.can_answer_from_history:
-            yield {"type": "thinking", "message": "I can answer from our conversation history..."}
+            # Planner decided we have enough — check if pre-fetched paper has full text
+            if url_paper and url_paper.get("full_text"):
+                logger.info("Planner says can_answer_from_history + url_paper has full_text → single-paper answer")
+                yield {"type": "thinking", "message": "Generating answer from retrieved paper..."}
+                papers = [url_paper]
+                is_summary = not any(
+                    w in query.lower() for w in ("what", "how", "why", "which", "method", "approach", "result", "compare", "find")
+                )
+                answer, citation_map = await self._generate_single_paper_answer(
+                    query, papers, session, is_summary_request=is_summary,
+                )
+                session.add_message("assistant", answer, {
+                    "intent": intent_result.intent.name,
+                    "steps_completed": 0,
+                    "tools_used": [],
+                    "can_answer_from_history": True,
+                })
+                yield {
+                    "type": "answer",
+                    "content": answer,
+                    "session_id": session.session_id,
+                    "citations": citation_map,
+                }
+                return
+            else:
+                yield {"type": "thinking", "message": "I can answer from our conversation history..."}
 
         # Step 3: Execute plan iteratively
         step_results: Dict[str, Any] = {}
@@ -929,6 +956,33 @@ class AgenticOrchestrator:
                     }
             except Exception as e:
                 logger.warning(f"URL pre-fetch via retrieve_paper_content failed for {doi}: {e}")
+
+        # 3. Fallback: Semantic Scholar metadata lookup (no full text, just title + abstract)
+        from perspicacite.search.semantic_scholar import lookup_paper
+        lookup_id = None
+        if doi:
+            lookup_id = doi
+        elif arxiv_id:
+            lookup_id = arxiv_id
+        if lookup_id:
+            logger.info(f"URL pre-fetch fallback: S2 lookup for {lookup_id}")
+            paper = await lookup_paper(lookup_id)
+            if paper:
+                logger.info(f"S2 fallback: found '{paper.title[:60]}'")
+                return {
+                    "title": paper.title,
+                    "doi": paper.doi or doi or "",
+                    "abstract": paper.abstract or "",
+                    "full_text": None,
+                    "authors": [a.name for a in paper.authors],
+                    "year": paper.year,
+                    "citation_count": paper.citation_count,
+                    "source": "semantic_scholar_fallback",
+                    "relevance_score": 4,
+                    "arxiv_id": arxiv_id,
+                    "_step_id": "url_prefetch",
+                    "_metadata_only": True,
+                }
 
         return None
 
@@ -1314,6 +1368,50 @@ class AgenticOrchestrator:
                     return "Knowledge base search failed."
             logger.info("KB_SEARCH: skipped — no knowledge base selected on session")
             return "No knowledge base selected."
+
+        elif step.type == StepType.PAPER_LOOKUP:
+            paper_id = step.tool_input.get("paper_id", "")
+            if not paper_id:
+                return "No paper ID provided for lookup."
+
+            logger.info(f"PAPER_LOOKUP: paper_id='{paper_id}'")
+
+            from perspicacite.search.semantic_scholar import lookup_paper
+            paper = await lookup_paper(paper_id)
+
+            if paper is None:
+                logger.info(f"PAPER_LOOKUP: paper not found for {paper_id}")
+                return f"Paper not found for identifier: {paper_id}"
+
+            paper_dict = {
+                "id": paper.id,
+                "title": paper.title,
+                "authors": [a.name for a in paper.authors[:10]],
+                "year": paper.year,
+                "doi": paper.doi or "",
+                "abstract": paper.abstract or "",
+                "citation_count": paper.citation_count or 0,
+                "pdf_url": paper.pdf_url or "",
+                "source": "paper_lookup",
+                "relevance_score": 5,
+                "_step_id": step.id,
+            }
+            self._found_papers.append(paper_dict)
+            logger.info(f"PAPER_LOOKUP: found '{paper.title[:60]}' (citations: {paper.citation_count})")
+
+            parts = [f"Paper: {paper.title}"]
+            if paper.authors:
+                parts.append(f"Authors: {', '.join(a.name for a in paper.authors[:5])}")
+            if paper.year:
+                parts.append(f"Year: {paper.year}")
+            if paper.doi:
+                parts.append(f"DOI: {paper.doi}")
+            if paper.abstract:
+                parts.append(f"Abstract: {paper.abstract}")
+            if paper.citation_count:
+                parts.append(f"Citations: {paper.citation_count}")
+
+            return "\n".join(parts)
 
         elif step.type == StepType.ANALYZE:
             # LLM analysis of results
@@ -1728,6 +1826,14 @@ Provide a synthesized summary that combines the key insights from all sources.""
             papers = self._extract_papers_from_results(step_results)
             papers = await self._score_papers_for_relevance(query, papers, min_score=3)
 
+        # --- Single-paper fast path: skip map-reduce, pass full text directly ---
+        single_paper_with_full_text = (
+            len(papers) == 1
+            and (papers[0].get("full_text") or "").strip()
+        )
+        if single_paper_with_full_text:
+            return await self._generate_single_paper_answer(query, papers, session)
+
         numbered_paper_list = self._build_numbered_paper_list(papers)
 
         context_parts = []
@@ -1961,6 +2067,88 @@ Generate your answer:"""
 
         answer = cls._CITE_RE.sub(_renumber, answer)
         return answer, compacted_papers
+
+    async def _generate_single_paper_answer(
+        self,
+        query: str,
+        papers: List[Dict[str, Any]],
+        session: AgentSession,
+        is_summary_request: bool = False,
+    ) -> tuple[str, Dict[str, Any]]:
+        """Generate answer for a single paper with full text — no map-reduce.
+
+        Uses the full paper text directly. If is_summary_request, produces a
+        comprehensive summary. Otherwise answers the specific question.
+        """
+        paper = papers[0]
+        full_text = (paper.get("full_text") or "").strip()
+        title = paper.get("title", "Unknown")
+        doi = paper.get("doi", "")
+
+        logger.info(
+            f"Single-paper answer path: title={title[:60]!r}, "
+            f"full_text_len={len(full_text)}, is_summary={is_summary_request}"
+        )
+
+        conversation_context = session.get_context_string()
+
+        if is_summary_request:
+            effective_question = (
+                "Provide a comprehensive overview of this paper, covering: "
+                "motivation and problem statement, methodology and approach, "
+                "key contributions and innovations, main results and findings, "
+                "limitations, and significance."
+            )
+            logger.info("Single-paper: URL-only query → summary mode")
+        else:
+            effective_question = query
+            logger.info(f"Single-paper: specific question → focused answer")
+
+        prompt = f"""You are a scientific research assistant. You have the full text of a single research paper.
+
+Paper: {title}
+DOI: {doi or 'N/A'}
+
+{"Previous Conversation Context:" + chr(10) + conversation_context + chr(10) if conversation_context.strip() else ""}
+
+Full Paper Text:
+---
+{full_text}
+---
+
+{effective_question}
+
+Guidelines:
+1. Be thorough and comprehensive — you have the full paper text
+2. Maintain scientific precision and technical accuracy
+3. Structure your answer with clear sections using markdown headers
+4. Include specific details: named methods, numerical results, key equations or frameworks
+5. If the paper describes a multi-component system, describe each component
+6. Do NOT invent information — use only what is in the paper text above
+7. Do NOT include a References section at the end — it will be appended separately
+
+Generate your answer:"""
+
+        logger.info(f"Single-paper prompt length: {len(prompt)} chars")
+        answer = await self.llm.complete(prompt, temperature=0.25)
+        logger.info(f"Single-paper answer generated: {len(answer)} chars")
+
+        # Build citation map for single paper (always [1])
+        citation_map: Dict[str, Any] = {
+            "cited": [{"index": 1, "title": title, "doi": doi}],
+            "uncited": [],
+            "invalid_stripped": [],
+            "total_papers": 1,
+            "cited_count": 1,
+            "single_paper": True,
+        }
+
+        # Append references section
+        references_section = self._format_references_section(papers)
+        if references_section:
+            answer = answer.rstrip() + "\n\n" + references_section
+
+        return answer, citation_map
 
     def _build_numbered_paper_list(
         self, papers: List[Dict[str, Any]], max_abstract_chars: int = 800
