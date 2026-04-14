@@ -1867,7 +1867,20 @@
                 // Clear the default "Current Chat" item
                 const historyList = document.getElementById('chat-history-list');
                 historyList.innerHTML = '';
-                
+
+                // Add a "New Chat" item at the top as the active item
+                const newChatItem = document.createElement('div');
+                newChatItem.className = 'chat-history-item active';
+                newChatItem.dataset.kb = '';
+                newChatItem.dataset.convId = '';
+                newChatItem.dataset.createdAt = '';
+                newChatItem.innerHTML = `
+                    <span class="chat-title">New Chat</span>
+                    <span class="chat-kb">${selectedKb || 'Web Search'}</span>
+                    <span class="chat-date">Now</span>
+                `;
+                historyList.appendChild(newChatItem);
+
                 // Add each conversation to the list
                 for (const conv of conversations) {
                     const item = document.createElement('div');
@@ -1875,10 +1888,10 @@
                     item.dataset.kb = conv.kb_name === 'default' ? '' : conv.kb_name;
                     item.dataset.convId = conv.id;
                     item.dataset.createdAt = conv.created_at || conv.updated_at;
-                    
+
                     const title = conv.title || 'Untitled Chat';
                     const kbDisplay = conv.kb_name === 'default' ? 'Web Search' : conv.kb_name;
-                    
+
                     // Calculate relative time
                     const updatedAt = conv.updated_at || conv.created_at;
                     let dateStr;
@@ -1887,7 +1900,7 @@
                         const minutes = Math.floor(elapsed / 60000);
                         const hours = Math.floor(elapsed / 3600000);
                         const days = Math.floor(elapsed / 86400000);
-                        
+
                         if (minutes < 1) {
                             dateStr = 'Just now';
                         } else if (minutes < 60) {
@@ -1902,7 +1915,7 @@
                     } else {
                         dateStr = '';
                     }
-                    
+
                     item.innerHTML = `
                         <span class="chat-title">${title}</span>
                         <span class="chat-kb">${kbDisplay}</span>
@@ -1912,22 +1925,10 @@
                     item.onclick = function() { loadChatFromHistory(this); };
                     historyList.appendChild(item);
                 }
-                
-                // Make the first (most recent) conversation active visually, but don't load it
-                // This allows user to click and select any conversation
-                const firstItem = historyList.querySelector('.chat-history-item');
-                if (firstItem) {
-                    firstItem.classList.add('active');
-                    // Set the conversation ID without loading messages
-                    conversationId = firstItem.dataset.convId || null;
-                    // Restore KB for this conversation
-                    const kbName = firstItem.dataset.kb;
-                    if (kbName !== undefined) {
-                        document.getElementById('kb-select').value = kbName;
-                        selectedKb = kbName || null;
-                    }
-                }
-                
+
+                // Start fresh — no conversation ID set, no KB restored
+                conversationId = null;
+
                 console.log(`Loaded ${conversations.length} conversations from history`);
             } catch (e) {
                 console.error('Failed to load conversation history:', e);
