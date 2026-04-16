@@ -31,15 +31,25 @@ _PMID_RE = re.compile(r"^\d{7,8}$")
 
 
 def _get_api_key() -> str | None:
-    """Resolve Semantic Scholar API key from environment.
+    """Resolve Semantic Scholar API key from environment or config.yml.
 
-    Checks the same env vars as the SciLEx adapter:
-    SCILEX_SEMANTIC_SCHOLAR_API_KEY, then SEMANTIC_SCHOLAR_API_KEY.
+    Priority: env vars, then config.yml (pdf_download.semantic_scholar_api_key).
     """
-    return (
+    # 1. Environment variables
+    key = (
         os.environ.get("SCILEX_SEMANTIC_SCHOLAR_API_KEY")
         or os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
     )
+    if key:
+        return key
+
+    # 2. config.yml
+    try:
+        from perspicacite.config.loader import load_config
+        config = load_config()
+        return config.pdf_download.semantic_scholar_api_key
+    except Exception:
+        return None
 
 
 def normalize_paper_id(raw_id: str) -> str:

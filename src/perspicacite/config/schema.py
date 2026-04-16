@@ -249,7 +249,12 @@ class PDFDownloadConfig(BaseModel):
         description="Springer Nature API key. Register at https://dev.springernature.com/"
     )
     # ACS typically uses IP-based access, no API key
-    
+
+    semantic_scholar_api_key: Optional[str] = Field(
+        default=None,
+        description="Semantic Scholar API key. Register at https://www.semanticscholar.org/product/api#api-key"
+    )
+
     timeout: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=3, ge=0)
 
