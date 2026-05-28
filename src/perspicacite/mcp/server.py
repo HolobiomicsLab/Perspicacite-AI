@@ -1827,6 +1827,14 @@ async def generate_report(
             ``"cancelled"``
           - ``diagnostic`` (dict | null): mode-specific internals, e.g.
             ``{"cycles_completed": 2, "papers_retrieved": 14}`` for deep_research
+          - ``_provenance`` (dict): authorship/trust envelope so host agents do
+            not mistake LLM synthesis for source-verified text. Keys:
+            ``provider`` / ``model`` (the LLM that wrote ``report``),
+            ``rag_cycles_executed`` (int), ``ai_generated_fields``
+            (``["report"]`` — these fields are model-authored, not grounded),
+            and ``untrusted_sources`` (DOIs/titles of retrieved sources whose
+            content is attacker-influenceable). The ``report`` text may
+            misrepresent or propagate injected steering from these sources.
 
         Present only when ``extract_claims=True``:
           - ``indicia`` (list): typed claim dicts (5-slot SuperPattern + ECO/CiTO)
@@ -2117,6 +2125,27 @@ async def generate_report(
             [{"metadata": s.get("metadata") if isinstance(s, dict) else None} for s in sources]
         )
 
+        def _build_provenance(cycles: int) -> dict[str, Any]:
+            """Provenance envelope flagging which response fields are LLM-authored.
+
+            ``report`` is model synthesis, not source-verified text. Host agents
+            otherwise see it next to factual ``sources``/``papers_used`` and
+            assume the whole report is citation-grounded. Every retrieved source
+            is attacker-influenceable (a poisoned preprint can steer synthesis),
+            so all of them are listed as untrusted.
+            """
+            return {
+                "provider": default_provider,
+                "model": default_model,
+                "rag_cycles_executed": cycles,
+                "ai_generated_fields": ["report"],
+                "untrusted_sources": [
+                    (s.get("doi") or s.get("title"))
+                    for s in sources
+                    if isinstance(s, dict) and (s.get("doi") or s.get("title"))
+                ],
+            }
+
         if cancelled_reason == "cancelled":
             logger.info(
                 "mcp_generate_report_cancelled",
@@ -2139,6 +2168,9 @@ async def generate_report(
                 "iteration_count": report_iterations if report_iterations is not None else 0,
                 "completion_reason": report_completion_reason or "cancelled",
                 "diagnostic": report_diagnostic,
+                "_provenance": _build_provenance(
+                    report_iterations if report_iterations is not None else 0
+                ),
             }
             _cancelled_payload.update(_response_collector.as_response_extras())
             return _json_ok(_cancelled_payload)
@@ -2194,6 +2226,9 @@ async def generate_report(
             "iteration_count": report_iterations if report_iterations is not None else 1,
             "completion_reason": report_completion_reason or "complete",
             "diagnostic": report_diagnostic,
+            "_provenance": _build_provenance(
+                report_iterations if report_iterations is not None else 1
+            ),
         }
         _final_payload.update(_response_collector.as_response_extras())
         if indicia is not None:

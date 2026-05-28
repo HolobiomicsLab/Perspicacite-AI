@@ -7,6 +7,11 @@ import re
 from typing import Any, List
 
 from perspicacite.models.rag import SourceReference
+from perspicacite.rag.prompts import (
+    UNTRUSTED_CONTENT_CLAUSE,
+    UNTRUSTED_DOCUMENT_CLOSE,
+    UNTRUSTED_DOCUMENT_OPEN,
+)
 
 
 def strip_bibtex_braces(s: str | None) -> str:
@@ -206,7 +211,12 @@ def format_documents_for_prompt(documents: list[Any]) -> str:
         # Extract citation
         citation = get_doc_citation(doc)
 
-        formatted.append(f"[{i}] Source: {citation}\n{text}")
+        # Citation header stays OUTSIDE the untrusted markers (so citation
+        # parsing is unaffected); the attacker-influenceable body goes inside.
+        formatted.append(
+            f"[{i}] Source: {citation}\n"
+            f"{UNTRUSTED_DOCUMENT_OPEN}\n{text}\n{UNTRUSTED_DOCUMENT_CLOSE}"
+        )
 
     return "\n\n---\n\n".join(formatted)
 
@@ -217,7 +227,8 @@ def get_system_prompt() -> str:
     Returns:
         System prompt string
     """
-    return """You are a scientific AI assistant. Provide clear, well-structured answers using markdown formatting.
+    return (
+        """You are a scientific AI assistant. Provide clear, well-structured answers using markdown formatting.
 
 If the provided documents do not contain enough information to answer confidently, say what is missing instead of guessing.
 
@@ -253,6 +264,8 @@ FORMAT REQUIREMENTS:
 IMPORTANT: Do not put entire paragraphs in bold. Only individual important words or short phrases.
 
 Your response should be easy to read with clear visual structure."""
+        + UNTRUSTED_CONTENT_CLAUSE
+    )
 
 
 def format_references_academic(papers: list[dict]) -> str:
@@ -515,6 +528,11 @@ def format_paper_results_for_prompt(
         if len(full_text) > max_chars_per_paper:
             full_text = full_text[:max_chars_per_paper] + "\n[...truncated]"
 
-        sections.append(f"{header}\n\n{full_text}")
+        # Header (trusted metadata) stays outside the untrusted markers; the
+        # paper's full text is attacker-influenceable and goes inside.
+        sections.append(
+            f"{header}\n\n"
+            f"{UNTRUSTED_DOCUMENT_OPEN}\n{full_text}\n{UNTRUSTED_DOCUMENT_CLOSE}"
+        )
 
     return "\n\n---\n\n".join(sections)
