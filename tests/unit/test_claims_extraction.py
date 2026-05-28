@@ -37,6 +37,53 @@ async def test_extract_claims_drops_out_of_vocab_qualifier():
     assert claims == []
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "```json\n{body}\n```",      # fenced with json tag
+        "```\n{body}\n```",          # fenced without language tag
+        "  ```json\n{body}\n```  ",  # surrounding whitespace
+    ],
+    ids=["json-tagged-fence", "untagged-fence", "padded-fence"],
+)
+async def test_extract_claims_strips_markdown_json_fence(wrapper):
+    """Regression: gpt-4o-mini / Haiku / Sonnet sometimes wrap their JSON
+    in a ```json ... ``` fence even when the prompt asks for raw JSON.
+    Before the fix, ``json.loads`` raised silently and ``extract_claims``
+    returned ``[]`` — the whole pipeline produced zero claims with no
+    diagnostic. The fence must be stripped before parsing."""
+    body = json.dumps({"claims": [{
+        "context": "in vitro", "subject": "compound A", "qualifier": "inhibits",
+        "relation": "inhibits growth of", "object": "cell line B",
+        "claim_type": "explicit", "evidence_type": "data",
+        "source_type": "text", "quote": "A inhibited B",
+        "source_doi": "10.1/x"}]})
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value=wrapper.format(body=body))
+    passages = [{"chunk_text": "A inhibited B", "source": {"doi": "10.1/x"}}]
+    claims = await extract_claims(llm_client=llm, passages=passages, context="c")
+    assert len(claims) == 1
+    assert claims[0]["qualifier"] == "inhibits"
+    assert claims[0]["subject"] == "compound A"
+
+
+@pytest.mark.unit
+async def test_extract_claims_handles_raw_json_unchanged():
+    """Raw (un-fenced) JSON must continue to parse — the fence stripper
+    must be a no-op when no fence is present."""
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value=json.dumps({"claims": [{
+        "context": "x", "subject": "s", "qualifier": "inhibits",
+        "relation": "r", "object": "o", "evidence_type": "data",
+        "source_doi": "10.1/x"}]}))
+    claims = await extract_claims(
+        llm_client=llm, passages=[{"chunk_text": "t", "source": {"doi": "10.1/x"}}],
+        context="c",
+    )
+    assert len(claims) == 1
+
+
 # ---------------------------------------------------------------------------
 # Domain adapter integration
 # ---------------------------------------------------------------------------
