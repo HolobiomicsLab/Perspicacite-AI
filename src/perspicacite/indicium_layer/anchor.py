@@ -5,9 +5,12 @@ sidecar. Project-side glue around indicium's verify_quote kernel.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from perspicacite.logging import get_logger
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = get_logger(__name__)
 
@@ -33,7 +36,7 @@ def _emit_audit(audit_path: Path, records: list[dict]) -> None:
         with audit_path.open("a", encoding="utf-8") as fh:
             for rec in records:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("anchor_audit_write_failed", path=str(audit_path), error=str(exc))
 
 

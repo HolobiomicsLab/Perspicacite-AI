@@ -12,6 +12,7 @@ async def test_build_claim_graph_returns_summary(monkeypatch, tmp_path):
         tmp_path / "claim_graphs",
     )
     import perspicacite.mcp.server as srv
+    from perspicacite.config.schema import Config
     from perspicacite.mcp.server import build_claim_graph
 
     class _FakeVectorStore:
@@ -37,6 +38,7 @@ async def test_build_claim_graph_returns_summary(monkeypatch, tmp_path):
 
     fake_state = srv.MCPState()
     fake_state.initialized = True
+    fake_state.config = Config()
     fake_state.vector_store = _FakeVectorStore()
     fake_state.llm_client = _FakeLLM()
 
