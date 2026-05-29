@@ -3,8 +3,27 @@ from retrieved passages, via the project LLM client."""
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
+
+# Matches ```...``` or ```json\n...\n``` wrappers that some LLMs add when
+# asked to "return JSON" without strict JSON-mode. The leading/trailing
+# whitespace and optional ``json`` language tag are both stripped.
+_JSON_FENCE_RE: re.Pattern[str] = re.compile(
+    r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL
+)
+
+
+def _strip_markdown_fence(raw: str) -> str:
+    """Return ``raw`` with a surrounding ```` ``` ```` fence removed (if any).
+
+    Pure string -> string. Returns ``raw`` unchanged when no fence is present.
+    """
+    if not isinstance(raw, str):
+        return raw
+    m = _JSON_FENCE_RE.match(raw)
+    return m.group(1) if m else raw
 
 _QUALIFIERS: frozenset[str] = frozenset({
     "causes", "prevents", "inhibits", "activates", "increases", "decreases",
@@ -69,6 +88,11 @@ async def extract_claims(
     messages = [{"role": "user", "content": prompt}]
     raw = await (llm_client.complete(messages=messages, model=model) if model
                  else llm_client.complete(messages=messages))
+    # Some providers (e.g. OpenAI gpt-4o-mini, Anthropic Haiku/Sonnet when
+    # not in strict JSON mode) wrap their response in a ```json … ``` fence
+    # even when the prompt asks for raw JSON. Strip it before parsing so we
+    # don't silently return zero claims.
+    raw = _strip_markdown_fence(raw)
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
