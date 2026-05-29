@@ -66,9 +66,9 @@ class ChromaVectorStore:
             if existing:
                 logger.info("collection_already_exists", name=name)
                 return
-        except Exception:
+        except Exception as exc:
             # Collection doesn't exist, proceed to create
-            pass
+            logger.debug("collection_not_found_probe", name=name, error=str(exc))
 
         try:
             # Cosine space matches typical embedding APIs; L2 + (1-distance) breaks min_score filters.

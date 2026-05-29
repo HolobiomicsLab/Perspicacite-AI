@@ -19,7 +19,8 @@ async def _emit_telemetry(sink: Any, event: dict) -> None:
         try:
             await sink.on_event_async(event)
             return
-        except Exception:
+        except Exception as exc:
+            logger.debug("telemetry_sink_event_error", error=str(exc))
             return
     # Fallback for plain list (legacy).
     with contextlib.suppress(Exception):

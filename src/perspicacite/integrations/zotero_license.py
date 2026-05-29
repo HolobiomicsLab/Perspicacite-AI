@@ -12,6 +12,10 @@ from dataclasses import dataclass
 
 import httpx
 
+from perspicacite.logging import get_logger
+
+logger = get_logger("perspicacite.integrations.zotero_license")
+
 _PERMISSIVE_SPDX_PREFIXES = (
     "CC0",
     "CC-BY-4", "CC-BY-3", "CC-BY-2", "CC-BY-1",
@@ -194,8 +198,8 @@ class LicenseClassifier:
                     info.source = "crossref"
                     if info.classification != "unknown":
                         return info
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("crossref_license_lookup_failed", doi=doi, error=str(exc))
         return None
 
     async def _from_openalex(
@@ -220,5 +224,6 @@ class LicenseClassifier:
                 if info.classification != "unknown":
                     return info, is_oa
             return None, is_oa
-        except Exception:
+        except Exception as exc:
+            logger.debug("openalex_license_lookup_failed", doi=doi, error=str(exc))
             return None, False

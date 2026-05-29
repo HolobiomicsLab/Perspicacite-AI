@@ -82,6 +82,6 @@ def salvage_truncated_array(
     for obj_str in complete_objects:
         try:
             recovered.append(json.loads(obj_str))
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             continue
     return recovered or None

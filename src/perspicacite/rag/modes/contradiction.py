@@ -649,7 +649,7 @@ class ContradictionRAGMode(BaseRAGMode):
                 try:
                     source_data = json.loads(ev.data)
                     sources.append(SourceReference(**source_data))
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
                     pass
             elif ev.event == "error":
                 try:

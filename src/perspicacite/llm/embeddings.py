@@ -186,7 +186,7 @@ def _best_device() -> str:
             return "mps"
         if torch.cuda.is_available():
             return "cuda"
-    except Exception:
+    except (ImportError, AttributeError):
         pass
     return "cpu"
 

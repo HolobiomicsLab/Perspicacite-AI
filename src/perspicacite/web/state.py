@@ -369,8 +369,8 @@ def _prewarm_reranker(model_name: str) -> None:
         CrossEncoder(model_name, local_files_only=True)
         logger.info("prewarm_reranker_cached: %s", model_name)
         return
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("prewarm_reranker_cache_miss model=%s error=%s", model_name, str(exc))
 
     import time
     _t0 = time.monotonic()

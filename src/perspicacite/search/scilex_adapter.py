@@ -102,7 +102,7 @@ class _QuotaLogCapture(_stdlib_logging.Handler):
             m = self._QUOTA_RE.search(msg)
             if m:
                 self.last_remaining = int(m.group(1))
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             pass
 
 

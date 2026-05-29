@@ -159,7 +159,7 @@ def _read_discovery_cache(doi: str) -> PaperDiscovery | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return PaperDiscovery(**data)
-    except Exception:
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
 

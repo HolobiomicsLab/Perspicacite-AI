@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -671,7 +672,7 @@ async def _run_query(
                     import json as _json
                     s = _json.loads(data)
                     sources.append(s)
-                except Exception:
+                except (json.JSONDecodeError, ValueError, TypeError):
                     pass
             elif etype == "error" and data:
                 click.echo(f"\n❌ Error from RAG engine: {data}", err=True)

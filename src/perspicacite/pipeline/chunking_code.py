@@ -14,8 +14,11 @@ import json
 import re
 from typing import Any
 
+from perspicacite.logging import get_logger
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.models.papers import Paper
+
+logger = get_logger("perspicacite.pipeline.chunking_code")
 
 _DOCSTRING_MAX = 500
 
@@ -336,15 +339,17 @@ def _chunk_treesitter(
         return None
     try:
         from tree_sitter_languages import get_parser  # type: ignore
-    except Exception:
+    except ImportError:
         return None
     try:
         parser = get_parser(language)
-    except Exception:
+    except Exception as exc:
+        logger.debug("treesitter_get_parser_failed", language=language, error=str(exc))
         return None
     try:
         tree = parser.parse(text.encode("utf-8"))
-    except Exception:
+    except Exception as exc:
+        logger.debug("treesitter_parse_failed", language=language, error=str(exc))
         return None
 
     lines = text.splitlines()
@@ -401,7 +406,7 @@ def _ts_extract_name(node: Any) -> str | None:
         if child.type in ("identifier", "type_identifier", "name"):
             try:
                 return child.text.decode("utf-8")
-            except Exception:
+            except (AttributeError, UnicodeDecodeError):
                 return None
     # Some grammars nest the name one level deeper (e.g. function_declarator).
     for child in node.children:

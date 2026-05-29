@@ -561,8 +561,8 @@ async def search_literature(
                     if _prov._last_quota_warning is not None:
                         mcp_warnings.append(_prov._last_quota_warning)
                     break
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("mcp_search_literature_warnings_collection_failed", error=str(exc))
 
         # Crossref-enrich the returned papers (fills missing abstracts etc.).
         if enrich and papers:
@@ -2049,8 +2049,8 @@ async def generate_report(
                                 await fn(event)
                             else:
                                 s.append(event)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug("mcp_generate_report_telemetry_sink_fanout_failed", error=str(exc))
 
             rag_request.telemetry_sink = _FanOutSink(  # type: ignore[attr-defined]
                 _progress_sink, _response_collector

@@ -448,7 +448,8 @@ async def _try_chromium_scholar(
                 cand_title, cand_authors, cand_year, title, target_authors, year,
             ):
                 return doi
-        except Exception:
+        except Exception as exc:
+            logger.debug("title_resolver_crossref_verify_failed", doi=doi, error=str(exc))
             continue
     return None
 

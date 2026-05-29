@@ -62,7 +62,7 @@ def count_tokens(text: str, model: str | None = None) -> int:
 
             encoder = tiktoken.encoding_for_model(model)
             return len(encoder.encode(text))
-        except Exception:
+        except (ImportError, KeyError):
             pass
 
     # Fall back to character-based estimation

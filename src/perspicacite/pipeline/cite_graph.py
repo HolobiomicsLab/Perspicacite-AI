@@ -18,7 +18,10 @@ import re
 from dataclasses import dataclass, field
 
 from perspicacite.config.schema import CiteGraphConfig
+from perspicacite.logging import get_logger
 from perspicacite.pipeline.external.fetch_github import fetch_github_repo
+
+logger = get_logger("perspicacite.pipeline.cite_graph")
 
 _GITHUB_REPO_RE = re.compile(r"github\.com/([\w.-]+/[\w.-]+)", re.IGNORECASE)
 
@@ -424,7 +427,8 @@ async def enrich_kb_from_cite_graph(
                 if isinstance(blob, dict):
                     scripts = (blob.get("scripts") or [])[:3]
                     h.scripts = list(scripts)
-            except Exception:
+            except Exception as exc:
+                logger.debug("github_repo_fetch_failed", doi=h.doi, error=str(exc))
                 continue
 
     return top

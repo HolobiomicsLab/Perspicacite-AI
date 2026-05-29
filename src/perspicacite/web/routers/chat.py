@@ -285,8 +285,8 @@ def _clear_chat_cancel(conversation_id: str | None) -> None:
                 task.add_done_callback(_BACKGROUND_TASKS.discard)
             else:
                 loop.run_until_complete(_registry_clear(conversation_id))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("cancel_clear_failed conversation_id=%s error=%s", conversation_id, str(exc))
 
 
 class _CancelRequest(BaseModel):
@@ -552,7 +552,7 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
                     try:
                         delta = base64.b64decode(delta_b64).decode("utf-8", errors="replace")
                         answer_tokens.append(delta)
-                    except Exception:
+                    except (binascii.Error, UnicodeDecodeError):
                         pass
                 elif "delta" in data:
                     answer_tokens.append(str(data["delta"]))
@@ -1119,7 +1119,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
             rag_request, "_resolved_context",
             getattr(request, "_resolved_context", None),
         )
-    except Exception:
+    except (TypeError, AttributeError):
         pass
     # Execute using RAGEngine streaming
     full_answer = ""
@@ -1276,7 +1276,7 @@ async def _invoke_basic_rag(
             continue
         try:
             data = json.loads(event[5:].strip())
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             continue
         etype = data.get("type", "")
         if etype == "answer":

@@ -84,7 +84,7 @@ def _cache_load(key: str) -> str | None:
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8")).get("context") or None
-    except Exception:
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
         return None
 
 

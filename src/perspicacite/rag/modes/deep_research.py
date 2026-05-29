@@ -773,7 +773,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                 try:
                     self._acc["in"] += int(getattr(resp, "input_tokens", 0) or 0)
                     self._acc["out"] += int(getattr(resp, "output_tokens", 0) or 0)
-                except Exception:
+                except (AttributeError, TypeError, ValueError):
                     pass
                 return resp
 

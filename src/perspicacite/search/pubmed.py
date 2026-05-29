@@ -11,7 +11,7 @@ from perspicacite.models.papers import Author, Paper, PaperSource
 
 try:
     from Bio import Entrez
-except Exception:
+except ImportError:
     Entrez = None  # type: ignore[assignment]
 
 logger = get_logger(__name__)
@@ -62,13 +62,13 @@ def _parse_efetch(handle: Any) -> list[dict[str, Any]]:
         try:
             medline = article["MedlineCitation"]
             row["pmid"] = str(medline["PMID"])
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             pass
 
         # --- Article fields ---
         try:
             art = article["MedlineCitation"]["Article"]
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             results.append(row)
             continue
 
@@ -81,7 +81,7 @@ def _parse_efetch(handle: Any) -> list[dict[str, Any]]:
                 row["abstract"] = " ".join(str(t) for t in abstract_texts)
             else:
                 row["abstract"] = str(abstract_texts)
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             pass
 
         with contextlib.suppress(Exception):
@@ -96,7 +96,7 @@ def _parse_efetch(handle: Any) -> list[dict[str, Any]]:
                 m = re.search(r"\b(19|20)\d{2}\b", year_str)
                 if m:
                     row["year"] = int(m.group())
-        except Exception:
+        except (KeyError, TypeError, AttributeError, ValueError):
             pass
 
         try:
@@ -108,10 +108,10 @@ def _parse_efetch(handle: Any) -> list[dict[str, Any]]:
                     name = f"{fore} {last}".strip() if fore or last else None
                     if name:
                         authors.append(name)
-                except Exception:
+                except (AttributeError, TypeError):
                     pass
             row["authors"] = authors
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             pass
 
         # --- DOI from PubmedData ---
@@ -120,7 +120,7 @@ def _parse_efetch(handle: Any) -> list[dict[str, Any]]:
                 if id_entry.attributes.get("IdType") == "doi":
                     row["doi"] = str(id_entry)
                     break
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             pass
 
         results.append(row)

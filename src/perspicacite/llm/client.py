@@ -66,8 +66,8 @@ def _emit_usage_telemetry(
             provider=provider,
         )
         emit_cost(sink, usd=cost_usd, model=model, provider=provider)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("usage_telemetry_emit_failed", error=str(exc))
 
 # F9 (audit 2026-05-15): LiteLLM prints a "Give Feedback / Get Help"
 # banner to stderr on every error, plus an "If you need to debug…" info
@@ -176,7 +176,7 @@ def _is_deterministic_fail(exc: Exception) -> bool:
         from perspicacite.llm.budget import BudgetExceededError
         if isinstance(exc, BudgetExceededError):
             return True
-    except Exception:  # pragma: no cover — module always importable
+    except ImportError:  # pragma: no cover — module always importable
         pass
     # Detect the wrapped class without invoking _maybe_wrap_error
     # (avoids circular logic with the retry decorator).

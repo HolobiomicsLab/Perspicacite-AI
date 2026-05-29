@@ -1129,8 +1129,8 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     # back to the 3-arg form so older wrappers don't crash.
                     with contextlib.suppress(Exception):
                         await progress_cb(done, tot, 0)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("theme_assign_progress_cb_error", error=str(exc))
 
         await self._assign_papers_to_themes(
             papers_with_abstracts, themes, llm,

@@ -48,7 +48,8 @@ def _get_api_key() -> str | None:
         from perspicacite.config.loader import load_config
         config = load_config()
         return config.pdf_download.semantic_scholar_api_key
-    except Exception:
+    except Exception as exc:
+        logger.debug("s2_api_key_config_load_failed", error=str(exc))
         return None
 
 

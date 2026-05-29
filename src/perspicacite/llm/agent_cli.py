@@ -386,8 +386,8 @@ class AgentCLIClient:
                     completion_tokens=out_tokens,
                     latency_ms=latency_ms,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("provenance_collector_emit_failed", provider=self.provider_label, error=str(exc))
 
         # F2 (audit 2026-05-15): budget tracker — push usage even when
         # no provenance collector is active. Prefer the CLI-reported

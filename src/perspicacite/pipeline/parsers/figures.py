@@ -15,6 +15,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from perspicacite.logging import get_logger
+
+logger = get_logger("perspicacite.pipeline.parsers.figures")
+
 _CAPTION_PREFIXES = ("fig", "figure", "scheme", "supplementary")
 _MAX_CAPTION_DISTANCE_PT = 120  # was 80; captions sometimes sit further below
 _MAX_ASPECT_RATIO = 10.0
@@ -105,8 +109,8 @@ def _extract_via_pymupdf(pdf_path: Path, min_px: int) -> list[RawFigure]:
                             pix = fitz.Pixmap(fitz.csRGB, pix)
                         image_bytes = pix.tobytes("png")
                         ext = "png"
-                    except Exception:
-                        pass  # keep original bytes
+                    except Exception as exc:
+                        logger.debug("colorspace_conversion_failed", cs_name=cs_name, error=str(exc))  # keep original bytes
                 # Skip images that are essentially blank (< 1 KB after encoding).
                 if len(image_bytes) < 1024:
                     continue
@@ -120,8 +124,8 @@ def _extract_via_pymupdf(pdf_path: Path, min_px: int) -> list[RawFigure]:
                             float(bbox.x0), float(bbox.y0),
                             float(bbox.x1), float(bbox.y1),
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("image_rect_lookup_failed", xref=xref, error=str(exc))
                 caption = _detect_caption(page, bbox) if bbox is not None else ""
                 filename = f"fig_{page_num:03d}_i{img_idx:02d}.{ext}"
                 page_results.append(
@@ -272,8 +276,8 @@ def _detect_caption_via_ocr(page, bbox) -> str:
         for line in ocr_text.splitlines():
             if line.strip().lower().startswith(_CAPTION_PREFIXES):
                 return line.strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("ocr_caption_failed", error=str(exc))
     return ""
 
 
@@ -281,7 +285,7 @@ def _detect_caption(page, bbox) -> str:
     """Return the first text line immediately below the image bounding box."""
     try:
         blocks = page.get_text("dict").get("blocks", [])
-    except Exception:
+    except (AttributeError, TypeError, KeyError):
         return ""
 
     img_bottom = bbox.y1
