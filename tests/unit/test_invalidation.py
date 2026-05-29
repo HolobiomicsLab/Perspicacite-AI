@@ -1,5 +1,9 @@
 """Unit tests for indicium_layer.invalidation."""
 
+import pytest
+
+pytest.importorskip("indicium", reason="indicium (indicia extra) not installed")
+
 from perspicacite.indicium_layer.invalidation import (
     compute_paper_hash,
     papers_needing_rebuild,

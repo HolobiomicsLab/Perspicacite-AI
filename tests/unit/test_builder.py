@@ -2,6 +2,11 @@
 
 import json
 
+import pytest
+
+pytest.importorskip("indicium", reason="indicium (indicia extra) not installed")
+pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
+
 from perspicacite.indicium_layer.builder import (
     BuildResult,
     build_claim_graph,

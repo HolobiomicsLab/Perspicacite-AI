@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("indicium", reason="indicia extra not installed")
+
 from perspicacite.mcp import server as mcp_server
 
 

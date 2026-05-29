@@ -1,4 +1,7 @@
 import pytest
+
+pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
+
 import rdflib
 
 from perspicacite.pipeline.claims import claims_to_graph, validate_claims

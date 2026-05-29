@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("indicium", reason="indicia extra not installed")
+
 from perspicacite.pipeline.extraction import Passage, annotate_anchor_status
 
 

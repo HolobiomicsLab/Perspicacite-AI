@@ -1,5 +1,9 @@
 """Unit tests for indicium_layer.store.ClaimGraphStore (rdflib backend)."""
 
+import pytest
+
+pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
+
 from perspicacite.indicium_layer.store import ClaimGraphStore
 
 PROV_WAS_GEN_BY = "http://www.w3.org/ns/prov#wasGeneratedBy"

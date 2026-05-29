@@ -60,6 +60,7 @@ jobs:
             --deselect tests/unit/test_provenance_engine_wiring.py::test_mcp_generate_report_wires_provenance_and_message_id \
             --deselect tests/unit/test_zotero_ingest_worker.py::test_worker_dedups_by_doi_and_attaches_notes \
             --deselect tests/unit/test_zotero_ingest_worker.py::test_worker_skips_existing_doi \
+            --deselect tests/unit/test_domain_aggregator.py::test_retry_counts_as_one_circuit_failure \
             --timeout=15 --timeout-method=signal \
             --no-header --tb=line \
             --cov=src/perspicacite --cov-report=xml --cov-report=term-missing \

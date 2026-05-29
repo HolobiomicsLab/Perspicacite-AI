@@ -2,6 +2,10 @@
 
 import json
 
+import pytest
+
+pytest.importorskip("indicium", reason="indicia extra not installed")
+
 from perspicacite.config.schema import Config
 from perspicacite.models.rag import RAGMode, RAGRequest
 

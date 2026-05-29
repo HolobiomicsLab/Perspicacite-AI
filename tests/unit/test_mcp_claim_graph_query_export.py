@@ -2,6 +2,10 @@
 
 import json
 
+import pytest
+
+pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
+
 
 async def test_query_claim_graph_dispatches(monkeypatch, tmp_path):
     monkeypatch.setattr(

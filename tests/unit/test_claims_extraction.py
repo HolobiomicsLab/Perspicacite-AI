@@ -233,6 +233,7 @@ async def test_extract_claims_domain_qualifier_dropped_without_adapter():
 @pytest.mark.unit
 def test_validate_claims_no_adapter_backward_compat():
     """validate_claims() with no domain_adapter must behave identically to before."""
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     from unittest.mock import patch
 
     from perspicacite.pipeline.claims import validate_claims
@@ -253,6 +254,7 @@ def test_validate_claims_no_adapter_backward_compat():
 @pytest.mark.unit
 def test_validate_claims_calls_shacl_shapes_from_adapter():
     """validate_claims() with an adapter that has shacl_shapes() must call it once."""
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     from unittest.mock import MagicMock, patch
 
     import rdflib
@@ -279,6 +281,7 @@ def test_validate_claims_calls_shacl_shapes_from_adapter():
 @pytest.mark.unit
 def test_validate_claims_adapter_without_shacl_shapes_no_error():
     """validate_claims() with an adapter that lacks shacl_shapes() must not raise."""
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     from typing import ClassVar
     from unittest.mock import patch
 
@@ -309,6 +312,7 @@ def test_validate_claims_adapter_without_shacl_shapes_no_error():
 def test_validate_claims_enrichment_and_shacl_combined():
     """validate_claims() with an adapter that has both enrich_claim and shacl_shapes
     must call shacl_shapes() once (wiring integration check)."""
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     from unittest.mock import MagicMock, patch
 
     import rdflib
@@ -385,6 +389,7 @@ async def test_extract_claims_mcp_tool_passes_adapter_not_manual_enrich():
 @pytest.mark.unit
 def test_claims_to_graph_serializes_ontology_terms():
     """ontology_terms in a claim dict must appear as asb:{slot}_ontology_term triples."""
+    pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
     import rdflib
 
     from perspicacite.pipeline.claims import claims_to_graph
@@ -406,6 +411,7 @@ def test_claims_to_graph_serializes_ontology_terms():
 @pytest.mark.unit
 def test_claims_to_graph_no_ontology_terms_no_error():
     """Claims without ontology_terms must not raise and produce no extra triples."""
+    pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
     import rdflib
 
     from perspicacite.pipeline.claims import claims_to_graph
@@ -423,6 +429,7 @@ def test_claims_to_graph_no_ontology_terms_no_error():
 @pytest.mark.unit
 def test_claims_to_graph_skips_none_ontology_terms():
     """None values in ontology_terms must be skipped — not serialized as literal 'None'."""
+    pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
     import rdflib
 
     from perspicacite.pipeline.claims import claims_to_graph
@@ -450,6 +457,7 @@ def test_claims_to_graph_skips_none_ontology_terms():
 @pytest.mark.unit
 async def test_extract_claims_with_composite_adapter_chains_enrichments():
     """CompositeAdapter must chain both adapters' enrich_claim() calls."""
+    pytest.importorskip("indicium_adapters", reason="indicium-adapters not installed")
     from indicium_adapters.composite import compose_adapters
 
     llm = AsyncMock()
@@ -480,6 +488,7 @@ async def test_extract_claims_with_composite_adapter_chains_enrichments():
 @pytest.mark.unit
 async def test_extract_claims_composite_accepts_union_of_qualifiers():
     """Qualifiers from both adapters must be accepted by extract_claims()."""
+    pytest.importorskip("indicium_adapters", reason="indicium-adapters not installed")
     from indicium_adapters.composite import compose_adapters
 
     llm = AsyncMock()
@@ -508,6 +517,7 @@ async def test_extract_claims_composite_accepts_union_of_qualifiers():
 @pytest.mark.unit
 def test_compose_adapters_filters_unknown_domains():
     """resolve logic: unknown domain IDs are silently dropped."""
+    pytest.importorskip("indicium_adapters", reason="indicium-adapters not installed")
     from indicium_adapters.composite import compose_adapters
 
     adapter_a = _MockAdapter()
@@ -523,6 +533,7 @@ def test_compose_adapters_filters_unknown_domains():
 @pytest.mark.unit
 def test_compose_adapters_all_unknown_gives_none():
     """If all requested domains are unknown, adapter must resolve to None."""
+    pytest.importorskip("indicium_adapters", reason="indicium-adapters not installed")
     from indicium_adapters.composite import compose_adapters
 
     discovered: dict = {}   # nothing installed
@@ -538,6 +549,7 @@ def test_compose_adapters_all_unknown_gives_none():
 
 @pytest.mark.unit
 def test_claims_to_graph_emits_anchor_status_and_quote_exact():
+    pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
     import rdflib
 
     from perspicacite.pipeline.claims import claims_to_graph
@@ -556,6 +568,7 @@ def test_claims_to_graph_emits_anchor_status_and_quote_exact():
 
 @pytest.mark.unit
 def test_claims_to_graph_unverified_emits_status_but_not_quote():
+    pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
     import rdflib
 
     from perspicacite.pipeline.claims import claims_to_graph

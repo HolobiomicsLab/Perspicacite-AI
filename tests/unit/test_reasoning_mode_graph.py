@@ -2,6 +2,10 @@
 
 import json
 
+import pytest
+
+pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
+
 from perspicacite.config.schema import Config
 from perspicacite.models.rag import RAGMode, RAGRequest
 

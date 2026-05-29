@@ -22,6 +22,7 @@ def _claim(cid: str, quote: str | None, doi: str = "10.1/x") -> dict:
 
 @pytest.mark.unit
 def test_positional_bug_regression_binds_to_content_match():
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     # Quote is verbatim from passage index 2, but the claim is positionally at
     # output index 0. anchor_claims must bind it to passage 2, not passage 0.
     passages = [
@@ -49,6 +50,7 @@ def test_laundering_paraphrase_is_unverified():
 
 @pytest.mark.unit
 def test_strict_drops_unverified_failopen_keeps():
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     passages = [{"chunk_text": "Real source text about A inhibits B clearly."}]
     good = _claim("good", "A inhibits B")
     bad = _claim("bad", "completely fabricated unrelated nonsense phrase")
@@ -60,6 +62,7 @@ def test_strict_drops_unverified_failopen_keeps():
 
 @pytest.mark.unit
 def test_audit_sidecar_written_with_divergent_flag(tmp_path):
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     passages = [
         {"chunk_text": "unrelated A"},
         {"chunk_text": "the measured value was 42 units exactly"},

@@ -101,6 +101,7 @@ def _install_source_emitting_engine():
 @pytest.mark.asyncio
 async def test_generate_report_attaches_indicia_when_requested() -> None:
     """extract_claims=True must produce an ``indicia`` list in the payload."""
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     state = _make_state()
 
     # The claim-extraction call goes through state.llm_client.complete.

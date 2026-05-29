@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("indicium", reason="indicium (indicia extra) not installed")
+pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
+
 from perspicacite.indicium_layer.builder import build_claim_graph
 from perspicacite.indicium_layer.store import ClaimGraphStore
 

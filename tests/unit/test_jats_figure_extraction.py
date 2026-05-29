@@ -56,6 +56,7 @@ def test_extract_figures_empty_on_no_body():
 
 @pytest.mark.asyncio
 async def test_get_claim_figures_returns_rows(monkeypatch, tmp_path):
+    pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
     monkeypatch.setattr(
         "perspicacite.indicium_layer.manifest._DATA_DIR",
         tmp_path / "claim_graphs",

@@ -1,5 +1,9 @@
 """Unit tests for the five typed traversal queries."""
 
+import pytest
+
+pytest.importorskip("rdflib", reason="rdflib (indicia extra) not installed")
+
 from perspicacite.indicium_layer.queries import (
     ASB_NS,
     CITO_NS,

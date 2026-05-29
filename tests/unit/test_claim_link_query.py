@@ -50,6 +50,7 @@ def test_claim_links_for_claim_sparql_returns_list():
 @pytest.mark.asyncio
 async def test_get_claim_links_mcp_tool_response_structure():
     """get_claim_links MCP tool returns valid JSON with success envelope."""
+    pytest.importorskip("indicium", reason="indicia extra not installed")
     from unittest.mock import MagicMock, patch
 
     # Import server module first so patch targets resolve
