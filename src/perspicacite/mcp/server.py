@@ -6111,7 +6111,11 @@ async def extract_claims_from_passages(
     evidence) from retrieved passages, validated against the indicium standard.
 
     Each claim has context/subject/qualifier/relation/object plus evidence
-    (DOI + exact quote + ECO evidence_type). Returns
+    (DOI + exact quote + ECO evidence_type), and an ``_anchor`` record
+    {status, matched_index, quote_exact, score} from verifying its quote against
+    the source passages (R3): status is verified / repaired / unverified, and
+    quote_exact is present only when verified/repaired (never fabricated for an
+    unverified quote). Returns
     {success, claims:[...], claims_valid: bool, validation_report?: str}.
     Use after retrieval (e.g. get_relevant_passages) to produce a machine-
     readable, standards-compliant claim set instead of prose.
@@ -6147,9 +6151,31 @@ async def extract_claims_from_passages(
         except ImportError:
             pass  # indicium-adapters not installed — proceed without adapter
 
+    # get_relevant_passages emits flat {text, source_doi}; extract_claims and
+    # anchor_claims both read {chunk_text, source:{doi}}. Normalize so the model
+    # actually sees passage text AND the anchor verifier has real candidates —
+    # without this, anchoring would silently see empty text and tag everything
+    # unverified.
+    norm_passages = [
+        {
+            "chunk_text": p.get("chunk_text") or p.get("text", ""),
+            "source": {"doi": p.get("source_doi") or (p.get("source") or {}).get("doi")},
+        }
+        for p in passages
+        if isinstance(p, dict)
+    ]
+
     claims = await extract_claims(
-        llm_client=state.llm_client, passages=passages, context=context, model=model,
+        llm_client=state.llm_client, passages=norm_passages, context=context, model=model,
         domain_adapter=adapter)
+
+    # R3 — verify each claim's quote against the passages it was drawn from and
+    # tag it. Fail-open: every claim is kept, each carrying claim["_anchor"]
+    # {status, matched_index, quote_exact, score}. norm_passages is index-aligned
+    # with the list the model saw, so matched_index is meaningful.
+    from perspicacite.indicium_layer.anchor import anchor_claims
+
+    claims = anchor_claims(claims, norm_passages)
 
     conforms, report = validate_claims(claims, domain_adapter=adapter) if claims else (True, "")
     out: dict = {"claims": claims, "claims_valid": conforms}

@@ -134,7 +134,10 @@ browser = [
 # Install with:
 #   uv sync --extra indicia --extra adapters
 indicia = [
-  "indicium",
+  # Floor: 1.8.0 is the first release that ships the verify_quote kernel that
+  # the R3 anchor path (anchor_claims / annotate_anchor_status) imports. An
+  # older indicium would make anchoring fail-soft to "unchecked" silently.
+  "indicium>=1.8.0",
   "pyoxigraph>=0.4",
 ]
 
