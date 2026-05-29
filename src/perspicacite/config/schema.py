@@ -1384,6 +1384,33 @@ class GoogleScholarConfig(BaseModel):
     )
 
 
+class AnchorConfig(BaseModel):
+    """Quote-anchoring / claim-verification policy (R3)."""
+
+    strict: bool = Field(
+        default=False,
+        description=(
+            "When True, drop claims whose extracted quote cannot be verified "
+            "against any source passage. Default False keeps them tagged "
+            "(fail-open), mirroring ASB's --anchor-strict."
+        ),
+    )
+    near_threshold: float = Field(
+        default=0.9, ge=0.0, le=1.0,
+        description=(
+            "Longest-common-substring ratio (over quote length) at or above "
+            "which a non-exact match is accepted as 'repaired'."
+        ),
+    )
+    audit_dir: str | None = Field(
+        default=None,
+        description=(
+            "Directory for per-build anchor audit sidecars (JSONL). None "
+            "disables the file sidecar; the structlog event is always emitted."
+        ),
+    )
+
+
 class Config(BaseModel):
     """Main configuration for Perspicacité v2."""
 
@@ -1412,6 +1439,7 @@ class Config(BaseModel):
     github: GitHubConfig = Field(default_factory=GitHubConfig)
     bundles: BundlesConfig = Field(default_factory=BundlesConfig)
     google_scholar: GoogleScholarConfig = Field(default_factory=GoogleScholarConfig)
+    anchor: AnchorConfig = Field(default_factory=AnchorConfig)
     # User-defined databases shown in the composer's DB picker. These
     # are display-only: the frontend renders them with a favicon pulled
     # from `homepage`. Wiring a custom DB into the search pipeline is

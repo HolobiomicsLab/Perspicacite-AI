@@ -198,3 +198,24 @@ def test_zotero_config_override() -> None:
     ))
     assert cfg.zotero.enabled is True
     assert cfg.zotero.library_type == "group"
+
+
+def test_anchor_config_defaults():
+    from perspicacite.config.schema import Config
+
+    cfg = Config()
+    assert cfg.anchor.strict is False
+    assert cfg.anchor.near_threshold == 0.9
+    assert cfg.anchor.audit_dir is None
+
+
+def test_anchor_config_near_threshold_bounds():
+    import pytest
+    from pydantic import ValidationError
+
+    from perspicacite.config.schema import AnchorConfig
+
+    AnchorConfig(near_threshold=0.0)
+    AnchorConfig(near_threshold=1.0)
+    with pytest.raises(ValidationError):
+        AnchorConfig(near_threshold=1.5)
