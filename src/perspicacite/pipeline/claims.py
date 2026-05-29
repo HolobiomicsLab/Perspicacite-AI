@@ -130,9 +130,16 @@ def claims_to_graph(claims: list[dict]):
         cid = c.get("id") or f"pos:{i}"
         node = rdflib.URIRef(f"urn:perspicacite:claim:{cid}")
         g.add((node, rdflib.RDF.type, asb.Claim))
-        for slot in ("context", "subject", "qualifier", "relation", "object"):
+        for slot in ("context", "subject", "relation", "object"):
             if c.get(slot):
                 g.add((node, asb[slot], rdflib.Literal(c[slot])))
+        # Route the qualifier: core Bucur terms go on the closed asb:qualifier
+        # enum; domain-adapter qualifiers go on the open asb:domainQualifier slot
+        # (indicium#1, Reading 1) so they pass SHACL instead of failing the enum.
+        qual = c.get("qualifier")
+        if qual:
+            pred = "qualifier" if qual in _QUALIFIERS else "domainQualifier"
+            g.add((node, asb[pred], rdflib.Literal(qual)))
         for slot, curie in (c.get("ontology_terms") or {}).items():
             if curie:
                 g.add((node, asb[f"{slot}_ontology_term"], rdflib.Literal(str(curie))))
