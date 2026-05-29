@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -40,6 +41,7 @@ from perspicacite.indicium_layer.pruner import build_candidate_pairs
 from perspicacite.indicium_layer.queries import (
     ASB_NS,
     INDICIUM_NS,
+    IRI_ANCHOR_STATUS,
     IRI_ASSERTED_BY,
     IRI_CAPTION,
     IRI_CLAIM,
@@ -57,8 +59,12 @@ from perspicacite.indicium_layer.queries import (
     IRI_FIGURE_TYPE,
     IRI_FROM_CLAIM,
     IRI_LINK_TYPE,
+    IRI_OA_EXACT,
+    IRI_OA_PREFIX,
+    IRI_OA_SUFFIX,
     IRI_OBJECT,
     IRI_QUALIFIER,
+    IRI_QUOTE_EXACT,
     IRI_RDF_TYPE,
     IRI_RELATION,
     IRI_RESEARCH_PAPER,
@@ -66,6 +72,7 @@ from perspicacite.indicium_layer.queries import (
     IRI_SOURCE_DOI,
     IRI_SUBJECT,
     IRI_TEXT_CHUNK,
+    IRI_TEXT_QUOTE_SELECTOR,
     IRI_TO_CLAIM,
     IRI_WAS_DERIVED_FROM,
     IRI_WAS_GENERATED_BY,
@@ -76,6 +83,7 @@ from perspicacite.indicium_layer.queries import (
 )
 from perspicacite.logging import get_logger
 from perspicacite.pipeline.claims import claims_to_graph, extract_claims
+from perspicacite.indicium_layer.anchor import anchor_claims
 
 logger = get_logger("perspicacite.indicium_layer.builder")
 
@@ -138,6 +146,35 @@ def run_iri(kb_name: str, iso8601: str, model: str | None) -> str:
 def _eco_iri(eco_grade: str | None) -> str:
     code = _ECO_BY_TYPE.get(eco_grade or "knowledge", _ECO_BY_TYPE["knowledge"])
     return f"{ECO_BASE}{code}"
+
+
+def _write_anchor_provenance(store: Any, e_iri: str, anchor: dict, passage: dict | None) -> None:
+    """Write R3 anchor triples onto an Evidence node.
+
+    - asb:anchorStatus  : always (verified|repaired|unverified).
+    - asb:quoteExact + an oa:TextQuoteSelector (oa:exact/prefix/suffix) : only
+      when status is verified/repaired and a verbatim span is available — never
+      for unverified (no laundering).
+    """
+    status = anchor.get("status", "unverified")
+    store.add(e_iri, IRI_ANCHOR_STATUS, ("literal", status, None))
+    quote_exact = anchor.get("quote_exact")
+    if status in ("verified", "repaired") and quote_exact:
+        store.add(e_iri, IRI_QUOTE_EXACT, ("literal", quote_exact, None))
+        sel = f"{e_iri}#quote"
+        store.add(e_iri, f"{OA_NS}hasSelector", sel)
+        store.add(sel, IRI_RDF_TYPE, IRI_TEXT_QUOTE_SELECTOR)
+        store.add(sel, IRI_OA_EXACT, ("literal", quote_exact, None))
+        if passage is not None:
+            ptext = str(passage.get("chunk_text") or passage.get("text") or "")
+            pos = ptext.find(quote_exact)
+            if pos != -1:
+                prefix = ptext[max(0, pos - 32):pos]
+                suffix = ptext[pos + len(quote_exact):pos + len(quote_exact) + 32]
+                if prefix:
+                    store.add(sel, IRI_OA_PREFIX, ("literal", prefix, None))
+                if suffix:
+                    store.add(sel, IRI_OA_SUFFIX, ("literal", suffix, None))
 
 
 def _add_figure_node(
@@ -212,6 +249,9 @@ async def build_claim_graph(
     model: str | None = None,
     builder_version: str = BUILDER_VERSION,
     progress_callback: Any = None,
+    anchor_strict: bool = False,
+    anchor_near_threshold: float = 0.9,
+    anchor_audit_dir: str | None = None,
 ) -> BuildResult:
     """Build (or incrementally refresh) the claim graph for ``kb_name``."""
     t0 = _dt.datetime.now(_dt.UTC)
@@ -277,6 +317,22 @@ async def build_claim_graph(
             logger.warning("claim_extract_failed", paper_id=paper_id, error=str(exc))
             extracted = []
 
+        # R3 — verify each claim's quote against the passages it was drawn from.
+        # passages_for_extract is index-aligned with `passages`, so the resulting
+        # matched_index also indexes into `passages` below.
+        audit_path = (
+            Path(anchor_audit_dir) / f"{kb_name}__{str(paper_id).replace('/', '_')}.anchor.jsonl"
+            if anchor_audit_dir
+            else None
+        )
+        extracted = anchor_claims(
+            extracted,
+            passages_for_extract,
+            strict=anchor_strict,
+            near_threshold=anchor_near_threshold,
+            audit_path=audit_path,
+        )
+
         for ci, claim in enumerate(extracted):
             # SHACL validate — validate_graph returns (conforms, report) tuple
             conforms, report = indicium.validate_graph(claims_to_graph([claim]))
@@ -289,31 +345,42 @@ async def build_claim_graph(
                 continue
 
             c_iri = claim_iri(kb_name, claim)
-            chunk_idx = ci if ci < len(passages) else 0
-            pg = passages[chunk_idx] if chunk_idx < len(passages) else passages[0]
-            ps_iri = passage_iri(kb_name, paper_id, pg.get("chunk_idx", chunk_idx))
-
-            store.add(ps_iri, IRI_RDF_TYPE, IRI_TEXT_CHUNK)
-            if pg.get("char_start") is not None and pg.get("char_end") is not None:
-                selector = f"{ps_iri}#sel"
-                store.add(ps_iri, f"{OA_NS}hasSelector", selector)
-                store.add(selector, IRI_RDF_TYPE, f"{OA_NS}TextPositionSelector")
-                store.add(
-                    selector,
-                    f"{OA_NS}start",
-                    ("literal", str(pg["char_start"]), f"{XSD_NS}nonNegativeInteger"),
-                )
-                store.add(
-                    selector,
-                    f"{OA_NS}end",
-                    ("literal", str(pg["char_end"]), f"{XSD_NS}nonNegativeInteger"),
-                )
-
+            anchor = claim.get("_anchor") or {}
+            matched_index = anchor.get("matched_index")
             ev_grade = (claim.get("evidence") or [{}])[0].get("evidence_type") or "knowledge"
-            e_iri = evidence_iri(kb_name, ps_iri, ev_grade)
-            store.add(e_iri, IRI_RDF_TYPE, IRI_EVIDENCE)
-            store.add(e_iri, IRI_EVIDENCE_TYPE, _eco_iri(ev_grade))
-            store.add(e_iri, IRI_DERIVED_FROM_PASSAGE, ps_iri)
+
+            if matched_index is not None and matched_index < len(passages):
+                # Content-matched passage: bind here and write trustworthy
+                # position + quote selectors (offsets now come from the right chunk).
+                pg = passages[matched_index]
+                ps_iri = passage_iri(kb_name, paper_id, pg.get("chunk_idx", matched_index))
+                store.add(ps_iri, IRI_RDF_TYPE, IRI_TEXT_CHUNK)
+                if pg.get("char_start") is not None and pg.get("char_end") is not None:
+                    selector = f"{ps_iri}#sel"
+                    store.add(ps_iri, f"{OA_NS}hasSelector", selector)
+                    store.add(selector, IRI_RDF_TYPE, f"{OA_NS}TextPositionSelector")
+                    store.add(
+                        selector,
+                        f"{OA_NS}start",
+                        ("literal", str(pg["char_start"]), f"{XSD_NS}nonNegativeInteger"),
+                    )
+                    store.add(
+                        selector,
+                        f"{OA_NS}end",
+                        ("literal", str(pg["char_end"]), f"{XSD_NS}nonNegativeInteger"),
+                    )
+                e_iri = evidence_iri(kb_name, ps_iri, ev_grade)
+                store.add(e_iri, IRI_RDF_TYPE, IRI_EVIDENCE)
+                store.add(e_iri, IRI_EVIDENCE_TYPE, _eco_iri(ev_grade))
+                store.add(e_iri, IRI_DERIVED_FROM_PASSAGE, ps_iri)
+                _write_anchor_provenance(store, e_iri, anchor, pg)
+            else:
+                # Unverified, fail-open kept: an Evidence node with NO passage
+                # binding and NO false selector — only the anchorStatus marker.
+                e_iri = evidence_iri(kb_name, f"{c_iri}/unanchored", ev_grade)
+                store.add(e_iri, IRI_RDF_TYPE, IRI_EVIDENCE)
+                store.add(e_iri, IRI_EVIDENCE_TYPE, _eco_iri(ev_grade))
+                _write_anchor_provenance(store, e_iri, anchor, None)
 
             is_new_claim = c_iri not in _seen_claim_iris
             _seen_claim_iris.add(c_iri)

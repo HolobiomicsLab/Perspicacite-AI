@@ -70,6 +70,14 @@ IRI_WAS_GENERATED_BY = f"{PROV_NS}wasGeneratedBy"
 IRI_CREATED = f"{DCT_NS}created"
 IRI_RDF_TYPE = f"{RDF_NS}type"
 
+# R3 anchor provenance IRIs (project-side asb: predicates + W3C Open Annotation)
+IRI_QUOTE_EXACT = f"{ASB_NS}quoteExact"
+IRI_ANCHOR_STATUS = f"{ASB_NS}anchorStatus"
+IRI_TEXT_QUOTE_SELECTOR = f"{OA_NS}TextQuoteSelector"
+IRI_OA_EXACT = f"{OA_NS}exact"
+IRI_OA_PREFIX = f"{OA_NS}prefix"
+IRI_OA_SUFFIX = f"{OA_NS}suffix"
+
 # Indicium v1.4 ClaimLink property IRIs
 IRI_CLAIM_LINK       = f"{INDICIUM_NS}ClaimLink"    # indicium:ClaimLink (v1.4: class_uri removed from schema)
 IRI_FROM_CLAIM       = f"{INDICIUM_NS}from_claim"
