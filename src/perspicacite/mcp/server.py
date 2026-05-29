@@ -4009,6 +4009,7 @@ async def route_kbs(
     method: str = "bm25",
     top_k: int = 3,
     score_threshold: float = 0.1,
+    kb_names: list[str] | None = None,
     ctx: Context | None = None,
 ) -> dict:
     """Pick the most-relevant KBs for a query without actually running it.
@@ -4021,7 +4022,9 @@ async def route_kbs(
     Args:
         query: The research question.
         candidate_kbs: Optional restricted list (KB names). ``None`` =
-            consider every KB in the session store.
+            consider every KB in the session store. ``kb_names`` is accepted
+            as an alias (matching the param name every other multi-KB tool
+            uses); if both are given, ``candidate_kbs`` wins.
         method: ``"bm25"`` (default, no LLM call) or ``"llm"`` (one
             cheap LLM call scores every KB; better on semantic
             mismatches).
@@ -4036,6 +4039,10 @@ async def route_kbs(
     state = _require_state()
     if isinstance(state, str):
         return {"error": state}
+
+    # `kb_names` is an alias for `candidate_kbs` (every sibling tool names this
+    # arg `kb_names`, so agents reach for that first).
+    candidate_kbs = candidate_kbs or kb_names
 
     all_kbs = await state.session_store.list_kbs()
     if candidate_kbs:
@@ -6052,8 +6059,9 @@ async def extract_failure_modes_from_passages(
         prompt = _FAILURE_EXTRACTION_PROMPT.format(context=context or "general")
 
         # Hard cap: entire extraction (all batches) must finish within 80s.
-        # Per-batch asyncio.wait_for(50s) doesn't help when LiteLLM/tenacity
-        # retries eat CancelledError — the outer timeout is the real guard.
+        # Effective only because the LLM client's retry predicate lets
+        # CancelledError propagate (it no longer retries on cancellation); the
+        # per-batch wait_for(50s) and this outer cap both now bound wall-clock.
         try:
             async with asyncio.timeout(80.0):
                 records = await extract_structured(

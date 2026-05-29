@@ -520,8 +520,19 @@ class AsyncLLMClient:
     @retry(
         # F1 (audit 2026-05-15): never retry on deterministic-fail errors
         # — auth errors won't suddenly become valid; budget breaches won't
-        # heal. Retry every OTHER exception.
-        retry=retry_if_exception(lambda e: not _is_deterministic_fail(e)),
+        # heal. Retry every OTHER *Exception*.
+        #
+        # `isinstance(e, Exception)` is load-bearing: tenacity catches
+        # BaseException, so without it the predicate would retry on
+        # asyncio.CancelledError (a BaseException, not an Exception). That
+        # swallows cancellation from asyncio.wait_for/timeout and makes every
+        # caller-side timeout ineffective: all 3 retry attempts run their full
+        # HTTP timeout to completion before the (now-stale) deadline is
+        # noticed. Letting cancellation propagate is what makes those timeouts
+        # actually bound wall-clock.
+        retry=retry_if_exception(
+            lambda e: isinstance(e, Exception) and not _is_deterministic_fail(e)
+        ),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,

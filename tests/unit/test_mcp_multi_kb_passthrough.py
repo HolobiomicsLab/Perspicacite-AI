@@ -369,3 +369,71 @@ async def test_search_knowledge_base_single_kb_names_uses_single_kb_path() -> No
     assert result.get("kb_name") == "solo"
     # Single-KB path selects the collection name for the resolved kb_name.
     assert "solo" in (captured_collection.get("collection_name") or "")
+
+
+def _route_kbs_state(metas: list[SimpleNamespace]) -> MCPState:
+    state = MCPState()
+    state.initialized = True
+    state.config = MagicMock()
+    state.llm_client = MagicMock()
+    state.vector_store = MagicMock()
+    ss_mock = MagicMock()
+    ss_mock.list_kbs = AsyncMock(return_value=metas)
+    state.session_store = ss_mock
+    return state
+
+
+@pytest.mark.asyncio
+async def test_route_kbs_accepts_kb_names_alias(monkeypatch) -> None:
+    """route_kbs must accept `kb_names` as an alias for `candidate_kbs` so agents
+    that reach for the sibling-tool name don't error on the first call."""
+    state = _route_kbs_state([_kb_meta("kept"), _kb_meta("dropped")])
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_auto_route_kbs(*, kb_metas, **kw):
+        captured["names"] = [m.name for m in kb_metas]
+        return []
+
+    import perspicacite.llm.client as _client_mod
+    import perspicacite.rag.kb_router as _router_mod
+
+    monkeypatch.setattr(_router_mod, "auto_route_kbs", _fake_auto_route_kbs)
+    monkeypatch.setattr(
+        _client_mod, "resolve_stage_model", lambda cfg, stage: ("p", "m")
+    )
+
+    with patch.object(mcp_server, "mcp_state", state):
+        out = await mcp_server.route_kbs(query="q", kb_names=["kept"])
+
+    assert "hits" in out, f"unexpected route_kbs payload: {out}"
+    assert captured.get("names") == ["kept"], (
+        "kb_names must filter candidate KBs exactly like candidate_kbs"
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_kbs_candidate_kbs_takes_precedence(monkeypatch) -> None:
+    """When both candidate_kbs and kb_names are given, candidate_kbs wins."""
+    state = _route_kbs_state([_kb_meta("a"), _kb_meta("b")])
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_auto_route_kbs(*, kb_metas, **kw):
+        captured["names"] = [m.name for m in kb_metas]
+        return []
+
+    import perspicacite.llm.client as _client_mod
+    import perspicacite.rag.kb_router as _router_mod
+
+    monkeypatch.setattr(_router_mod, "auto_route_kbs", _fake_auto_route_kbs)
+    monkeypatch.setattr(
+        _client_mod, "resolve_stage_model", lambda cfg, stage: ("p", "m")
+    )
+
+    with patch.object(mcp_server, "mcp_state", state):
+        await mcp_server.route_kbs(
+            query="q", candidate_kbs=["a"], kb_names=["b"]
+        )
+
+    assert captured.get("names") == ["a"], "candidate_kbs must win over kb_names"

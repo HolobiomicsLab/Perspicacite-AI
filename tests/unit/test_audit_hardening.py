@@ -167,3 +167,42 @@ async def test_complete_does_not_retry_on_auth_error(monkeypatch):
             cache=False,
         )
     assert calls["n"] == 1, f"expected 1 attempt, got {calls['n']}"
+
+
+@pytest.mark.asyncio
+async def test_complete_does_not_retry_on_cancellation(monkeypatch):
+    """asyncio.CancelledError must propagate after ONE attempt, never be retried.
+
+    Tenacity catches BaseException, so a predicate that only excludes
+    deterministic-fail errors would treat CancelledError as retryable and
+    swallow it — defeating every asyncio.wait_for/timeout in the codebase
+    (extraction tools' 80s cap especially). Cancellation must bubble out.
+    """
+    import asyncio
+
+    from perspicacite.config.schema import LLMConfig, LLMProviderConfig
+    from perspicacite.llm.client import AsyncLLMClient
+
+    cfg = LLMConfig(
+        default_provider="anthropic",
+        default_model="claude-3-haiku",
+        cache_enabled=False,
+        providers={"anthropic": LLMProviderConfig(base_url="https://x")},
+    )
+    client = AsyncLLMClient(cfg)
+
+    calls = {"n": 0}
+
+    async def fake_acompletion(*args, **kwargs):
+        calls["n"] += 1
+        raise asyncio.CancelledError()
+
+    import litellm
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    with pytest.raises(asyncio.CancelledError):
+        await client.complete(
+            messages=[{"role": "user", "content": "hi"}],
+            cache=False,
+        )
+    assert calls["n"] == 1, f"expected 1 attempt (no retry), got {calls['n']}"
