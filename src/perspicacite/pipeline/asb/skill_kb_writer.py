@@ -6,7 +6,7 @@ stamp. Idempotent against re-ingest: entries keyed by source_url.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -52,8 +52,10 @@ def write_skill_kb_entries(
         if " | " in rest:
             tail = " | " + rest.split(" | ", 1)[1]
         new_notes = (prefix + stamp + tail).strip()
-        # Collapse leading " | " if prefix is empty
-        new_notes = new_notes.lstrip(" | ")
+        # Collapse a leading " | " separator if prefix is empty. Use
+        # removeprefix (exact substring), not lstrip, which strips any
+        # leading run of ' ' and '|' chars — the classic multi-char footgun.
+        new_notes = new_notes.removeprefix(" | ")
         data["notes"] = new_notes
     else:
         sep = " | " if original_notes else ""
@@ -65,4 +67,4 @@ def write_skill_kb_entries(
 
 def _now_iso() -> str:
     """UTC RFC3339 timestamp (Z-suffixed)."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

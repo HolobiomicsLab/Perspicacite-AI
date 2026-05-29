@@ -59,8 +59,6 @@ class KBSearchTool:
         top_k: int = 10,
     ) -> str:
         """Execute KB search."""
-        from perspicacite.models.search import SearchFilters
-
         # Generate embedding
         embeddings = await self.embedding_provider.embed([query])
 

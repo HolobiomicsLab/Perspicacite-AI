@@ -68,14 +68,14 @@ def test_parse_output_full_handles_missing_cost_path():
         usage_output_tokens_path="usage.output_tokens",
         # no cost_usd_path
     )
-    text, in_t, out_t, details = cli._parse_output_full(CLAUDE_JSON_PAYLOAD)
+    text, _in_t, _out_t, details = cli._parse_output_full(CLAUDE_JSON_PAYLOAD)
     assert text == "Hello, world."
     assert details == {}
 
 
 def test_parse_output_full_handles_malformed_json():
     cli = _make_client()
-    text, in_t, out_t, details = cli._parse_output_full("not json at all")
+    _text, in_t, out_t, details = cli._parse_output_full("not json at all")
     assert in_t == 0 and out_t == 0
     assert details == {}
 
@@ -99,7 +99,7 @@ async def test_complete_pushes_cost_to_budget_tracker(monkeypatch, tmp_path):
 
     cli = _make_client()
     tracker = BudgetTracker(action="warn")
-    token = set_budget_tracker(tracker)
+    set_budget_tracker(tracker)
 
     # Mock asyncio subprocess to return our canned JSON.
     class _FakeProc:

@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -202,6 +201,7 @@ async def test_ingest_github_repo_requires_state():
 def test_ingest_github_repo_docstring_mentions_latency():
     """Per Phase B3 — all multi-second tools must surface latency."""
     import inspect
+
     from perspicacite.mcp import server
 
     doc = inspect.getdoc(server.ingest_github_repo) or ""
@@ -381,6 +381,7 @@ async def test_ingest_skill_bundle_requires_state():
 def test_ingest_skill_bundle_docstring_mentions_latency():
     """Per Phase B3 — multi-second tools must surface latency."""
     import inspect
+
     from perspicacite.mcp import server
 
     doc = inspect.getdoc(server.ingest_skill_bundle) or ""

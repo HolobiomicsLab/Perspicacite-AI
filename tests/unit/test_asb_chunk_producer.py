@@ -12,9 +12,9 @@ ARTICLE = Path(__file__).parent.parent / "fixtures" / "asb" / "article_878_v4_su
 # ---------- skills ----------
 
 def test_skill_becomes_paper_with_correct_metadata():
-    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
-    from perspicacite.pipeline.asb.chunk_producer import skill_to_paper
     from perspicacite.models.papers import PaperSource
+    from perspicacite.pipeline.asb.chunk_producer import skill_to_paper
+    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
 
     skill = parse_skill_bundle(METLINKR)[0]
     paper = skill_to_paper(skill)
@@ -31,16 +31,16 @@ def test_skill_becomes_paper_with_correct_metadata():
 
 
 def test_skill_to_paper_title_is_skill_name():
-    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
     from perspicacite.pipeline.asb.chunk_producer import skill_to_paper
+    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
     skill = parse_skill_bundle(METLINKR)[0]
     paper = skill_to_paper(skill)
     assert paper.title == skill.name
 
 
 def test_skill_to_paper_abstract_is_description():
-    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
     from perspicacite.pipeline.asb.chunk_producer import skill_to_paper
+    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
     skill = parse_skill_bundle(METLINKR)[0]
     paper = skill_to_paper(skill)
     assert paper.abstract == skill.description
@@ -49,9 +49,9 @@ def test_skill_to_paper_abstract_is_description():
 # ---------- cards (2026-05-15 metlinkr) ----------
 
 def test_card_becomes_paper_with_workflow_metadata_metlinkr():
+    from perspicacite.models.papers import PaperSource
     from perspicacite.pipeline.asb.card_parser import parse_cards
     from perspicacite.pipeline.asb.chunk_producer import card_to_paper
-    from perspicacite.models.papers import PaperSource
 
     card = next(c for c in parse_cards(METLINKR) if c.task_id == "task_001")
     paper = card_to_paper(card, dag=None)
@@ -158,9 +158,9 @@ def test_card_to_paper_paper_github_prefers_name_over_legacy():
 # ---------- idempotency ----------
 
 def test_paper_ids_are_stable_for_idempotent_reingest():
-    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
     from perspicacite.pipeline.asb.card_parser import parse_cards
-    from perspicacite.pipeline.asb.chunk_producer import skill_to_paper, card_to_paper
+    from perspicacite.pipeline.asb.chunk_producer import card_to_paper, skill_to_paper
+    from perspicacite.pipeline.asb.skill_parser import parse_skill_bundle
 
     skill = parse_skill_bundle(METLINKR)[0]
     p1 = skill_to_paper(skill)

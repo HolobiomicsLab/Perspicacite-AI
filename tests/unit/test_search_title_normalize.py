@@ -1,6 +1,6 @@
 """When a title-like query returns 0 hits, the adapter should retry
 once with a normalised form (drop post-colon subtitle, drop parens)."""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -34,8 +34,8 @@ def test_normalize_title_empty_falls_back_to_original():
 async def test_search_retries_once_on_zero_result_titlelike_query():
     """SciLExAdapter.search must call into the inner search path twice
     when the first call returns [] and the query is title-like."""
-    from perspicacite.search.scilex_adapter import SciLExAdapter
     from perspicacite.models.papers import Paper, PaperSource
+    from perspicacite.search.scilex_adapter import SciLExAdapter
 
     calls: list[str] = []
 
@@ -63,8 +63,8 @@ async def test_search_retries_once_on_zero_result_titlelike_query():
 
 @pytest.mark.asyncio
 async def test_search_no_retry_when_first_pass_succeeds():
-    from perspicacite.search.scilex_adapter import SciLExAdapter
     from perspicacite.models.papers import Paper, PaperSource
+    from perspicacite.search.scilex_adapter import SciLExAdapter
 
     calls: list[str] = []
 

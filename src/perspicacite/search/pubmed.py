@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Any
+from typing import Any, ClassVar
 
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Author, Paper, PaperSource
@@ -141,7 +141,7 @@ class PubMedSearchAdapter:
     # those queries too; it just returns 0 hits for genuinely non-biomedical
     # queries (CS/ML), which the aggregator merges harmlessly with the
     # other providers.
-    domains: list[str] = ["general", "biomedical"]
+    domains: ClassVar[list[str]] = ["general", "biomedical"]
     tier: str = "reliable"
     retry: int = 0
 

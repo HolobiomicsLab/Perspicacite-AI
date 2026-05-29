@@ -6,7 +6,7 @@ import hashlib
 
 import indicium
 
-from perspicacite.indicium_layer.manifest import Manifest  # noqa: TC001
+from perspicacite.indicium_layer.manifest import Manifest
 
 
 def compute_paper_hash(text: str) -> str:

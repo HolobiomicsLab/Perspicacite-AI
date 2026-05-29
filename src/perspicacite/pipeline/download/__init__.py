@@ -48,29 +48,29 @@ from .unified import retrieve_paper_content
 from .unpaywall import get_open_access_url
 
 __all__ = [
-    # Unified pipeline (preferred)
-    "retrieve_paper_content",
+    "ContentResult",
+    "DownloadResult",
+    "PDFDownloader",
     "PaperContent",
     "PaperDiscovery",
-    # Legacy (will be removed after full migration)
-    "get_pdf_with_fallback",
+    "aaas",
+    "acs",
+    "alternative",
+    "arxiv",
+    "elsevier",
     "get_content_with_fallback",
     # Common utilities
     "get_open_access_url",
     "get_pdf_from_alternative_endpoint",
-    "DownloadResult",
-    "ContentResult",
-    "PDFDownloader",
-    # Publisher modules
-    "unpaywall",
-    "arxiv",
-    "wiley",
-    "elsevier",
-    "aaas",
-    "acs",
-    "rsc",
-    "springer",
-    "alternative",
+    # Legacy (will be removed after full migration)
+    "get_pdf_with_fallback",
     "openalex_oa",
     "pmc",
+    # Unified pipeline (preferred)
+    "retrieve_paper_content",
+    "rsc",
+    "springer",
+    # Publisher modules
+    "unpaywall",
+    "wiley",
 ]

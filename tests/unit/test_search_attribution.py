@@ -12,7 +12,6 @@ import pytest
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.search.domain_aggregator import DomainAwareAggregator
 
-
 # ---------------------------------------------------------------------------
 # Minimal async fake provider — mirrors the duck-type contract used by
 # DomainAwareAggregator._call_provider():

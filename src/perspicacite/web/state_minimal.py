@@ -26,7 +26,7 @@ class MinimalAppState:
     llm_client: Any = None
 
     @classmethod
-    def from_config(cls, config: Any) -> "MinimalAppState":
+    def from_config(cls, config: Any) -> MinimalAppState:
         """Build a minimal state with a fresh LLM client."""
         from perspicacite.llm.client import AsyncLLMClient
         client = AsyncLLMClient(config)

@@ -297,4 +297,4 @@ query_complexity rules:
     def _tools_with_kb(base: list[str], active_kb_name: str | None) -> list[str]:
         if not active_kb_name or "kb_search" in base:
             return base
-        return ["kb_search"] + base
+        return ["kb_search", *base]

@@ -744,12 +744,7 @@ Valid JSON only:"""
 
             elif action == "answer":
                 # Remove remaining steps, just add answer step
-                current_plan.steps = completed_steps + [Step(
-                    id="answer",
-                    type=StepType.ANSWER,
-                    description="Generate final answer",
-                    depends_on=[s.id for s in completed_steps]
-                )]
+                current_plan.steps = [*completed_steps, Step(id="answer", type=StepType.ANSWER, description="Generate final answer", depends_on=[s.id for s in completed_steps])]
                 logger.info("Replan: action=answer — truncating plan to completed + ANSWER step")
 
             else:

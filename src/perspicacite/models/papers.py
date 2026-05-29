@@ -1,5 +1,6 @@
 """Paper and document models."""
 
+import contextlib
 from datetime import datetime
 from enum import Enum
 from typing import Any
@@ -172,10 +173,8 @@ class Paper(BaseModel):
         year = None
         year_str = entry.get("year")
         if year_str:
-            try:
+            with contextlib.suppress(ValueError):
                 year = int(year_str)
-            except ValueError:
-                pass
 
         # Generate ID from DOI or PMID, or create from title
         doi = entry.get("doi")

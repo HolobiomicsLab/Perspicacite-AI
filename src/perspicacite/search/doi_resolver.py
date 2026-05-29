@@ -1,5 +1,7 @@
 """DOI resolution utilities."""
 
+import contextlib
+
 import httpx
 
 from perspicacite.logging import get_logger
@@ -42,10 +44,8 @@ async def resolve_doi(doi: str, http_client: httpx.AsyncClient | None = None) ->
         year = None
         published = data.get("published-print") or data.get("published-online")
         if published and "date-parts" in published:
-            try:
+            with contextlib.suppress(IndexError, TypeError):
                 year = published["date-parts"][0][0]
-            except (IndexError, TypeError):
-                pass
 
         return Paper(
             id=f"doi:{doi}",

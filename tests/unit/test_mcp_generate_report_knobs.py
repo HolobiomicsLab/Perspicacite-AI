@@ -58,7 +58,7 @@ def _install_capturing_engine(captured: list[Any]):
     class _CapturingRAGEngine(RAGEngine):
         async def query_stream(
             self, req, *, message_id=None, conversation_id=None
-        ) -> "AsyncIterator[StreamEvent]":
+        ) -> AsyncIterator[StreamEvent]:
             captured.append(req)
             yield StreamEvent(event="content", data='{"delta": "ok"}')
             yield StreamEvent(event="done", data="{}")
@@ -217,7 +217,7 @@ def _install_telemetry_emitting_engine(captured: list[Any]):
     class _EmittingRAGEngine(RAGEngine):
         async def query_stream(
             self, req, *, message_id=None, conversation_id=None
-        ) -> "AsyncIterator[StreamEvent]":
+        ) -> AsyncIterator[StreamEvent]:
             captured.append(req)
             sink = getattr(req, "telemetry_sink", None)
             if sink is not None:

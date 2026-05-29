@@ -20,6 +20,7 @@ to 6 and the per-request 250 ms spacing is dropped.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import urllib.parse
@@ -66,10 +67,8 @@ async def backfill_dois(
         title = c["title"]
         async with sem:
             if throttle is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await throttle()
-                except Exception:
-                    pass
             try:
                 q = urllib.parse.quote(title[:200])
                 url = f"https://api.crossref.org/works?query.title={q}&rows=1"

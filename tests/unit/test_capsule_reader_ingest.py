@@ -61,7 +61,7 @@ async def test_ingest_chunks_blocks_jsonl(tmp_path):
          "figure_refs": ["pdf_p2_i0"], "table_refs": []},
     ])
 
-    app_state, kb = _app_state()
+    app_state, _kb = _app_state()
     registry = _registry()
 
     result = await ingest_capsule(

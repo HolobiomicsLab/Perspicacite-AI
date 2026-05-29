@@ -32,6 +32,7 @@ upcoming ``export-kb`` flow expect.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import time
@@ -127,10 +128,8 @@ def store_pdf(
         logger.warning("pdf_cache_write_failed", doi=doi, error=str(exc))
         # Best-effort cleanup so a partial write doesn't poison future reads
         for p in (pdf_path, meta_path):
-            try:
+            with contextlib.suppress(OSError):
                 p.unlink(missing_ok=True)
-            except OSError:
-                pass
         return None
 
 

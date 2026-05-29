@@ -30,8 +30,8 @@ async def test_multi_turn_chat_search_uses_grounded_optimized_query():
 
     # Load the singleton before patching so we reference the real object.
     from perspicacite.config.schema import Config
-    from perspicacite.web import state as _state_mod
     from perspicacite.models.rag import StreamEvent
+    from perspicacite.web import state as _state_mod
 
     # Stash originals so we can restore after the test.
     _orig_initialized = _state_mod.app_state.initialized

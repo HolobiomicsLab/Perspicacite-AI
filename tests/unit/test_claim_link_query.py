@@ -5,26 +5,33 @@ Run with:
     uv run pytest tests/unit/test_claim_link_query.py -v
 """
 from __future__ import annotations
+
 import json
+
 import pytest
 
 
 def test_claim_link_iri_constants_exist():
     from perspicacite.indicium_layer.queries import (
-        IRI_CLAIM_LINK, IRI_FROM_CLAIM, IRI_TO_CLAIM,
-        IRI_LINK_TYPE, IRI_CLAIM_STATUS, IRI_ASSERTED_BY, IRI_DECISION_CONTEXT,
         INDICIUM_NS,
+        IRI_ASSERTED_BY,
+        IRI_CLAIM_LINK,
+        IRI_CLAIM_STATUS,
+        IRI_DECISION_CONTEXT,
+        IRI_FROM_CLAIM,
+        IRI_LINK_TYPE,
+        IRI_TO_CLAIM,
     )
     assert IRI_CLAIM_LINK == "https://w3id.org/indicium/ClaimLink", (
         f"IRI_CLAIM_LINK must be indicium:ClaimLink (https://w3id.org/indicium/ClaimLink), "
         f"got {IRI_CLAIM_LINK!r}. The ClaimLink class_uri was fixed in indicium v1.4."
     )
-    assert IRI_FROM_CLAIM       == f"{INDICIUM_NS}from_claim"
-    assert IRI_TO_CLAIM         == f"{INDICIUM_NS}to_claim"
-    assert IRI_LINK_TYPE        == f"{INDICIUM_NS}link_type"
-    assert IRI_CLAIM_STATUS     == f"{INDICIUM_NS}claim_status"
+    assert f"{INDICIUM_NS}from_claim"       == IRI_FROM_CLAIM
+    assert f"{INDICIUM_NS}to_claim"         == IRI_TO_CLAIM
+    assert f"{INDICIUM_NS}link_type"        == IRI_LINK_TYPE
+    assert f"{INDICIUM_NS}claim_status"     == IRI_CLAIM_STATUS
     assert IRI_ASSERTED_BY      == "http://www.w3.org/ns/prov#wasAttributedTo"
-    assert IRI_DECISION_CONTEXT == f"{INDICIUM_NS}decision_context"
+    assert f"{INDICIUM_NS}decision_context" == IRI_DECISION_CONTEXT
 
 
 def test_claim_links_for_claim_sparql_returns_list():
@@ -43,10 +50,10 @@ def test_claim_links_for_claim_sparql_returns_list():
 @pytest.mark.asyncio
 async def test_get_claim_links_mcp_tool_response_structure():
     """get_claim_links MCP tool returns valid JSON with success envelope."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     # Import server module first so patch targets resolve
-    from perspicacite.mcp import server as _server  # noqa: F401
+    from perspicacite.mcp import server as _server
 
     mock_store = MagicMock()
     mock_store.close = MagicMock()

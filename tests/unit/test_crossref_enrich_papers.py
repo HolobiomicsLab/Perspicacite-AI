@@ -1,6 +1,7 @@
 """Unit tests for pipeline.enrichment.crossref_enrich.enrich_papers."""
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers

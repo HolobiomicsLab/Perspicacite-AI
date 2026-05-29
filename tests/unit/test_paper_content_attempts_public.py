@@ -1,10 +1,11 @@
 """Unit tests for PaperContent.attempts public field + MCP surface."""
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from perspicacite.pipeline.download.base import PaperContent
+import pytest
+
 from perspicacite.mcp import server as mcp_server
+from perspicacite.pipeline.download.base import PaperContent
 
 
 def test_paper_content_attempts_is_field_not_property():

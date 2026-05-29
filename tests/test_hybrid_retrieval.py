@@ -253,13 +253,6 @@ async def test_mock_vector_store():
 def test_end_to_end_hybrid_ranking():
     """Test end-to-end hybrid ranking scenario."""
     # Scenario: Documents about "neural networks" and "machine learning"
-    documents = [
-        MockDocument("Neural networks are inspired by biological neurons", {"title": "Doc1"}),
-        MockDocument("Machine learning algorithms improve with data", {"title": "Doc2"}),
-        MockDocument("Deep neural networks have multiple hidden layers", {"title": "Doc3"}),
-        MockDocument("Supervised learning uses labeled training data", {"title": "Doc4"}),
-    ]
-
     # Tokenize for BM25
     tokenized_docs = [
         ["neural", "networks", "are", "inspired", "by", "biological", "neurons"],

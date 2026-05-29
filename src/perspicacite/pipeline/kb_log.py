@@ -10,6 +10,7 @@ See docs/superpowers/specs/2026-05-14-versioned-kbs-design.md.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -68,10 +69,9 @@ class KBLogWriter:
             with open(self.path, "a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
                 fh.flush()
-                try:
+                # fsync is best-effort
+                with contextlib.suppress(OSError):
                     os.fsync(fh.fileno())
-                except OSError:
-                    pass  # fsync is best-effort
         except Exception as exc:
             logger.warning(
                 "kb_log_append_failed",

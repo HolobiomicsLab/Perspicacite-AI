@@ -60,7 +60,7 @@ class CrossEncoderReranker:
                 raise ImportError(
                     "sentence-transformers not installed. "
                     "Install with: pip install sentence-transformers"
-                )
+                ) from None
         return self._model
 
     async def score_texts(self, query: str, texts: list[str]) -> list[float]:
@@ -126,12 +126,12 @@ class CrossEncoderReranker:
                 batch = pairs[i : i + self.batch_size]
                 scores = await loop.run_in_executor(
                     None,
-                    lambda: model.predict(batch),
+                    lambda b=batch: model.predict(b),
                 )
                 all_scores.extend(scores.tolist())
 
             # Attach scores and sort
-            scored_chunks = list(zip(chunks, all_scores))
+            scored_chunks = list(zip(chunks, all_scores, strict=True))
             scored_chunks.sort(key=lambda x: x[1], reverse=True)
 
             # Build results with reranked scores

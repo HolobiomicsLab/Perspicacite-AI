@@ -281,7 +281,7 @@ class SentenceTransformerEmbeddingProvider:
                 raise ImportError(
                     "sentence-transformers not installed. "
                     "Install with: pip install sentence-transformers"
-                )
+                ) from None
         return self._model
 
     @property
@@ -623,7 +623,7 @@ class TypedEmbeddingProvider:
 
         # Partition input by routed provider; preserve original index.
         buckets: dict[int, tuple[EmbeddingProvider, list[int], list[str]]] = {}
-        for i, (t, ctype) in enumerate(zip(texts, content_types)):
+        for i, (t, ctype) in enumerate(zip(texts, content_types, strict=True)):
             prov = self._by_type.get(ctype, self._default)
             key = id(prov)
             if key not in buckets:
@@ -635,7 +635,7 @@ class TypedEmbeddingProvider:
         out: list[list[float] | None] = [None] * len(texts)
         for prov, indices, batch_texts in buckets.values():
             vecs = await prov.embed(batch_texts)
-            for idx, v in zip(indices, vecs):
+            for idx, v in zip(indices, vecs, strict=True):
                 out[idx] = v
 
         if any(v is None for v in out):
@@ -704,7 +704,7 @@ class CachedEmbeddingProvider:
         out: list[list[float] | None] = [None] * len(texts)
         miss_indices: list[int] = []
         miss_texts: list[str] = []
-        for i, (t, k) in enumerate(zip(texts, keys)):
+        for i, (t, k) in enumerate(zip(texts, keys, strict=True)):
             if k is None:
                 out[i] = zero  # empty/whitespace stays zero-vector
             elif k in hits:
@@ -717,7 +717,7 @@ class CachedEmbeddingProvider:
             new_vecs = await self.inner.embed(miss_texts)
             # Write to cache + slot into out in original order.
             put_items: list[tuple[str, str, list[float]]] = []
-            for idx, vec in zip(miss_indices, new_vecs):
+            for idx, vec in zip(miss_indices, new_vecs, strict=True):
                 out[idx] = vec
                 k = keys[idx]
                 if k is not None:
@@ -759,7 +759,7 @@ class CachedEmbeddingProvider:
         out: list[list[float] | None] = [None] * len(texts)
         miss_indices: list[int] = []
         miss_texts: list[str] = []
-        for i, (t, k) in enumerate(zip(texts, keys)):
+        for i, (t, k) in enumerate(zip(texts, keys, strict=True)):
             if k is None:
                 out[i] = zero
             elif k in hits:
@@ -771,7 +771,7 @@ class CachedEmbeddingProvider:
         if miss_texts:
             new_vecs = await self.inner.embed_query(miss_texts)
             put_items: list[tuple[str, str, list[float]]] = []
-            for idx, vec in zip(miss_indices, new_vecs):
+            for idx, vec in zip(miss_indices, new_vecs, strict=True):
                 out[idx] = vec
                 k = keys[idx]
                 if k is not None:

@@ -224,7 +224,7 @@ class DeepResearchRAGMode(BaseRAGMode):
         remaining_info = "\n".join(
             [
                 f"{i + 1}. {step} (Query: {query})"
-                for i, (step, query) in enumerate(zip(remaining_plan, remaining_queries))
+                for i, (step, query) in enumerate(zip(remaining_plan, remaining_queries, strict=True))
             ]
         )
 
@@ -438,7 +438,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                     prefix = working_plan[: i + 1]
                     new_steps = [
                         PlanStep(step_number=0, purpose=str(p), query=str(q))
-                        for p, q in zip(new_plan_s, new_queries_s)
+                        for p, q in zip(new_plan_s, new_queries_s, strict=True)
                     ]
                     working_plan[:] = prefix + new_steps
                     self._renumber_plan_steps(working_plan)
@@ -596,7 +596,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                             completion_reason="question_answered",
                             cancelled_tid=_cancelled_tid,
                         )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "profound_synthesis_timeout_execute",
                         synthesis_timeout_s=self.synthesis_timeout_s,
@@ -692,7 +692,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                     completion_reason=completion_reason,
                     cancelled_tid=_cancelled_tid,
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "profound_synthesis_timeout_execute",
                 synthesis_timeout_s=self.synthesis_timeout_s,
@@ -762,7 +762,7 @@ class DeepResearchRAGMode(BaseRAGMode):
         _tok = {"in": 0, "out": 0}
 
         class _CountingLLM:
-            __slots__ = ("_real", "_acc")
+            __slots__ = ("_acc", "_real")
 
             def __init__(self, real: Any, acc: dict[str, int]) -> None:
                 object.__setattr__(self, "_real", real)
@@ -891,7 +891,7 @@ class DeepResearchRAGMode(BaseRAGMode):
             while not _cycle_task.done():
                 try:
                     await asyncio.wait_for(asyncio.shield(_cycle_task), timeout=30.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     _heartbeat_n += 1
                     yield StreamEvent.status(
                         f"Deep Research: Cycle {self.iterations} — working… "
@@ -1029,7 +1029,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                             completion_reason="question_answered",
                         ):
                             yield event
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "profound_synthesis_timeout_early_exit",
                         synthesis_timeout_s=self.synthesis_timeout_s,
@@ -1139,7 +1139,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                     completion_reason=completion_reason,
                 ):
                     yield event
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "profound_synthesis_timeout_normal",
                 synthesis_timeout_s=self.synthesis_timeout_s,
@@ -1275,7 +1275,10 @@ class DeepResearchRAGMode(BaseRAGMode):
                 return [PlanStep(1, "Search for general information", query)]
 
             steps: list[PlanStep] = []
-            for i, (purp, q) in enumerate(zip(plan_s, queries_s), 1):
+            # strict=False: plan_s and queries_s come from independent LLM JSON
+            # fields; a length mismatch is malformed model output, so we pair
+            # the common prefix rather than raising.
+            for i, (purp, q) in enumerate(zip(plan_s, queries_s, strict=False), 1):
                 steps.append(PlanStep(step_number=i, purpose=str(purp), query=str(q)))
 
             return steps
@@ -1342,7 +1345,7 @@ class DeepResearchRAGMode(BaseRAGMode):
         queries = [original_query]
         if not number or number <= 0:
             return queries
-        for i in range(number):
+        for _i in range(number):
             additional_queries_content = f"Original Query: {original_query}."
             additional_queries_content += "".join(
                 [f" Additional Q{j + 1}: {query}" for j, query in enumerate(queries[1:])]

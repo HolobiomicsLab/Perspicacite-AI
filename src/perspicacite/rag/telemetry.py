@@ -20,7 +20,9 @@ natural without conditionally checking the sink type.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Protocol
+import contextlib
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 
 
 class TelemetrySink(Protocol):
@@ -70,12 +72,18 @@ class CallbackTelemetrySink:
         self._callback = callback
         # Mirror events into a buffer for diagnostics.
         self.events: list[dict[str, Any]] = []
+        # Strong refs to fire-and-forget callback tasks. The event loop only
+        # holds weak references, so without this the task can be GC'd before
+        # the callback runs, silently dropping telemetry (ruff RUF006).
+        self._tasks: set[asyncio.Task[None]] = set()
 
     def append(self, event: dict[str, Any]) -> None:
         self.events.append(event)
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._callback(event))
+            task = loop.create_task(self._callback(event))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
         except RuntimeError:
             # No running loop — caller is sync; drop event silently
             # (the legacy SSE drain path uses .events directly).
@@ -83,10 +91,9 @@ class CallbackTelemetrySink:
 
     async def on_event_async(self, event: dict[str, Any]) -> None:
         self.events.append(event)
-        try:
+        # never let telemetry errors break the RAG pipeline
+        with contextlib.suppress(Exception):
             await self._callback(event)
-        except Exception:
-            pass  # never let telemetry errors break the RAG pipeline
 
 
 def emit_phase(
@@ -112,12 +119,10 @@ def emit_phase(
         return
     event = {"kind": "phase_progress", "phase": phase, "state": state}
     event.update(extra)
-    try:
+    # Sink is some other mapping/callable — drop silently rather than
+    # crashing the pipeline.
+    with contextlib.suppress(AttributeError):
         sink.append(event)
-    except AttributeError:
-        # Sink is some other mapping/callable — drop silently rather
-        # than crashing the pipeline.
-        pass
 
 
 def emit_tokens(
@@ -142,10 +147,8 @@ def emit_tokens(
     if cumulative_out is not None:
         event["cumulative_out"] = int(cumulative_out)
     event.update(extra)
-    try:
+    with contextlib.suppress(AttributeError):
         sink.append(event)
-    except AttributeError:
-        pass
 
 
 def emit_cost(
@@ -164,10 +167,8 @@ def emit_cost(
         "model": model,
     }
     event.update(extra)
-    try:
+    with contextlib.suppress(AttributeError):
         sink.append(event)
-    except AttributeError:
-        pass
 
 
 class NullTelemetrySink:

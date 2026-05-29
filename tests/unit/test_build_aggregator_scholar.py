@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
 
 
 def _make_config(enabled_providers=None, scholar_enabled=False):
@@ -33,7 +32,6 @@ def test_scholar_not_in_aggregator_when_disabled():
 def test_scholar_in_aggregator_when_enabled():
     """google_scholar in enabled_providers AND google_scholar.enabled=True → included."""
     from perspicacite.search.domain_aggregator import build_aggregator
-    from perspicacite.search.google_scholar_playwright import GoogleScholarPlaywrightProvider
 
     cfg = _make_config(enabled_providers=["google_scholar"], scholar_enabled=True)
     agg = build_aggregator(cfg)

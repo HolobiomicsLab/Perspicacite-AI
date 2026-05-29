@@ -66,10 +66,7 @@ def _parse_one_skill(*, skill_dir: Path, index_entry: dict) -> ParsedSkill:
     tools_list = (
         tools_raw.get("tools") if isinstance(tools_raw, dict) else tools_raw
     ) or []
-    if isinstance(envs_raw, dict):
-        envs_list = envs_raw.get("environments") or []
-    else:
-        envs_list = envs_raw or []
+    envs_list = envs_raw.get("environments") or [] if isinstance(envs_raw, dict) else envs_raw or []
     if isinstance(params_raw, dict):
         params_list = params_raw.get("parameters") or []
     else:
@@ -78,10 +75,7 @@ def _parse_one_skill(*, skill_dir: Path, index_entry: dict) -> ParsedSkill:
         papers_list = papers_raw.get("papers") or []
     else:
         papers_list = papers_raw or []
-    if isinstance(links_raw, dict):
-        links_list = links_raw.get("links") or []
-    else:
-        links_list = links_raw or []
+    links_list = links_raw.get("links") or [] if isinstance(links_raw, dict) else links_raw or []
 
     return ParsedSkill(
         slug=slug,

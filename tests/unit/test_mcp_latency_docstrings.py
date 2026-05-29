@@ -7,7 +7,6 @@ import pytest
 
 from perspicacite.mcp import server
 
-
 # Tools that take more than ~3s in practice — they MUST advertise latency.
 SLOW_TOOLS = [
     "search_literature",

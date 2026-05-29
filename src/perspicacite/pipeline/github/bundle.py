@@ -32,9 +32,10 @@ README-only fallback:
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 import yaml
 
@@ -181,7 +182,7 @@ class BundleManifest:
     # ---- factories ------------------------------------------------------
 
     @classmethod
-    def parse(cls, path: Path) -> "BundleManifest":
+    def parse(cls, path: Path) -> BundleManifest:
         """Parse a ``bundle.yml`` file.
 
         Raises:
@@ -221,7 +222,7 @@ class BundleManifest:
         )
 
     @classmethod
-    def from_directory(cls, directory: Path) -> "BundleManifest":
+    def from_directory(cls, directory: Path) -> BundleManifest:
         """Load a manifest from a directory.
 
         If ``<directory>/bundle.yml`` exists, behaves like :meth:`parse`.

@@ -48,7 +48,7 @@ _CLAUDE_CODE_DEFAULTS: dict = {
 }
 
 
-def ClaudeCLIClient(
+def ClaudeCLIClient(  # noqa: N802 — back-compat factory named after the retired class
     *,
     executable: str = "claude",
     timeout: float = 180.0,

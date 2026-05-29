@@ -175,7 +175,7 @@ def test_stage_resolution_uses_provider_override() -> None:
     for stage in STAGES:
         if stage == "screening":
             continue
-        p, m = resolve_stage_model(cfg, stage)
+        p, _m = resolve_stage_model(cfg, stage)
         assert p == "anthropic", f"stage={stage}: expected 'anthropic', got {p!r}"
 
 

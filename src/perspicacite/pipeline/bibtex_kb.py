@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 from typing import Any
@@ -353,10 +354,8 @@ async def create_kb_from_bibtex(
         chunks_added = await dkb.add_papers(papers, include_full_text=True)
     except Exception:
         logger.exception("bibtex_kb_embed_failed", collection=collection_name)
-        try:
+        with contextlib.suppress(Exception):
             await vector_store.delete_collection(collection_name)
-        except Exception:
-            pass
         import aiosqlite
 
         async with aiosqlite.connect(session_store.db_path) as db:

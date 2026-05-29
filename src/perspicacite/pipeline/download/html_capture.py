@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import ClassVar
 
 import httpx
 
@@ -62,7 +63,9 @@ class HtmlCapture:
 class _TextExtractor(HTMLParser):
     """Collect visible text, drop <script>/<style>/<nav>/<header>/<footer> blocks."""
 
-    _SKIP = {"script", "style", "nav", "header", "footer", "aside", "form"}
+    _SKIP: ClassVar[frozenset[str]] = frozenset(
+        {"script", "style", "nav", "header", "footer", "aside", "form"}
+    )
 
     def __init__(self) -> None:
         super().__init__()

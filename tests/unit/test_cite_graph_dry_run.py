@@ -3,6 +3,7 @@ verifies the resolve → fetch → filter+score → return path returns
 a ranked list without touching the KB."""
 from __future__ import annotations
 
+import itertools
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -38,7 +39,7 @@ async def test_dry_run_returns_ranked_hits():
 
     assert len(hits) <= 5
     if len(hits) > 1:
-        for a, b in zip(hits, hits[1:]):
+        for a, b in itertools.pairwise(hits):
             assert a.score >= b.score
 
 

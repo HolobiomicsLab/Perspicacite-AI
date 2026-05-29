@@ -39,7 +39,7 @@ async def test_bibtex_strips_nested_case_preservation_braces():
             "perspicacite.pipeline.download.retrieve_paper_content",
             new=fake_content,
         ):
-            paper, doi, url = await _resolve_push_input(
+            paper, _doi, _url = await _resolve_push_input(
                 {"bibtex": bib}, http_client=http,
             )
     assert "{" not in paper["title"]
@@ -74,7 +74,7 @@ async def test_bibtex_synthesizes_arxiv_doi_from_eprint():
             "perspicacite.pipeline.download.retrieve_paper_content",
             new=fake_content,
         ):
-            paper, doi, url = await _resolve_push_input(
+            _paper, doi, _url = await _resolve_push_input(
                 {"bibtex": bib}, http_client=http,
             )
     assert doi == "10.48550/arXiv.2510.09901"
@@ -100,7 +100,7 @@ async def test_bibtex_synthesizes_arxiv_doi_from_arxiv_url_only():
             "perspicacite.pipeline.download.retrieve_paper_content",
             new=fake_content,
         ):
-            paper, doi, url = await _resolve_push_input(
+            _paper, doi, _url = await _resolve_push_input(
                 {"bibtex": bib}, http_client=http,
             )
     assert doi == "10.48550/arXiv.2504.01848"
@@ -144,7 +144,7 @@ async def test_bibtex_no_doi_no_url_resolves_via_title(respx_mock):
             "perspicacite.pipeline.download.retrieve_paper_content",
             new=fake_content,
         ):
-            paper, doi, url = await _resolve_push_input(
+            _paper, doi, _url = await _resolve_push_input(
                 {"bibtex": bib}, http_client=http,
             )
     assert doi == "10.48550/arXiv.1706.03762"
@@ -171,7 +171,7 @@ async def test_bibtex_explicit_doi_wins_over_arxiv_synthesis():
             "perspicacite.pipeline.download.retrieve_paper_content",
             new=fake_content,
         ):
-            paper, doi, url = await _resolve_push_input(
+            _paper, doi, _url = await _resolve_push_input(
                 {"bibtex": bib}, http_client=http,
             )
     assert doi == "10.1038/s41586-024-12345-6"

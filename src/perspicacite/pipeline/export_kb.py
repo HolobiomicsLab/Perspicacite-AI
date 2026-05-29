@@ -70,10 +70,7 @@ def _bibtex_citation_key(paper: dict[str, Any]) -> str:
     if isinstance(authors, list) and authors:
         first = authors[0]
         first_str = str(first).strip()
-        if "," in first_str:
-            last = first_str.split(",", 1)[0].strip()
-        else:
-            last = first_str.split(" ")[-1]
+        last = first_str.split(",", 1)[0].strip() if "," in first_str else first_str.split(" ")[-1]
     elif isinstance(authors, str) and authors:
         first_str = authors.split(",", 1)[0].strip()
         last = first_str.split(" ")[-1] if " " in first_str else first_str

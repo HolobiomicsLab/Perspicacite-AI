@@ -19,7 +19,6 @@ from perspicacite.pipeline.external_id_resolver import (
     resolve_pmc_to_doi,
 )
 
-
 # ---------------------------------------------------------------------------
 # arXiv → DOI
 # ---------------------------------------------------------------------------
@@ -29,14 +28,14 @@ from perspicacite.pipeline.external_id_resolver import (
 async def test_resolve_arxiv_to_doi_happy_path(monkeypatch):
     """Title lookup + OpenAlex title.search → DOI extracted from Work."""
 
-    async def fake_title(arxiv_id, client):  # noqa: ARG001
+    async def fake_title(arxiv_id, client):
         return "Attention Is All You Need"
 
     monkeypatch.setattr(
         external_id_resolver, "resolve_arxiv_title", fake_title
     )
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         req = httpx.Request("GET", url)
         # Step 1: short-circuit lookup `/works/doi:10.48550/arxiv.<id>` → 404
         if "doi:10.48550/arxiv" in str(url).lower():
@@ -71,7 +70,7 @@ async def test_resolve_arxiv_to_doi_arxiv_native_doi_short_circuit(
     its DOI is returned directly (no title.search needed)."""
     calls: list[str] = []
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         calls.append(str(url))
         req = httpx.Request("GET", url)
         # Short-circuit: the arXiv-native DOI lookup returns a Work
@@ -102,14 +101,14 @@ async def test_resolve_arxiv_to_doi_returns_none_on_title_miss(monkeypatch):
     """If the short-circuit misses AND resolve_arxiv_title returns None,
     the resolver returns None without hitting OpenAlex title.search."""
 
-    async def fake_title(arxiv_id, client):  # noqa: ARG001
+    async def fake_title(arxiv_id, client):
         return None
 
     monkeypatch.setattr(
         external_id_resolver, "resolve_arxiv_title", fake_title
     )
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         req = httpx.Request("GET", url)
         # Short-circuit miss; afterwards the resolver should bail.
         if "doi:10.48550/arxiv" in str(url).lower():
@@ -129,14 +128,14 @@ async def test_resolve_arxiv_to_doi_returns_none_on_openalex_miss(
 ):
     """OpenAlex title.search returns an empty result set → None."""
 
-    async def fake_title(arxiv_id, client):  # noqa: ARG001
+    async def fake_title(arxiv_id, client):
         return "A nonexistent paper title"
 
     monkeypatch.setattr(
         external_id_resolver, "resolve_arxiv_title", fake_title
     )
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         req = httpx.Request("GET", url)
         if "doi:10.48550/arxiv" in str(url).lower():
             return httpx.Response(404, json={}, request=req)
@@ -151,14 +150,14 @@ async def test_resolve_arxiv_to_doi_returns_none_on_openalex_miss(
 async def test_resolve_arxiv_to_doi_handles_network_error(monkeypatch):
     """``httpx.HTTPError`` anywhere → resolver returns None (caught + logged)."""
 
-    async def fake_title(arxiv_id, client):  # noqa: ARG001
+    async def fake_title(arxiv_id, client):
         return "Attention Is All You Need"
 
     monkeypatch.setattr(
         external_id_resolver, "resolve_arxiv_title", fake_title
     )
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         raise httpx.ConnectError("connection refused")
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -175,7 +174,7 @@ async def test_resolve_arxiv_to_doi_handles_network_error(monkeypatch):
 async def test_resolve_pmc_to_doi_happy_path(monkeypatch):
     """NCBI idconv returns a single record with a DOI → resolver returns it."""
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         req = httpx.Request("GET", url)
         assert "idconv" in str(url)
         params = kwargs.get("params") or {}
@@ -201,7 +200,7 @@ async def test_resolve_pmc_to_doi_happy_path(monkeypatch):
 async def test_resolve_pmc_to_doi_no_doi_in_response(monkeypatch):
     """Record present but no ``doi`` key → returns None."""
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         req = httpx.Request("GET", url)
         return httpx.Response(
             200,
@@ -218,7 +217,7 @@ async def test_resolve_pmc_to_doi_no_doi_in_response(monkeypatch):
 async def test_resolve_pmc_to_doi_handles_network_error(monkeypatch):
     """``httpx.HTTPError`` → resolver returns None."""
 
-    async def fake_get(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get(self, url, **kwargs):
         raise httpx.ConnectError("connection refused")
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
@@ -238,7 +237,7 @@ async def test_resolved_doi_is_normalised(monkeypatch):
     Exercises both resolvers — same `_normalize_doi` helper is reused.
     """
     # arXiv path: OpenAlex short-circuit returns an uppercase-prefix DOI.
-    async def fake_get_arxiv(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get_arxiv(self, url, **kwargs):
         req = httpx.Request("GET", url)
         if "doi:10.48550/arxiv" in str(url).lower():
             return httpx.Response(
@@ -257,7 +256,7 @@ async def test_resolved_doi_is_normalised(monkeypatch):
     assert arxiv_doi == "10.1038/UPPER-suffix"
 
     # PMC path: idconv returns uppercase-prefix DOI in `doi` field.
-    async def fake_get_pmc(self, url, **kwargs):  # noqa: ARG001
+    async def fake_get_pmc(self, url, **kwargs):
         req = httpx.Request("GET", url)
         return httpx.Response(
             200,

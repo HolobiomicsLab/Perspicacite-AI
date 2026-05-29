@@ -3,7 +3,7 @@
 Provides fixtures that apply to all unit tests under this directory.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

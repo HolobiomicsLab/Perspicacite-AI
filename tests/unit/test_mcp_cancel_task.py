@@ -1,5 +1,6 @@
 """Unit tests for cancel_task MCP tool + registry integration."""
 import json
+
 import pytest
 
 from perspicacite.mcp.server import cancel_task

@@ -22,7 +22,6 @@ import pytest
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.provenance.store import ProvenanceStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

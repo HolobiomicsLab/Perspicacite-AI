@@ -1,7 +1,7 @@
 """Tests for github_kb orchestrator (mocked dependencies)."""
 from __future__ import annotations
 
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,7 +24,7 @@ def _make_bundle(tmp_path: Path, name: str = "test-bundle") -> Path:
         "  - doi: 10.2/b\n"
     )
     (bundle_dir / "README.md").write_text("# Bundle\nSee 10.3/c for details.")
-    (bundle_dir / "main.py").write_text('"""Main module."""\n\ndef run():\n    """Run it."""\n    pass\n')  # noqa: E501
+    (bundle_dir / "main.py").write_text('"""Main module."""\n\ndef run():\n    """Run it."""\n    pass\n')
     return bundle_dir
 
 
@@ -50,7 +50,7 @@ async def test_ingest_skill_bundle_calls_add_papers(tmp_path):
 
     async def fake_ingest(app_state, kb_name, dois, **kw):
         captured_dois.extend(dois)
-        return {"added_papers": len(dois), "added_chunks": 0, "skipped_duplicates": 0, "failed": [], "pdf_download": {}}  # noqa: E501
+        return {"added_papers": len(dois), "added_chunks": 0, "skipped_duplicates": 0, "failed": [], "pdf_download": {}}
 
     mock_dkb = MagicMock()
     mock_dkb.add_papers = AsyncMock(return_value=5)
@@ -107,7 +107,8 @@ async def test_ingest_skill_bundle_no_linked_papers(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ingest_skill_bundles_batch_processes_all(tmp_path):
-    dirs = [_make_bundle(tmp_path, f"bundle-{i}") for i in range(3)]
+    for i in range(3):
+        _make_bundle(tmp_path, f"bundle-{i}")
     config = _mock_config(tmp_path)
     mock_dkb = MagicMock()
     mock_dkb.add_papers = AsyncMock(return_value=1)
@@ -118,7 +119,7 @@ async def test_ingest_skill_bundles_batch_processes_all(tmp_path):
     mock_embed.dimension = 384
 
     async def fake_ingest(app_state, kb_name, dois, **kw):
-        return {"added_papers": len(dois), "added_chunks": 0, "skipped_duplicates": 0, "failed": [], "pdf_download": {}}  # noqa: E501
+        return {"added_papers": len(dois), "added_chunks": 0, "skipped_duplicates": 0, "failed": [], "pdf_download": {}}
 
     with patch("perspicacite.pipeline.github_kb.ingest_dois_into_kb", new=fake_ingest), \
          patch("perspicacite.rag.dynamic_kb.DynamicKnowledgeBase", return_value=mock_dkb):

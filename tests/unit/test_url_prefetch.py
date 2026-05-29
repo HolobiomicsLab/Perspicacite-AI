@@ -374,7 +374,7 @@ class TestGenerateSinglePaperAnswer:
 
         papers = [{"title": "Test Paper", "doi": "10.1/test", "full_text": "A" * 500}]
 
-        answer, citation_map = await orch._generate_single_paper_answer(
+        _answer, citation_map = await orch._generate_single_paper_answer(
             "https://arxiv.org/abs/2604.06788", papers, session,
             is_summary_request=True,
         )
@@ -403,7 +403,7 @@ class TestGenerateSinglePaperAnswer:
 
         papers = [{"title": "Test Paper", "doi": "10.1/test", "full_text": "Methodology section here."}]
 
-        answer, citation_map = await orch._generate_single_paper_answer(
+        _answer, _citation_map = await orch._generate_single_paper_answer(
             "what methodology does this paper use?",
             papers, session,
             is_summary_request=False,

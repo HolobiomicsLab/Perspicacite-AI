@@ -41,7 +41,6 @@ from perspicacite.indicium_layer.manifest import (
 from perspicacite.indicium_layer.pruner import build_candidate_pairs
 from perspicacite.indicium_layer.queries import (
     ASB_NS,
-    INDICIUM_NS,
     IRI_ANCHOR_STATUS,
     IRI_ASSERTED_BY,
     IRI_CAPTION,

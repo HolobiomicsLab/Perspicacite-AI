@@ -11,7 +11,6 @@ from perspicacite.retrieval.chroma_store import (
     _metadata_to_chunk,
 )
 
-
 # ---------------------------------------------------------------------------
 # (a) ChunkMetadata round-trip through Chroma serialisation
 # ---------------------------------------------------------------------------

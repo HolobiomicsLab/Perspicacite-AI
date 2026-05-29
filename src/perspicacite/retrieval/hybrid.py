@@ -261,7 +261,7 @@ async def hybrid_retrieval(
             fallback="vector_only",
         )
         results = sorted(
-            zip(documents, vector_scores_arr.tolist()),
+            zip(documents, vector_scores_arr.tolist(), strict=True),
             key=lambda x: x[1],
             reverse=True,
         )
@@ -274,7 +274,7 @@ async def hybrid_retrieval(
             fallback="bm25_only",
         )
         results = sorted(
-            zip(documents, bm25_scores.tolist()),
+            zip(documents, bm25_scores.tolist(), strict=True),
             key=lambda x: x[1],
             reverse=True,
         )
@@ -289,7 +289,7 @@ async def hybrid_retrieval(
     )
 
     # Create result tuples
-    results = list(zip(documents, combined_scores))
+    results = list(zip(documents, combined_scores, strict=True))
 
     # Sort by combined score (descending)
     results.sort(key=lambda x: x[1], reverse=True)

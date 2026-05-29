@@ -57,7 +57,7 @@ def _emit_usage_telemetry(
     if sink is None:
         return
     try:
-        from perspicacite.rag.telemetry import emit_tokens, emit_cost
+        from perspicacite.rag.telemetry import emit_cost, emit_tokens
         emit_tokens(
             sink,
             input_tokens=prompt_tokens,
@@ -74,7 +74,7 @@ def _emit_usage_telemetry(
 # line. These pollute our structured logs and operator terminals. Silence
 # them at module load. The banner is gated on ``litellm.suppress_debug_info``
 # (see litellm/utils.py and litellm/router.py).
-import logging as _stdlib_logging  # noqa: E402
+import logging as _stdlib_logging
 
 try:
     import litellm as _litellm
@@ -158,20 +158,7 @@ def _should_trigger_free_fallback(exc: Exception) -> bool:
     if isinstance(exc, AuthError):
         return True
     msg = str(exc).lower()
-    if any(k in msg for k in (
-        "not a valid model",
-        "model not found",
-        "no endpoints found",
-        "quota",
-        "billing",
-        "credit balance",
-        "usage limit",
-        "insufficient",
-        "invalid api key",
-        "authentication",
-    )):
-        return True
-    return False
+    return bool(any(k in msg for k in ("not a valid model", "model not found", "no endpoints found", "quota", "billing", "credit balance", "usage limit", "insufficient", "invalid api key", "authentication")))
 
 
 def _is_deterministic_fail(exc: Exception) -> bool:
@@ -1118,7 +1105,9 @@ class AsyncLLMClient:
                     )
 
             # All free-tier models also failed — re-raise the last error.
-            raise last_exc
+            # `from None` suppresses the implicit "during handling of
+            # primary_exc" chaining; last_exc already carries the real cause.
+            raise last_exc from None
 
     async def complete_with_fallback(
         self,

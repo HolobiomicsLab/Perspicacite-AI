@@ -9,8 +9,6 @@ via the tmp_path fixture.
 """
 from pathlib import Path
 
-import pytest
-
 METLINKR = Path(__file__).parent.parent / "fixtures" / "asb" / "metlinkr_subset"
 ARTICLE = Path(__file__).parent.parent / "fixtures" / "asb" / "article_878_v4_subset"
 
@@ -173,6 +171,7 @@ def test_parse_card_captures_linked_result_ids_article():
 def test_parse_card_bool_executable_is_dropped(tmp_path):
     """When executable is a bool (old schema), it is dropped (becomes None)."""
     import json
+
     from perspicacite.pipeline.asb.card_parser import parse_cards
     cards_dir = tmp_path / "cards"
     cards_dir.mkdir()
@@ -204,6 +203,7 @@ def test_parse_cards_missing_dir_returns_empty(tmp_path):
 def test_parse_card_task_inputs_default_empty_when_absent(tmp_path):
     """When task_inputs/outputs are absent, they default to empty lists."""
     import json
+
     from perspicacite.pipeline.asb.card_parser import parse_cards
     cards_dir = tmp_path / "cards"
     cards_dir.mkdir()

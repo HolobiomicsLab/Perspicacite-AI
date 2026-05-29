@@ -205,14 +205,73 @@ filterwarnings = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"  # matches requires-python = ">=3.12"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TCH", "RUF"]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TC", "RUF"]
+ignore = [
+    # --- Owned by `ruff format` (see line-length above) -------------------
+    # We don't also gate the lint check on layout/whitespace rules that the
+    # formatter is the single source of truth for. The pre-commit ruff-format
+    # hook cleans these on every touched file.
+    "E501",   # line-too-long
+    "W291",   # trailing whitespace
+    "W293",   # blank line with whitespace
+    "E701",   # multiple statements on one line (colon)
+    "E702",   # multiple statements on one line (semicolon)
+    # --- Domain false-positives -------------------------------------------
+    # Ambiguous-unicode: this is a scientific + French codebase. µ, °, ×, –,
+    # α/β and accented French text are intentional notation, not typos.
+    "RUF001",  # ambiguous char in a string
+    "RUF002",  # ambiguous char in a docstring
+    "RUF003",  # ambiguous char in a comment
+    # Pydantic and FastAPI resolve type annotations at *runtime*, so moving
+    # imports into `if TYPE_CHECKING:` blocks (what these rules want) breaks
+    # model/route annotation resolution. Keep the imports at module scope.
+    "TC001",  # typing-only first-party import
+    "TC002",  # typing-only third-party import
+    "TC003",  # typing-only standard-library import
+    # Scientific variable names (T, pH, Kd, dG, ...) are domain-conventional.
+    "N806",   # non-lowercase variable in function
+    "N814",   # camelcase imported as constant (e.g. `as ET`, `as np`)
+    # Nested `with` blocks are acceptable and often clearer than a single
+    # parenthesized context manager; not worth mechanical churn to combine.
+    "SIM117",  # multiple-with-statements
+    # Likewise, a nested `if A: if B:` is often clearer than collapsing into a
+    # single 3-4 term boolean chain (the remaining sites read better nested).
+    "SIM102",  # collapsible-if
+    # Module-level imports placed after code are intentional here: a logging
+    # bootstrap (web/app.py, logging.py must configure structlog before
+    # importing anything that binds a logger at import time) and a
+    # pure-functions-before-heavy-imports layout in the cache modules. None
+    # are bugs; mechanically hoisting them risks the bootstrap ordering.
+    "E402",   # module-import-not-at-top-of-file
+    # `(str, Enum)` is deliberate: these enums are serialised to JSON and
+    # compared as strings across the API/MCP boundary. Switching to `StrEnum`
+    # (what UP042 wants) changes `str()`/format/JSON semantics and would break
+    # wire compatibility. Keep the explicit mixin.
+    "UP042",  # replace-str-enum
+]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI puts callables (File/Query/Form/Depends) in argument defaults by
+# design, so B008 (function-call-in-default) is a false positive for handlers.
+"src/perspicacite/web/routers/*" = ["B008"]
+# Test code has different conventions than library code. These rules are
+# idiomatic noise in tests, not signal:
+#   N802  - descriptive capitalised test names (test_..._AU, ..._HEAD encode
+#           the field/SHA under test on purpose).
+#   N818  - fake exception classes (FakeAuth, _AuthFail) deliberately omit the
+#           "Error" suffix to read as stubs, not real error types.
+#   E741  - `for l in lines:` when parsing fixture text line-by-line.
+#   B017  - `pytest.raises(Exception)` is sometimes the point of the assertion.
+#   RUF012- mutable class attrs on mock/recorder fixture classes are harmless.
+#   SIM115- short-lived `open()` in a test body doesn't need a context manager.
+"tests/**" = ["N802", "N818", "E741", "B017", "RUF012", "SIM115"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

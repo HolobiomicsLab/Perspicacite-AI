@@ -683,7 +683,7 @@ async def audit_instrumentation(findings: dict[str, Any]) -> None:
         )
 
         # Third call with mutated corpus — should rebuild
-        chosen3 = route_kbs(
+        route_kbs(
             query="protein folding",
             kb_contexts={**kb_ctx, "biochem": "edited"},
             top_k=2,

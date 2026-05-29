@@ -5,6 +5,7 @@ Uses SciLEx's collection, then manually aggregates and converts to Papers.
 """
 
 import asyncio
+import contextlib
 import json
 import logging as _stdlib_logging
 import os
@@ -13,7 +14,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pandas as pd
 
@@ -128,7 +129,7 @@ class SciLExAdapter:
         "SciLEx multi-database academic literature search "
         "(Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP)"
     )
-    domains: list[str] = ["general", "biomedical", "cs"]
+    domains: ClassVar[list[str]] = ["general", "biomedical", "cs"]
     # SciLEx is itself a multi-API fan-out (4+ databases × every year in the
     # span, with per-API rate-limit retries), so it legitimately needs far
     # more than the 20s "reliable" budget — the aggregator was killing it
@@ -171,12 +172,12 @@ class SciLExAdapter:
 
     def _check_scilex(self) -> bool:
         """Check if SciLEx is installed."""
-        try:
-            import scilex
+        import importlib.util
+
+        if importlib.util.find_spec("scilex") is not None:
             return True
-        except ImportError:
-            logger.warning("scilex_not_available")
-            return False
+        logger.warning("scilex_not_available")
+        return False
 
     @property
     def available(self) -> bool:
@@ -210,7 +211,7 @@ class SciLExAdapter:
         if out:
             return out
 
-        from perspicacite.search.title_normalize import normalize_title, is_titlelike
+        from perspicacite.search.title_normalize import is_titlelike, normalize_title
         if not is_titlelike(query):
             return out
         normalised = normalize_title(query)
@@ -935,10 +936,8 @@ class SciLExAdapter:
         year = None
         date_field = safe_str(row.get("date"))
         if date_field:
-            try:
+            with contextlib.suppress(ValueError, IndexError):
                 year = int(date_field.split("-")[0])
-            except (ValueError, IndexError):
-                pass
 
         # Extract other fields
         doi = safe_str(row.get("DOI"))

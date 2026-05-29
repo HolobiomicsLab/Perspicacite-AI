@@ -340,7 +340,7 @@ class TestRegisterEvidenceFacets:
         )
         orch._register_evidence_facets(session, plan)
         assert len(session.evidence.facets) == 1
-        facet = list(session.evidence.facets.values())[0]
+        facet = next(iter(session.evidence.facets.values()))
         assert "kb1" in facet.step_ids
         assert "kb2" in facet.step_ids
 
@@ -493,9 +493,7 @@ class TestEvaluateProgress:
         return s
 
     def _plan_with_answer(self, *search_steps):
-        steps = list(search_steps) + [
-            Step(id="ans", type=StepType.ANSWER, description="", depends_on=[]),
-        ]
+        steps = [*list(search_steps), Step(id="ans", type=StepType.ANSWER, description="", depends_on=[])]
         return Plan(steps=steps, reasoning="test", estimated_steps=len(steps))
 
     @pytest.mark.asyncio

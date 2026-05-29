@@ -284,10 +284,9 @@ async def screen_candidates(
             "title": getattr(p, "title", None) or "",
             "abstract": getattr(p, "abstract", None) or "",
         })
-    if method == "llm":
-        if llm_client is None:
-            logger.warning("screen_papers_llm_no_client_falling_back_to_bm25")
-            method = "bm25"
+    if method == "llm" and llm_client is None:
+        logger.warning("screen_papers_llm_no_client_falling_back_to_bm25")
+        method = "bm25"
     if method == "llm":
         from perspicacite.llm.client import resolve_stage_model
         from perspicacite.search.screening import screen_papers_llm as _llm

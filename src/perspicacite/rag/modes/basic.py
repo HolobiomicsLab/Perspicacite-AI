@@ -24,9 +24,9 @@ from perspicacite.rag.conversation_helpers import (
 )
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
-from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.query_scope import resolve_paper_scope_for_query
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.utils import (
     flatten_paper_results_to_chunks,
     format_documents_for_prompt,
@@ -35,6 +35,7 @@ from perspicacite.rag.utils import (
     get_doc_citation,
     get_system_prompt,
 )
+
 logger = get_logger("perspicacite.rag.modes.basic")
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ async def _apply_hybrid_if_requested(
         llm=llm,
     )
 
-    doc_to_paper = {id(d): p for d, p in zip(docs, paper_results)}
+    doc_to_paper = {id(d): p for d, p in zip(docs, paper_results, strict=True)}
     reranked = []
     for doc, hybrid_score in hybrid_ranked:
         paper = dict(doc_to_paper[id(doc)])
@@ -576,7 +577,7 @@ class BasicRAGMode(BaseRAGMode):
             )
             if hyde_query != retrieval_query:
                 yield StreamEvent.status_kind(
-                    f"HyDE expanded query for retrieval",
+                    "HyDE expanded query for retrieval",
                     kind="hyde_expanded",
                     original=retrieval_query,
                     expanded=hyde_query,

@@ -27,8 +27,8 @@ Why pathspec (gitwildmatch) instead of :mod:`fnmatch` or :meth:`Path.glob`?
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import pathspec
 

@@ -19,12 +19,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from perspicacite.models.papers import Author, PaperSource
 from perspicacite.pipeline.github.bundle import BundleManifest, ContentSpec
 from perspicacite.pipeline.github.chunk_producer import papers_from_directory
-
 
 # ---------------------------------------------------------------------------
 # Helpers

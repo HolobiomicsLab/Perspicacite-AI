@@ -3,7 +3,7 @@ are emitted for one minor cycle to ease the Scriptorium-v0.13
 downstream client migration; 'ok' is the deprecated alias."""
 import json
 
-from perspicacite.mcp.server import _json_ok, _json_error
+from perspicacite.mcp.server import _json_error, _json_ok
 
 
 def test_json_ok_emits_both_success_and_ok():

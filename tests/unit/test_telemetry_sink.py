@@ -1,9 +1,12 @@
 """Unit tests for TelemetrySink implementations."""
 import asyncio
+
 import pytest
 
 from perspicacite.rag.telemetry import (
-    ListTelemetrySink, CallbackTelemetrySink, NullTelemetrySink,
+    CallbackTelemetrySink,
+    ListTelemetrySink,
+    NullTelemetrySink,
 )
 
 

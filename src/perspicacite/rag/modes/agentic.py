@@ -20,13 +20,16 @@ Migration path:
 """
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.rag.agentic.context import agentic_request_overrides
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.telemetry import emit_phase
+
+if TYPE_CHECKING:
+    from perspicacite.rag.agentic import AgenticOrchestrator
 
 logger = get_logger("perspicacite.rag.modes.agentic")
 

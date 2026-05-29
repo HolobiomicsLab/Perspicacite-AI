@@ -85,7 +85,7 @@ async def _parse_pdf_bytes(pdf_bytes: bytes, pdf_parser: Any) -> str | None:
     """Extract text from PDF bytes using the provided parser."""
     if not pdf_bytes or len(pdf_bytes) < 1000:
         return None
-    if not pdf_bytes[:4] == b"%PDF":
+    if pdf_bytes[:4] != b"%PDF":
         # Non-PDF bytes (e.g. text encoded as bytes)
         text = pdf_bytes.decode("utf-8", errors="replace")
         return text if len(text.strip()) > 200 else None

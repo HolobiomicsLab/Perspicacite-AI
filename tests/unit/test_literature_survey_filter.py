@@ -1,5 +1,4 @@
 """Unit tests for _filter_known_papers seed logic (Issue 3)."""
-import pytest
 from unittest.mock import MagicMock
 
 

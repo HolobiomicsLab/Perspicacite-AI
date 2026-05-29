@@ -377,9 +377,7 @@ def _seed_needs_ss_fallback(seed_doi: str, seed_work: dict | None) -> bool:
         return False
     if (seed_doi or "").lower().startswith(_ARXIV_DOI_PREFIX):
         return True
-    if not seed_work.get("doi"):
-        return True
-    return False
+    return bool(not seed_work.get("doi"))
 
 
 def _ss_id_for_seed(seed_doi: str, seed_work: dict | None) -> str:

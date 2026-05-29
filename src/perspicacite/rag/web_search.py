@@ -1,5 +1,6 @@
 """Shared web aggregator search helper for RAG modes."""
 
+import contextlib
 from typing import Any
 
 from perspicacite.logging import get_logger
@@ -21,10 +22,8 @@ async def _emit_telemetry(sink: Any, event: dict) -> None:
         except Exception:
             return
     # Fallback for plain list (legacy).
-    try:
+    with contextlib.suppress(Exception):
         sink.append(event)
-    except Exception:
-        pass
 
 
 async def run_web_aggregator_search(

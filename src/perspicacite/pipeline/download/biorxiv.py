@@ -10,6 +10,7 @@ API reference:
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import Any
 
@@ -131,10 +132,8 @@ async def get_content_from_biorxiv(
     date_str: str = record.get("date") or ""
     year: int | None = None
     if date_str and len(date_str) >= 4:
-        try:
+        with contextlib.suppress(ValueError):
             year = int(date_str[:4])
-        except ValueError:
-            pass
 
     authors_raw: str = record.get("authors") or ""
     authors_list = _parse_authors(authors_raw)

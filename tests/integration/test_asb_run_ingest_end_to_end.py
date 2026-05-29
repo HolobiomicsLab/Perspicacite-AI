@@ -6,7 +6,7 @@ updated → DAG stored on KB description.
 import json
 import shutil
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -366,7 +366,7 @@ async def test_ingest_asb_run_validates_mode(tmp_path):
 # Live end-to-end (gated)
 # ---------------------------------------------------------------------------
 
-import os  # noqa: E402 — intentional late import for clarity
+import os
 
 
 @pytest.mark.asyncio
@@ -379,8 +379,9 @@ async def test_ingest_asb_run_against_real_chroma(tmp_path):
     doesn't run in CI by default (requires the embedding provider
     env variables + a chroma backend reachable from this process).
     """
-    from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
     from perspicacite.web.app_state import AppState
+
+    from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
 
     target = tmp_path / "run"
     shutil.copytree(METLINKR, target)
@@ -456,8 +457,8 @@ def test_end_to_end_orchestrator_output_feeds_response_metadata(tmp_path):
     import asyncio
     from unittest.mock import MagicMock
 
-    from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
     from perspicacite.pipeline.asb.response import build_asb_response_metadata
+    from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
 
     target = tmp_path / "run"
     shutil.copytree(METLINKR, target)

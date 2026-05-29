@@ -1,10 +1,10 @@
 """Unit tests for search_literature warnings surface + enrichment opt-out."""
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from perspicacite.mcp import server as mcp_server
-from perspicacite.models.papers import Paper
 from perspicacite.search.query_optimizer import OptimizationResult
 from perspicacite.search.scilex_adapter import SciLExAdapter
 

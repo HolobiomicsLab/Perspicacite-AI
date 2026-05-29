@@ -178,7 +178,7 @@ class ChromaVectorStore:
                 collection=collection,
             )
             embeddings = await self.embedding_provider.embed(texts_to_embed)
-            for idx, embedding in zip(indices_to_embed, embeddings):
+            for idx, embedding in zip(indices_to_embed, embeddings, strict=True):
                 chunks[idx].embedding = embedding
 
         # Prepare data for Chroma (lists must stay aligned — never filter embeddings)

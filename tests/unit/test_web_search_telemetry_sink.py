@@ -1,8 +1,10 @@
 """Verify run_web_aggregator_search dispatches events to TelemetrySink."""
-import pytest
-from unittest.mock import patch, AsyncMock
+import contextlib
+from unittest.mock import patch
 
-from perspicacite.rag.telemetry import ListTelemetrySink, CallbackTelemetrySink
+import pytest
+
+from perspicacite.rag.telemetry import CallbackTelemetrySink, ListTelemetrySink
 from perspicacite.rag.web_search import run_web_aggregator_search
 
 
@@ -14,14 +16,11 @@ async def test_list_telemetry_sink_receives_events():
     with patch(
         "perspicacite.search.domain_aggregator.build_aggregator",
         side_effect=Exception("skip"),
-    ):
-        try:
-            await run_web_aggregator_search(
-                keyword_query="q", context=None, optimize_enabled=False,
-                databases=None, max_docs=5, app_state=None, telemetry=sink,
-            )
-        except Exception:
-            pass
+    ), contextlib.suppress(Exception):
+        await run_web_aggregator_search(
+            keyword_query="q", context=None, optimize_enabled=False,
+            databases=None, max_docs=5, app_state=None, telemetry=sink,
+        )
     # Sink may or may not have events depending on where the mock
     # raised, but the test verifies the sink interface works without
     # the .append() AttributeError we'd see if dispatch was wrong.

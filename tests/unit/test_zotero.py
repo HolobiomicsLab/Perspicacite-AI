@@ -5,8 +5,8 @@ from perspicacite.integrations.zotero import (
     ZoteroAPIError,
     ZoteroAuthError,
     ZoteroClient,
-    _TokenBucket,
     _text_to_html,
+    _TokenBucket,
 )
 
 
@@ -49,7 +49,7 @@ async def test_dedup_returns_existing_key(respx_mock):
 
 @pytest.mark.asyncio
 async def test_group_library_uses_groups_path(respx_mock):
-    create_route = respx_mock.post("https://api.zotero.org/groups/999/items").mock(
+    respx_mock.post("https://api.zotero.org/groups/999/items").mock(
         return_value=httpx.Response(200, json={"successful": {"0": {"key": "G1"}}, "success": {"0": "G1"}, "failed": {}})
     )
     respx_mock.get("https://api.zotero.org/groups/999/items").mock(

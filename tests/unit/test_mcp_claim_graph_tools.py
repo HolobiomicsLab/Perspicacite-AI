@@ -1,6 +1,7 @@
 """Unit tests for build_claim_graph + claim_graph_status MCP tools."""
 
 import json
+
 import pytest
 
 pyoxigraph = pytest.importorskip("pyoxigraph", reason="pyoxigraph (indicia extra) not installed")

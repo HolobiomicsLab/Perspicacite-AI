@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -108,10 +109,11 @@ class JobRegistry:
             row = await cur.fetchone()
         if row is None:
             return None
-        d = {k: row[k] for k in row.keys()}
+        # aiosqlite.Row is NOT a dict: iterating it yields column *values*, so we
+        # must go through .keys() to get column names. noqa: SIM118 (the rule
+        # assumes a real mapping where `in row` == `in row.keys()`).
+        d = {k: row[k] for k in row.keys()}  # noqa: SIM118
         if d.get("result"):
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 d["result"] = json.loads(d["result"])
-            except json.JSONDecodeError:
-                pass
         return d

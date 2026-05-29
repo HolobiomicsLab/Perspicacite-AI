@@ -215,7 +215,10 @@ from perspicacite.pipeline.snowball import (
     OPENALEX_BASE,
     _fetch_seed_work,
     fetch_cited_by_works,
-    openalex_id_for_doi,
+    # Re-exported into this module's namespace so the DOI-resolution path is
+    # patchable/observable from tests (test_cite_graph_openalex_id asserts the
+    # openalex_id path skips it). Not called directly in this module's body.
+    openalex_id_for_doi,  # noqa: F401
 )
 
 

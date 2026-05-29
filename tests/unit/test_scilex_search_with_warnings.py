@@ -1,9 +1,11 @@
 """Unit tests for SciLExAdapter.search_with_warnings dropped-APIs reporting."""
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
 
 from perspicacite.search.scilex_adapter import (
-    SciLExAdapter, SciLExSearchResult,
+    SciLExAdapter,
+    SciLExSearchResult,
 )
 
 

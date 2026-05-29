@@ -384,7 +384,7 @@ def chunk_by_semantics(
             cur_tokens = 0
             cur_centroid = None
 
-    for idx, (s, v) in enumerate(zip(sentences, sent_vecs)):
+    for idx, (s, v) in enumerate(zip(sentences, sent_vecs, strict=True)):
         s_tokens = len(encode(s))
 
         if not cur_sent_indices:

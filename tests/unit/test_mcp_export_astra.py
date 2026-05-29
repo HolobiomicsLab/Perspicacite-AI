@@ -1,6 +1,8 @@
 import json
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from perspicacite.mcp import server as mcp_server
 
 

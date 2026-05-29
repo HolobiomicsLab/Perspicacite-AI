@@ -1,11 +1,11 @@
 # tests/unit/test_query_optimizer.py
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from perspicacite.search.query_optimizer import (
     _PROMPT,
-    OptimizationResult,
     optimize_query,
 )
 

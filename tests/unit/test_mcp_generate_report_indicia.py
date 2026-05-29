@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -66,7 +66,7 @@ def _install_source_emitting_engine():
     class _SourceEmittingRAGEngine(RAGEngine):
         async def query_stream(
             self, req, *, message_id=None, conversation_id=None
-        ) -> "AsyncIterator[StreamEvent]":
+        ) -> AsyncIterator[StreamEvent]:
             yield StreamEvent(event="content", data='{"delta": "Some report text."}')
             yield StreamEvent(
                 event="source",

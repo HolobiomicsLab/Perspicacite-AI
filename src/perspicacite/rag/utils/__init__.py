@@ -4,7 +4,7 @@ This module contains common functions used across all RAG modes to reduce code d
 """
 
 import re
-from typing import Any, List
+from typing import Any
 
 from perspicacite.models.rag import SourceReference
 from perspicacite.rag.prompts import (
@@ -397,7 +397,6 @@ def deduplicate_chunk_overlaps(
                 # Take the tail of previous chunk
                 tail = prev_words[-overlap_words:]
                 if tail:
-                    tail_str = " ".join(tail)
                     # Check if this tail appears at the start of current text
                     curr_words = text.split()
                     for match_len in range(len(tail), 0, -1):

@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from perspicacite.pipeline.asb.card_parser import parse_cards
 from perspicacite.pipeline.asb.chunk_producer import (
@@ -400,7 +401,7 @@ def _kb_description(
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 async def _make_or_get_kb(name: str, *, description: str = "", app_state: Any = None):
@@ -421,7 +422,7 @@ async def _make_or_get_kb(name: str, *, description: str = "", app_state: Any = 
         )
     # Production path: re-use search_to_kb's _create_kb_if_missing pattern.
     from perspicacite.pipeline.search_to_kb import _create_kb_if_missing
-    kb_meta, _created = await _create_kb_if_missing(
+    _kb_meta, _created = await _create_kb_if_missing(
         app_state, name, description,
     )
     # Construct the in-memory DynamicKnowledgeBase backed by that metadata.

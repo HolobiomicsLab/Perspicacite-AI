@@ -33,8 +33,8 @@ fastmcp_spec = __import__("importlib").util.find_spec("fastmcp")
 if fastmcp_spec is None:
     pytest.skip("fastmcp not installed", allow_module_level=True)
 
-from perspicacite.llm.mcp_sampling import current_mcp_context, use_mcp_context  # noqa: E402
-from perspicacite.mcp import server as _srv  # noqa: E402
+from perspicacite.llm.mcp_sampling import current_mcp_context, use_mcp_context
+from perspicacite.mcp import server as _srv
 
 mcp = _srv.mcp
 
@@ -554,7 +554,7 @@ async def test_sampling_tools_bind_ctx(sampling_tool_name: str, mock_state):
         async def _fake_query_stream(*args, **kwargs):
             captured.append(_sampling_ctxvar.get())
             return
-            yield  # noqa: unreachable — makes it an async generator
+            yield  # unreachable, but makes this an async generator
 
         patches = [
             patch(inner_target, new=_fake_query_stream),

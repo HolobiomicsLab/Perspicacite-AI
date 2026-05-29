@@ -28,7 +28,7 @@ import pytest
 chromadb = pytest.importorskip("chromadb")
 np = pytest.importorskip("numpy")
 
-from perspicacite.models.papers import Author, Paper, PaperSource  # noqa: E402
+from perspicacite.models.papers import Author, Paper, PaperSource
 
 pytestmark = pytest.mark.perf
 

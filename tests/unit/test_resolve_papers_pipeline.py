@@ -1,10 +1,11 @@
 """Unit tests for the unified resolve_papers_pipeline helper."""
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
-from perspicacite.models.papers import Paper, Author
+import pytest
+
+from perspicacite.models.papers import Paper
 from perspicacite.rag.resolve_papers import resolve_papers_pipeline
 
 

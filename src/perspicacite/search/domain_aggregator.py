@@ -179,9 +179,7 @@ class DomainAwareAggregator:
             filtered_providers = []
             for p in providers:
                 name = getattr(p, "name", "")
-                if name in requested:
-                    filtered_providers.append(p)
-                elif name == "scilex" and wants_scilex_sub:
+                if name in requested or (name == "scilex" and wants_scilex_sub):
                     filtered_providers.append(p)
             if filtered_providers:
                 providers = filtered_providers

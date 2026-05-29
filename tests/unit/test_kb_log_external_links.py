@@ -17,7 +17,6 @@ from pathlib import Path
 from perspicacite.pipeline.github.bundle import BundleManifest, LinkBag
 from perspicacite.pipeline.kb_log import KBEvent, KBLogWriter
 
-
 # ---------------------------------------------------------------------------
 # event-kind extension
 # ---------------------------------------------------------------------------

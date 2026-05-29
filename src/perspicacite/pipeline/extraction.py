@@ -8,8 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from perspicacite.logging import get_logger
 
@@ -159,13 +160,13 @@ async def extract_structured(
                 ),
                 timeout=50.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "extraction_llm_call_timeout",
                 what=what, batch_start=start, timeout_s=45.0,
             )
             continue
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "extraction_llm_call_failed",
                 what=what, batch_start=start, error=str(exc),

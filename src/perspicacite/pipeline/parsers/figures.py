@@ -231,13 +231,15 @@ def assign_subcomponents(page_results: list[RawFigure]) -> None:
         min_h = min((rf.record.bbox[3] - rf.record.bbox[1]) for rf in sortable) or 1.0
         row_tol = max(min_h * 0.5, 5.0)
 
-        def _key(rf: RawFigure) -> tuple[int, float]:
+        def _key(rf: RawFigure, _row_tol: float = row_tol) -> tuple[int, float]:
             x0, y0, _, _ = rf.record.bbox  # type: ignore[misc]
-            row_bucket = int(y0 // row_tol)
+            row_bucket = int(y0 // _row_tol)
             return (row_bucket, x0)
 
         ordered = sorted(sortable, key=_key)
-        for rf, label in zip(ordered, panels[: len(ordered)]):
+        # strict=False: panels may be shorter than ordered; we label as many
+        # figures as we have panel labels for and leave the rest unlabeled.
+        for rf, label in zip(ordered, panels[: len(ordered)], strict=False):
             rf.record.subcomponent_label = label
 
 

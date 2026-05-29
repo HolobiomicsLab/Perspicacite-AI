@@ -8,12 +8,12 @@ Added 2026-05-15 per Scriptorium-v0.13 integration feedback.
 """
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
+import structlog
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import structlog
 
 router = APIRouter(prefix="/api/llm", tags=["llm-proxy"])
 logger = structlog.get_logger("perspicacite.web.llm_proxy")

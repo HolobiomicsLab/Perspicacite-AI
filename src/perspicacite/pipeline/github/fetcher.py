@@ -300,10 +300,7 @@ class GitHubFetcher:
             return False
         # Sanity: an entry with ONLY the sentinel and nothing else is
         # not actually a usable repo.
-        for child in path.iterdir():
-            if child.name != cls._CACHE_SENTINEL:
-                return True
-        return False
+        return any(child.name != cls._CACHE_SENTINEL for child in path.iterdir())
 
     @classmethod
     def _purge_cache_entry(cls, path: Path) -> None:

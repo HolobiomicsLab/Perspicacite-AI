@@ -1,10 +1,12 @@
 """Unit tests for the PubMed quota log-scanner."""
 import logging
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
 
 from perspicacite.search.scilex_adapter import (
-    SciLExAdapter, _QuotaLogCapture,
+    SciLExAdapter,
+    _QuotaLogCapture,
 )
 
 

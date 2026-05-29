@@ -16,6 +16,7 @@ Fallback order after PMCID resolution:
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from xml.etree import ElementTree
@@ -56,10 +57,8 @@ def _read_cache(pmcid: str) -> tuple[str | None, dict[str, str] | None]:
     sp = _cache_sections_path(pmcid)
     sections = None
     if sp.exists():
-        try:
+        with contextlib.suppress(json.JSONDecodeError, ValueError):
             sections = json.loads(sp.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, ValueError):
-            pass
     logger.info("pmc_cache_hit", pmcid=pmcid, text_length=len(text))
     return text, sections
 

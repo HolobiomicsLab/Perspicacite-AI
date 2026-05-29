@@ -71,7 +71,7 @@ async def test_resume_skips_already_processed(tmp_path):
         mock_client_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_dkb.return_value.add_papers = AsyncMock(return_value=1)
 
-        result = await ingest_dois_into_kb(
+        await ingest_dois_into_kb(
             state, "kb1",
             ["10.1/a", "10.2/b", "10.3/c"],
         )

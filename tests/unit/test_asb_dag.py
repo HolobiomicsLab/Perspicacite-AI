@@ -2,8 +2,6 @@
 on-disk edge formats and preserves port labels from the newer format."""
 from pathlib import Path
 
-import pytest
-
 METLINKR = Path(__file__).parent.parent / "fixtures" / "asb" / "metlinkr_subset"
 ARTICLE = Path(__file__).parent.parent / "fixtures" / "asb" / "article_878_v4_subset"
 

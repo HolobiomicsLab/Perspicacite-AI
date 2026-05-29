@@ -36,7 +36,7 @@ class HTMLParser:
                 raise ImportError(
                     "beautifulsoup4 not installed. "
                     "Install with: pip install beautifulsoup4"
-                )
+                ) from None
         return self._bs4
 
     async def parse(self, source: str | Path) -> ParsedContent:

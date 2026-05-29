@@ -20,7 +20,7 @@ def test_write_resources_emits_records(tmp_path):
     kinds = {p["kind"] for p in payload}
     assert {"pride", "github", "zenodo", "doi"} <= kinds
     # GitHub identifier shape
-    gh = [p for p in payload if p["kind"] == "github"][0]
+    gh = next(p for p in payload if p["kind"] == "github")
     assert gh["identifier"] == "foo/bar"
     assert gh["resource_id"] == "github:foo/bar"
 

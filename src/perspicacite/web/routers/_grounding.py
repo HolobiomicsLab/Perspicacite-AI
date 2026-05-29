@@ -111,7 +111,7 @@ async def extract_grounding_context(
             ),
             timeout=qo_cfg.grounding_timeout_s,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("grounding_extractor_timeout")
         return None
     except Exception as exc:

@@ -86,7 +86,7 @@ class PDFParser:
                     "Neither PyMuPDF nor pdfplumber is installed. "
                     "Install one with: pip install pymupdf  (recommended) "
                     "or: pip install pdfplumber"
-                )
+                ) from None
         return self._pdfplumber
 
     # ------------------------------------------------------------------

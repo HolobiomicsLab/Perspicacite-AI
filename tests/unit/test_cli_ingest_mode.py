@@ -14,6 +14,7 @@ def _make_bib(tmp_path: Path) -> Path:
 def test_add_to_kb_ingest_mode_overrides_config(tmp_path):
     """--ingest-mode abstract_only sets config.knowledge_base.ingest_mode before pipeline call."""
     from click.testing import CliRunner
+
     from perspicacite.cli import cli
 
     bib = _make_bib(tmp_path)
@@ -48,6 +49,7 @@ def test_add_to_kb_ingest_mode_overrides_config(tmp_path):
 def test_add_to_kb_default_ingest_mode_unchanged(tmp_path):
     """Omitting --ingest-mode leaves config.knowledge_base.ingest_mode as config default."""
     from click.testing import CliRunner
+
     from perspicacite.cli import cli
 
     bib = _make_bib(tmp_path)
@@ -75,6 +77,7 @@ def test_add_to_kb_default_ingest_mode_unchanged(tmp_path):
 def test_add_to_kb_ingest_mode_full_text(tmp_path):
     """--ingest-mode full_text is a valid choice."""
     from click.testing import CliRunner
+
     from perspicacite.cli import cli
 
     bib = _make_bib(tmp_path)
@@ -90,7 +93,7 @@ def test_add_to_kb_ingest_mode_full_text(tmp_path):
 
     with patch("perspicacite.cli._add_bibtex_to_existing_kb", new=fake_add_bibtex):
         runner = CliRunner()
-        result = runner.invoke(
+        runner.invoke(
             cli,
             ["-c", "config.example.yml", "add-to-kb", "mytest",
              "--from-bibtex", str(bib), "--ingest-mode", "full_text"],
@@ -102,6 +105,7 @@ def test_add_to_kb_ingest_mode_full_text(tmp_path):
 def test_add_to_kb_invalid_ingest_mode_rejected(tmp_path):
     """--ingest-mode banana is rejected by Click with a non-zero exit code."""
     from click.testing import CliRunner
+
     from perspicacite.cli import cli
 
     bib = _make_bib(tmp_path)
@@ -118,6 +122,7 @@ def test_add_to_kb_invalid_ingest_mode_rejected(tmp_path):
 def test_create_kb_ingest_mode_overrides_config(tmp_path):
     """--ingest-mode abstract_only also works on create-kb --from-bibtex."""
     from click.testing import CliRunner
+
     from perspicacite.cli import cli
 
     bib = _make_bib(tmp_path)

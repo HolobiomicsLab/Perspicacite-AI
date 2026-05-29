@@ -35,7 +35,6 @@ chromadb = pytest.importorskip("chromadb")
 from perspicacite.config.schema import Config
 from perspicacite.pipeline.github.fetcher import GitHubFetcher
 
-
 SAMPLE_BUNDLE = Path(__file__).parent.parent / "data" / "sample_bundle"
 
 
@@ -82,7 +81,7 @@ async def test_ingest_skill_bundle_per_skill_mode(
 
     captured_calls: list[dict] = []
 
-    async def fake_ingest_dois(app_state, kb_name, dois, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(app_state, kb_name, dois, **kw):
         captured_calls.append({"kb_name": kb_name, "dois": list(dois), "kw": kw})
         return {
             "added_papers": len(dois),
@@ -96,7 +95,7 @@ async def test_ingest_skill_bundle_per_skill_mode(
     # Stub out the external-id resolvers so this test stays offline AND
     # preserves its original "arxiv/pmc surface as skipped" semantics.
     # The dedicated resolution test below patches them to return DOIs.
-    async def _no_resolve(_id: str, *, client=None):  # noqa: ARG001
+    async def _no_resolve(_id: str, *, client=None):
         return None
 
     monkeypatch.setattr(github_kb, "resolve_arxiv_to_doi", _no_resolve)
@@ -178,7 +177,7 @@ async def test_ingest_skill_bundle_kb_name_from_template(
     """When kb_name is None, derive from bundles.default_kb_name_template."""
     from perspicacite.pipeline import github_kb
 
-    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(*a, **kw):
         return {
             "added_papers": 0,
             "added_chunks": 0,
@@ -318,7 +317,7 @@ async def test_ingest_skill_bundle_resolves_arxiv_pmc_to_doi(
 
     captured_calls: list[dict] = []
 
-    async def fake_ingest_dois(app_state, kb_name, dois, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(app_state, kb_name, dois, **kw):
         captured_calls.append({"kb_name": kb_name, "dois": list(dois), "kw": kw})
         return {
             "added_papers": len(dois),
@@ -329,7 +328,7 @@ async def test_ingest_skill_bundle_resolves_arxiv_pmc_to_doi(
 
     monkeypatch.setattr(github_kb, "ingest_dois_into_kb", fake_ingest_dois)
 
-    async def fake_resolve_arxiv(arxiv_id: str, *, client=None):  # noqa: ARG001
+    async def fake_resolve_arxiv(arxiv_id: str, *, client=None):
         # Only resolve the known sample-bundle arXiv id; anything else
         # falls through to "unresolvable" so the skipped list still has
         # something to assert on if the sample expands.
@@ -337,7 +336,7 @@ async def test_ingest_skill_bundle_resolves_arxiv_pmc_to_doi(
             return "10.9999/resolved-from-arxiv"
         return None
 
-    async def fake_resolve_pmc(pmc_id: str, *, client=None):  # noqa: ARG001
+    async def fake_resolve_pmc(pmc_id: str, *, client=None):
         if pmc_id == "PMC9123456":
             return "10.9999/resolved-from-pmc"
         return None
@@ -390,7 +389,7 @@ async def test_ingest_skill_bundles_batch_per_skill_mode(
     root = tmp_path / "bundles_root"
     _materialise_two_bundles(root)
 
-    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(*a, **kw):
         return {
             "added_papers": 0,
             "added_chunks": 0,
@@ -448,7 +447,7 @@ async def test_external_links_emitted_to_kb_log(
     tool URL → at least one ``external_link`` event lands in the KB log."""
     from perspicacite.pipeline import github_kb
 
-    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(*a, **kw):
         return {"added_papers": 0, "added_chunks": 0,
                 "skipped_duplicates": 0, "failed": []}
 
@@ -482,7 +481,7 @@ async def test_external_link_event_carries_url_in_extra(
     """Each ``external_link`` event's ``extra`` dict has a ``url`` key."""
     from perspicacite.pipeline import github_kb
 
-    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(*a, **kw):
         return {"added_papers": 0, "added_chunks": 0,
                 "skipped_duplicates": 0, "failed": []}
 
@@ -520,7 +519,7 @@ async def test_ingest_summary_external_links_logged_counts_correctly(
     from perspicacite.pipeline import github_kb
     from perspicacite.pipeline.github.bundle import BundleManifest
 
-    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(*a, **kw):
         return {"added_papers": 0, "added_chunks": 0,
                 "skipped_duplicates": 0, "failed": []}
 
@@ -598,7 +597,7 @@ async def test_ingest_skill_bundles_batch_composite_mode(
     root = tmp_path / "bundles_root"
     _materialise_two_bundles(root)
 
-    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+    async def fake_ingest_dois(*a, **kw):
         return {
             "added_papers": 0,
             "added_chunks": 0,
@@ -663,7 +662,7 @@ async def test_ingest_skill_bundle_raises_on_embedding_conflict(
 
     # Avoid touching the DOI ingest path; the conflict must trip before
     # we get anywhere near it.
-    async def _no_ingest(*a, **kw):  # noqa: ARG001
+    async def _no_ingest(*a, **kw):
         raise AssertionError(
             "linked-paper ingest should not run when the embedding "
             "conflict trips first"

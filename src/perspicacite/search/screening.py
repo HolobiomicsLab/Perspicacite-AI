@@ -307,7 +307,7 @@ async def screen_papers_rerank(
     # model is already cached locally (the common case), local_files_only
     # skips the network entirely. Fall back to a full load only when the
     # cache miss raises.
-    def _load_offline_or_fallback() -> "CrossEncoder":
+    def _load_offline_or_fallback() -> CrossEncoder:
         try:
             return CrossEncoder(model_name, local_files_only=True)
         except Exception:

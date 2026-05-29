@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from pathlib import Path
@@ -540,10 +541,9 @@ async def delete_knowledge_base(name: str):
     if not kb:
         return {"error": f"Knowledge base '{name}' not found"}
 
-    try:
+    # Collection may not exist in ChromaDB
+    with contextlib.suppress(Exception):
         await app_state.vector_store.delete_collection(kb.collection_name)
-    except Exception:
-        pass  # Collection may not exist in ChromaDB
 
     # Delete metadata from SQLite
     import aiosqlite
@@ -1385,7 +1385,7 @@ _local_tasks: set[asyncio.Task] = set()
 @router.post("/api/kb/{name}/local-files")
 async def add_local_files(
     name: str,
-    files: list[UploadFile] = File(...),  # noqa: B008 — FastAPI dependency pattern
+    files: list[UploadFile] = File(...),
 ) -> dict:
     """Ingest uploaded files (multipart) into the named KB."""
     if app_state.job_registry is None:
@@ -1544,7 +1544,7 @@ async def expand_similar_score(name: str, payload: ExpandSimilarScoreRequest) ->
                 "seed_count": report.seed_count,
                 "method": report.method,
             })
-        except Exception as exc:  # noqa: BLE001 — report failure on the stream
+        except Exception as exc:
             await app_state.job_registry.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())
@@ -1572,7 +1572,7 @@ async def expand_similar_commit(name: str, payload: ExpandSimilarCommitRequest) 
                 app_state=app_state, kb_name=name, scored=scored, cutoff=payload.cutoff
             )
             await app_state.job_registry.finish(job_id, res)
-        except Exception as exc:  # noqa: BLE001 — report failure on the stream
+        except Exception as exc:
             await app_state.job_registry.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())

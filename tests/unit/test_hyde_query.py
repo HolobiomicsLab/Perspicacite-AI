@@ -189,7 +189,11 @@ def test_chat_router_forwards_use_hyde():
 
 def test_resolve_hyde_model_no_config():
     """When config is None, returns the cheap fallback model."""
-    from perspicacite.rag.modes.basic import _resolve_hyde_model, _HYDE_FALLBACK_PROVIDER, _HYDE_FALLBACK_MODEL
+    from perspicacite.rag.modes.basic import (
+        _HYDE_FALLBACK_MODEL,
+        _HYDE_FALLBACK_PROVIDER,
+        _resolve_hyde_model,
+    )
 
     provider, model = _resolve_hyde_model(None)
     assert provider == _HYDE_FALLBACK_PROVIDER
@@ -198,7 +202,11 @@ def test_resolve_hyde_model_no_config():
 
 def test_resolve_hyde_model_unpinned_stage():
     """When the 'hyde' stage is not in config, returns fallback model."""
-    from perspicacite.rag.modes.basic import _resolve_hyde_model, _HYDE_FALLBACK_PROVIDER, _HYDE_FALLBACK_MODEL
+    from perspicacite.rag.modes.basic import (
+        _HYDE_FALLBACK_MODEL,
+        _HYDE_FALLBACK_PROVIDER,
+        _resolve_hyde_model,
+    )
 
     cfg = MagicMock()
     cfg.llm.models = {}          # 'hyde' stage not pinned

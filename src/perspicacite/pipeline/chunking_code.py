@@ -72,9 +72,8 @@ def _chunk_python_ast(
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.append(alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                imports.append(node.module.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module.split(".")[0])
 
     chunks: list[DocumentChunk] = []
     base_id = paper.id

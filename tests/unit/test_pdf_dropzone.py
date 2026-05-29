@@ -63,7 +63,7 @@ def test_dropzone_rejects_empty(client):
 
 
 def test_dropzone_strips_doi_org_prefix(client):
-    client_, tmp_path = client
+    client_, _tmp_path = client
     pdf_bytes = b"%PDF-1.4\n" + (b"x" * 2000)
     r = client_.post(
         "/api/pdf-dropzone",

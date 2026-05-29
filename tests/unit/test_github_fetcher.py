@@ -544,12 +544,11 @@ async def test_fetch_clone_failure_does_not_leak_token_in_error(
     with patch(
         "perspicacite.pipeline.github.fetcher.asyncio.create_subprocess_exec",
         side_effect=_fake_exec,
-    ):
-        with pytest.raises(FetcherError) as excinfo:
-            await fetcher.fetch_clone(
-                RepoRef(org="org", repo="repo", ref="main", subpath=None),
-                sha=sha,
-            )
+    ), pytest.raises(FetcherError) as excinfo:
+        await fetcher.fetch_clone(
+            RepoRef(org="org", repo="repo", ref="main", subpath=None),
+            sha=sha,
+        )
 
     msg = str(excinfo.value)
     assert "ghp_supersecret" not in msg, (
@@ -643,9 +642,17 @@ def test_package_reexports_public_api() -> None:
     from perspicacite.pipeline import github as pkg
     from perspicacite.pipeline.github.fetcher import (
         FetcherError as F_Error,
+    )
+    from perspicacite.pipeline.github.fetcher import (
         GitHubFetcher as F_Fetcher,
+    )
+    from perspicacite.pipeline.github.fetcher import (
         RateLimitedError as F_RL,
+    )
+    from perspicacite.pipeline.github.fetcher import (
         RepoRef as F_Ref,
+    )
+    from perspicacite.pipeline.github.fetcher import (
         parse_repo_url as f_parse,
     )
 

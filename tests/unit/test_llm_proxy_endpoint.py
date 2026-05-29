@@ -3,7 +3,7 @@ provider with no RAG/KB awareness. Honours stage-tiering rules.
 Used by external clients (e.g. Scriptorium) that want Perspicacité
 to be their LLM gateway."""
 import inspect
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient

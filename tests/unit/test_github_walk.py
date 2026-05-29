@@ -22,7 +22,6 @@ from pathlib import Path
 
 from perspicacite.pipeline.github.walk import walk_filtered
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -194,7 +194,7 @@ def _bm25_score_corpus(
     # matching scores. We re-key them back to the original kb_names order.
     results, scores_2d = retriever.retrieve([q_tokens], k=k, show_progress=False)
     raw_by_idx = [0.0] * n_docs
-    for idx, s in zip(results[0], scores_2d[0]):
+    for idx, s in zip(results[0], scores_2d[0], strict=True):
         raw_by_idx[int(idx)] = float(s)
 
     max_s = max(raw_by_idx) if raw_by_idx else 0.0
@@ -234,7 +234,7 @@ async def _route_bm25(
             reason=None,
             sampled_titles=ntitles,
         )
-        for (name, _ctx, ntitles), norm in zip(kb_contexts, normalized)
+        for (name, _ctx, ntitles), norm in zip(kb_contexts, normalized, strict=True)
     ]
     hits.sort(key=lambda h: -h.score)
     return [h for h in hits if h.score >= score_threshold][:top_k]
@@ -267,7 +267,7 @@ def route_kbs(
     )
     hits = [
         KBRouteHit(kb_name=name, score=float(score), reason=None, sampled_titles=0)
-        for name, score in zip(kb_names, normalized)
+        for name, score in zip(kb_names, normalized, strict=True)
     ]
     hits.sort(key=lambda h: -h.score)
     return [h for h in hits if h.score >= score_threshold][:top_k]

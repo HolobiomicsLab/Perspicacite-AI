@@ -65,6 +65,7 @@ re-ingest doesn't burn fresh requests.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -300,7 +301,7 @@ class AgentCLIClient:
             await proc.wait()
             raise RuntimeError(
                 f"{self.provider_label}: CLI timed out after {self.timeout}s"
-            )
+            ) from None
         latency_ms = (time.monotonic() - t0) * 1000.0
 
         if proc.returncode != 0:
@@ -308,10 +309,8 @@ class AgentCLIClient:
             out_str = (stdout or b"").decode("utf-8", errors="replace")
             err = err_full[:500]
             if out_path:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(out_path)
-                except OSError:
-                    pass
             # Detect rate-limit signals — raise structured error so the
             # orchestrator / Wave 3.2 fallback chain can react.
             from perspicacite.llm.errors import (
@@ -349,10 +348,8 @@ class AgentCLIClient:
                 with open(out_path, encoding="utf-8", errors="replace") as fh:
                     raw = fh.read().strip()
             finally:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(out_path)
-                except OSError:
-                    pass
         else:
             raw = stdout.decode("utf-8", errors="replace").strip()
         text, in_tokens, out_tokens, details = self._parse_output_full(raw)

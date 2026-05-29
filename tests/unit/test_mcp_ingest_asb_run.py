@@ -99,6 +99,7 @@ async def test_ingest_asb_run_tool_default_include_is_both():
 def test_ingest_asb_run_docstring_mentions_latency():
     """Per Phase B3 — all multi-second tools must surface latency."""
     import inspect
+
     from perspicacite.mcp import server
     doc = inspect.getdoc(server.ingest_asb_run) or ""
     assert "Latency" in doc

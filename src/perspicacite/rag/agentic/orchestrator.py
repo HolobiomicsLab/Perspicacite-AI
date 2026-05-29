@@ -248,7 +248,7 @@ class EvidenceStore:
         if not self.facets:
             return ""
         sections: list[str] = []
-        for key, facet in self.facets.items():
+        for _key, facet in self.facets.items():
             status = facet.status.upper()
             header = f"[{status}] Facet: {facet.query}"
             if not facet.entries:
@@ -395,10 +395,7 @@ Guidelines:
 
             # Parse JSON response
             json_match = re.search(r"\{.*\}", response, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-            else:
-                result = json.loads(response)
+            result = json.loads(json_match.group()) if json_match else json.loads(response)
 
             return (
                 result.get("is_sufficient", False),
@@ -2204,7 +2201,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
 
         parts = await asyncio.gather(*[_one(li, p) for li, p in indexed])
         blocks: list[str] = []
-        for (li, p), text in zip(indexed, parts):
+        for (li, p), text in zip(indexed, parts, strict=True):
             t = (text or "").strip()
             if not t:
                 continue
@@ -2225,7 +2222,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
             return ""
         sections: list[str] = []
         sections.append("Research facets investigated:")
-        for key, facet in session.evidence.facets.items():
+        for _key, facet in session.evidence.facets.items():
             status = facet.status.upper()
             n = len(facet.entries)
             titles = [str(e.get("title", ""))[:80] for e in facet.entries[:4]]

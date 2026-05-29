@@ -1,11 +1,12 @@
 """Unit tests for the new web_search MCP tool."""
 import json
-import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from perspicacite.models.papers import Paper, Author
-from perspicacite.search.screening import ScreenResult
+import pytest
+
 from perspicacite.mcp.server import web_search
+from perspicacite.models.papers import Author, Paper
+from perspicacite.search.screening import ScreenResult
 
 
 @pytest.mark.asyncio

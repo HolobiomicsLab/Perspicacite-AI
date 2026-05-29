@@ -23,7 +23,6 @@ from perspicacite.rag.code_excerpts import collect_code_excerpts
 from perspicacite.rag.conversation_helpers import compute_retrieval_query, format_conversation_block
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
-from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
@@ -37,6 +36,7 @@ from perspicacite.rag.prompts import (
 )
 from perspicacite.rag.query_scope import merge_scope_with_candidates, resolve_paper_scope_for_query
 from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.utils import (
     flatten_paper_results_to_chunks,
     format_documents_for_prompt,
@@ -125,10 +125,7 @@ class AdvancedRAGMode(BaseRAGMode):
         """Approximate v1 LLMWrapper._clean_response when refinement exits early on high score."""
         t = (text or "").strip()
         if t.startswith("```"):
-            if t.startswith("```json"):
-                t = t.split("```json", 1)[1]
-            else:
-                t = t.split("```", 1)[1]
+            t = t.split("```json", 1)[1] if t.startswith("```json") else t.split("```", 1)[1]
             if t.rstrip().endswith("```"):
                 t = t.rsplit("```", 1)[0]
         return t.strip()
@@ -621,7 +618,6 @@ Sources:
         # welcome-screen promise ("falls back to web literature search when
         # your KB is insufficient") holds across modes.
         paper_results: list[dict[str, Any]] = []
-        web_fallback_used_advanced = False
         if not selected_documents:
             emit_phase(_phase_sink, phase="retrieve_web", state="running")
             from perspicacite.rag.modes.basic import _web_fallback_papers
@@ -715,7 +711,6 @@ Sources:
                             total=_ev.get("total", 0),
                             by_provider=_bp,
                         )
-            web_fallback_used_advanced = True
             emit_phase(_phase_sink, phase="retrieve_web", state="done")
             if paper_results:
                 yield StreamEvent.status(

@@ -27,12 +27,17 @@ Tools exposed:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from pathlib import Path
 from typing import Any
 
 from perspicacite.logging import get_logger
+from perspicacite.pipeline.asb.collection_ingest import (
+    ingest_asb_skill_collection,
+)
+from perspicacite.pipeline.asb.edam_filter import edam_pre_filter
 from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
 from perspicacite.pipeline.github_kb import (
@@ -44,10 +49,6 @@ from perspicacite.pipeline.github_kb import (
 from perspicacite.pipeline.github_kb import (
     ingest_skill_bundle as ingest_skill_bundle_pipeline,
 )
-from perspicacite.pipeline.asb.collection_ingest import (
-    ingest_asb_skill_collection,
-)
-from perspicacite.pipeline.asb.edam_filter import edam_pre_filter
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 
 logger = get_logger("perspicacite.mcp.server")
@@ -565,7 +566,7 @@ async def search_literature(
 
             try:
                 papers = await asyncio.wait_for(enrich_papers(papers), timeout=10.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "mcp_search_literature_enrich_timeout", n_papers=len(papers)
                 )
@@ -1250,8 +1251,11 @@ async def search_knowledge_base(
         from perspicacite.llm.embeddings import create_embedding_provider
 
         _kb_model_name = kb_meta.embedding_model.split("|")[0].strip()
+
         # Normalise: strip the "st:" routing prefix before comparing names.
-        _norm = lambda s: s.removeprefix("st:").strip()
+        def _norm(s: str) -> str:
+            return s.removeprefix("st:").strip()
+
         if _norm(_kb_model_name) == _norm(state.embedding_provider.model_name):
             _kb_embedding = state.embedding_provider
         else:
@@ -1598,15 +1602,16 @@ async def add_papers_to_kb(
                 "springer_api_key": pdf_config.springer_api_key,
             }
 
-        from perspicacite.pipeline.download import retrieve_paper_content
         import asyncio as _asyncio_local
+
+        from perspicacite.pipeline.download import retrieve_paper_content
 
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             # First pass: handle papers that need no network (pre-supplied
             # full_text, skip_content_fetch, missing/non-canonical DOI). These
             # are O(1) per paper and don't benefit from parallelism.
             fetch_idxs: list[int] = []
-            for i, (paper, pd) in enumerate(zip(paper_models, papers)):
+            for i, (paper, pd) in enumerate(zip(paper_models, papers, strict=True)):
                 # Caller can supply pre-fetched text directly via `full_text`
                 # (or pass `skip_content_fetch=True`) to bypass the slow
                 # Crossref/PMC/Unpaywall lookup loop. Useful for benchmark
@@ -1861,14 +1866,12 @@ async def generate_report(
 
     # Emit the task_id immediately via ctx so the client can cancel.
     if ctx is not None:
-        try:
+        with contextlib.suppress(Exception):
             await ctx.report_progress(
                 progress=0,
                 total=100,
                 message=f"Task started — task_id={task_id}",
             )
-        except Exception:
-            pass
 
     # Bind ctx for any nested LLM call via sampling. We use the
     # contextvar token directly here (rather than the `with` form) to
@@ -2028,10 +2031,8 @@ async def generate_report(
                 def append(self, event: dict) -> None:
                     self.events.append(event)
                     for s in self._sinks:
-                        try:
+                        with contextlib.suppress(Exception):
                             s.append(event)
-                        except Exception:
-                            pass
 
                 async def on_event_async(self, event: dict) -> None:
                     self.events.append(event)
@@ -2111,7 +2112,7 @@ async def generate_report(
                         if _err.get("reason") == "cancelled":
                             cancelled_reason = "cancelled"
                             break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "mcp_generate_report_timeout",
                 query=query,
@@ -2182,7 +2183,8 @@ async def generate_report(
         validation_report: str | None = None
         if extract_claims:
             try:
-                from perspicacite.pipeline.claims import extract_claims as _extract_claims, validate_claims
+                from perspicacite.pipeline.claims import extract_claims as _extract_claims
+                from perspicacite.pipeline.claims import validate_claims
                 _passages = [
                     {
                         "chunk_text": s.get("section") or s.get("title", ""),
@@ -2195,7 +2197,7 @@ async def generate_report(
                 domain_adapter = None
                 if domains:
                     try:
-                        from indicium_adapters import discover_adapters, compose_adapters
+                        from indicium_adapters import compose_adapters, discover_adapters
                         discovered = discover_adapters()
                         valid = [discovered[d] for d in domains if d in discovered]
                         domain_adapter = compose_adapters(valid) if valid else None
@@ -4708,10 +4710,7 @@ async def ingest_skill_bundle(
     # orchestrator parses URL strings itself.
     source_arg: Path | str
     candidate = Path(source)
-    if candidate.exists():
-        source_arg = candidate
-    else:
-        source_arg = source
+    source_arg = candidate if candidate.exists() else source
 
     try:
         summary = await ingest_skill_bundle_pipeline(
@@ -5170,6 +5169,8 @@ async def zotero_get_attachment_bytes(
 
     # Fetch the attachment metadata first (filename, contentType, tags
     # that may encode role_hint or license).
+    import httpx
+
     c = await client._client()
     try:
         meta_r = await c.get(
@@ -5947,7 +5948,7 @@ async def extract_parameters_from_passages(
                     dedup_key=lambda r: (r.get("name"), r.get("units")),
                     model=model,
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "mcp_extract_parameters_timeout",
                 n_passages=len(passage_objs),
@@ -6074,7 +6075,7 @@ async def extract_failure_modes_from_passages(
                     dedup_key=lambda r: (str(r.get("symptom", "")).strip().lower(),),
                     model=model,
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "mcp_extract_failure_modes_timeout",
                 n_passages=len(passage_objs),
@@ -6152,7 +6153,7 @@ async def extract_claims_from_passages(
     adapter = None
     if domains:
         try:
-            from indicium_adapters import discover_adapters, compose_adapters
+            from indicium_adapters import compose_adapters, discover_adapters
             discovered = discover_adapters()
             valid = [discovered[d] for d in domains if d in discovered]
             adapter = compose_adapters(valid) if valid else None
@@ -6745,7 +6746,7 @@ async def get_info() -> str:
 # KB resources (Wave 5.1)
 # =============================================================================
 
-from perspicacite.mcp import resources as _resources  # noqa: E402
+from perspicacite.mcp import resources as _resources
 
 
 @mcp.resource("perspicacite://kbs")
@@ -6776,7 +6777,7 @@ async def _kb_log_resource(name: str) -> str:
 # Canned prompts (Wave 5.2)
 # =============================================================================
 
-from perspicacite.mcp import prompts as _prompts  # noqa: E402
+from perspicacite.mcp import prompts as _prompts
 
 
 @mcp.prompt()

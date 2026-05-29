@@ -30,9 +30,9 @@ from perspicacite.models.rag import (
 )
 from perspicacite.rag import prompts as _prompts
 from perspicacite.rag.modes.base import BaseRAGMode
-from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
+from perspicacite.rag.telemetry import emit_phase
 
 logger = get_logger("perspicacite.rag.modes.contradiction")
 

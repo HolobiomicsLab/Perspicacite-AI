@@ -15,6 +15,7 @@ from perspicacite.rag.query_scope import PaperScopeResult, merge_scope_with_cand
 from perspicacite.retrieval.chroma_store import _metadata_to_chunk
 
 if TYPE_CHECKING:
+    from perspicacite.models.documents import DocumentChunk
     from perspicacite.models.papers import Paper
     from perspicacite.models.search import SearchFilters
 

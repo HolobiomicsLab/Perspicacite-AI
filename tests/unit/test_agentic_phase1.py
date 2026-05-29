@@ -168,15 +168,15 @@ class TestHeuristicQueryComplexity:
         ],
     )
     def test_simple_queries(self, query):
-        complexity, tag = heuristic_query_complexity(query)
+        complexity, _tag = heuristic_query_complexity(query)
         assert complexity == "simple", f"Expected simple for: {query}"
 
     def test_empty_query(self):
-        complexity, tag = heuristic_query_complexity("")
+        complexity, _tag = heuristic_query_complexity("")
         assert complexity == "simple"
 
     def test_none_query(self):
-        complexity, tag = heuristic_query_complexity(None)
+        complexity, _tag = heuristic_query_complexity(None)
         assert complexity == "simple"
 
     def test_weak_complexity_tags(self):
@@ -702,7 +702,7 @@ class TestMaybeUpgradeSingleKbToCompositeParallel:
         kb_steps = [s for s in plan.steps if s.type == StepType.KB_SEARCH]
         assert len(kb_steps) == 2
         # Answer step should depend on both new steps
-        ans = [s for s in plan.steps if s.type == StepType.ANSWER][0]
+        ans = next(s for s in plan.steps if s.type == StepType.ANSWER)
         new_ids = {s.id for s in kb_steps}
         assert set(ans.depends_on) == new_ids
 

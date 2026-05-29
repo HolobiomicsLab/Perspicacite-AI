@@ -9,6 +9,7 @@ See docs/superpowers/specs/2026-05-14-checkpoint-resume-design.md.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -108,7 +109,5 @@ class CheckpointStore:
         os.replace(tmp, self.path)
 
     def delete(self) -> None:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             self.path.unlink()
-        except FileNotFoundError:
-            pass

@@ -21,7 +21,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 _NON_OA_DOI = "10.9999/closed.paper.example"
 _UNKNOWN_DOI = "10.9999/unknown.paper.example"
 

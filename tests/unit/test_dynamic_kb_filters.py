@@ -34,6 +34,6 @@ async def test_search_passes_filters_to_store():
 async def test_search_without_filters_passes_none():
     kb, vstore = _kb_with_mocks()
     await kb.search("query")
-    args, kwargs = vstore.search.call_args
+    _args, kwargs = vstore.search.call_args
     # Filters must be absent or explicitly None — never some other default.
     assert kwargs.get("filters") is None or "filters" not in kwargs

@@ -1,5 +1,4 @@
 """Unit tests for the cancellation registry."""
-import asyncio
 import pytest
 
 from perspicacite.rag import cancellation as cr

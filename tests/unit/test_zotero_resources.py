@@ -105,6 +105,6 @@ def test_no_duplicate_doi_resolver_when_publisher_present(tmp_path):
     }]
     rl = ResourceLocator(cfg)
     resources = rl.build(doi=doi, zotero_item={"key": "X", "data": {"DOI": doi}}, attachments=attachments)
-    pdf = [r for r in resources if r["role"] == "fulltext_pdf"][0]
+    pdf = next(r for r in resources if r["role"] == "fulltext_pdf")
     resolver_count = sum(1 for a in pdf["access"] if a.get("via") == "doi_resolver")
     assert resolver_count == 1  # appears exactly once

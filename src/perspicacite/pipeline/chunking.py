@@ -202,7 +202,7 @@ def _chunk_by_section(
         return _chunk_by_tokens(text, paper, config)
 
     current_section = "Introduction"
-    for i, part in enumerate(parts):
+    for _i, part in enumerate(parts):
         if not part.strip():
             continue
 

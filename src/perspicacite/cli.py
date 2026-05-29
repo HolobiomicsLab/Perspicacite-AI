@@ -1,6 +1,7 @@
 """Command-line interface for Perspicacité v2."""
 
 import asyncio
+import contextlib
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -1069,7 +1070,7 @@ def import_browser_cookies_cmd(
             "    uv pip install -e \".[cookies]\"",
             err=True,
         )
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     from http.cookiejar import MozillaCookieJar
     from pathlib import Path
 
@@ -1093,7 +1094,7 @@ def import_browser_cookies_cmd(
             "least once. On macOS you may need to grant keychain access.",
             err=True,
         )
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     domain_filters = [d.lower() for d in (domains or ())]
     jar = MozillaCookieJar()
@@ -1110,10 +1111,8 @@ def import_browser_cookies_cmd(
         seen_hosts[host] = seen_hosts.get(host, 0) + 1
 
     jar.save(str(out), ignore_discard=True, ignore_expires=True)
-    try:
+    with contextlib.suppress(OSError):
         out.chmod(0o600)
-    except OSError:
-        pass
 
     click.echo(
         f"Wrote {matched} of {total} cookies to {out}  "
@@ -1944,10 +1943,7 @@ def ingest_skill_bundle_cmd(
     # raw string (the orchestrator parses URLs).
     source_arg: Path | str
     candidate = Path(source)
-    if candidate.exists():
-        source_arg = candidate
-    else:
-        source_arg = source
+    source_arg = candidate if candidate.exists() else source
 
     async def _run() -> IngestSummary:
         app_state = await _build_app_state_for_cli(ctx.obj.get("config"))

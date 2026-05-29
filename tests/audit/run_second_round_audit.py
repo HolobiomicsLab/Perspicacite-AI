@@ -205,7 +205,7 @@ async def audit_bug_fixes(findings: dict[str, Any]) -> None:
         round_trips = [PaperSource(v) for v in new_values]
         ok = (
             new_values == ["openalex", "pubmed", "arxiv", "crossref"]
-            and all(rt.value == v for rt, v in zip(round_trips, new_values))
+            and all(rt.value == v for rt, v in zip(round_trips, new_values, strict=True))
         )
         bug_fixes["fix_4_paper_source_enum"] = {
             "status": "PASS" if ok else "FAIL",

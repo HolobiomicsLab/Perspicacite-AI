@@ -1,6 +1,7 @@
 """Unit tests for MCPProgressAdapter."""
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from perspicacite.mcp.progress_adapter import MCPProgressAdapter
 
@@ -71,8 +72,6 @@ async def test_ctx_error_swallowed():
 import json
 
 import pytest
-
-from perspicacite.mcp.progress_adapter import MCPProgressAdapter
 
 
 class _Ctx:

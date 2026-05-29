@@ -191,7 +191,7 @@ async def optimize_query(
             ),
             timeout=qo_cfg.timeout_s,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("query_optimizer_timeout", extra={"query": query[:80]})
         return OptimizationResult(
             searched_query=query, enabled=True, applied=False,

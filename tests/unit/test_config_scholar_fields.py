@@ -1,6 +1,5 @@
 # tests/unit/test_config_scholar_fields.py
 """Config field tests for Google Scholar provider + abstract-only KB mode."""
-from pathlib import Path
 
 import pytest
 

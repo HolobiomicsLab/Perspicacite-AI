@@ -9,12 +9,11 @@ from unittest.mock import patch
 import pytest
 
 from perspicacite.search.duckduckgo_playwright import (
-    DuckDuckGoPlaywrightProvider,
     _BOT_CHALLENGE_SENTINEL,
+    DuckDuckGoPlaywrightProvider,
     _build_search_url,
     _unwrap_ddg_redirect,
 )
-
 
 # ── URL builder tests (pure helpers, no mock) ────────────────────────────────
 

@@ -120,7 +120,7 @@ async def test_generate_report_returns_asb_metadata_block_for_asb_sources() -> N
     class _CapturingRAGEngine(RAGEngine):
         async def query_stream(
             self, req, *, message_id=None, conversation_id=None
-        ) -> "AsyncIterator[StreamEvent]":
+        ) -> AsyncIterator[StreamEvent]:
             yield StreamEvent(event="content", data=_json.dumps({"delta": "report body"}))
             # Emit a source whose model_dump shape carries the asb metadata.
             yield StreamEvent(event="source", data=_json.dumps(asb_source))

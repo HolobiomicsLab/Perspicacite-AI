@@ -11,6 +11,7 @@ It systematically maps a research field by:
 """
 
 import asyncio
+import contextlib
 import json
 import re
 import uuid
@@ -575,7 +576,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         while not analysis_task.done() or not _progress_q.empty():
             try:
                 ev = await asyncio.wait_for(_progress_q.get(), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Also check for cancellation between batches
                 if _tid and _is_cancelled(_tid):
                     analysis_task.cancel()
@@ -1127,10 +1128,8 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 except TypeError:
                     # Caller hasn't upgraded to the 4-arg signature — fall
                     # back to the 3-arg form so older wrappers don't crash.
-                    try:
+                    with contextlib.suppress(Exception):
                         await progress_cb(done, tot, 0)
-                    except Exception:
-                        pass
                 except Exception:
                     pass
 
@@ -1745,7 +1744,7 @@ Respond with theme names separated by commas, or "None" if no match."""
                 max_tokens=1500,
                 stage="survey.synthesis",
             )
-        except Exception as _exc:  # noqa: BLE001
+        except Exception as _exc:
             logger.warning("literature_survey_synthesis_llm_failed", error=str(_exc))
             # Fall back to annotated template
             lines = [

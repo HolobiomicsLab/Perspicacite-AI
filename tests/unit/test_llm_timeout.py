@@ -1,7 +1,8 @@
 """Unit tests for global LiteLLM timeout (Issue 1 — three-tier policy)."""
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def _make_config(default_timeout_s: float | None = None) -> MagicMock:
@@ -31,7 +32,7 @@ def _make_config(default_timeout_s: float | None = None) -> MagicMock:
 @pytest.mark.asyncio
 async def test_global_timeout_fallback_applied_when_no_provider_timeout():
     """When provider.timeout is None and no kwargs timeout, DEFAULT_LLM_TIMEOUT_S is used."""
-    from perspicacite.llm.client import AsyncLLMClient, DEFAULT_LLM_TIMEOUT_S
+    from perspicacite.llm.client import DEFAULT_LLM_TIMEOUT_S, AsyncLLMClient
 
     cfg = _make_config()
     client = AsyncLLMClient(cfg)
@@ -177,6 +178,7 @@ async def test_provider_timeout_overrides_global_default():
 def test_profound_mode_has_synthesis_timeout_s_attribute():
     """ProfoundRAGMode must expose synthesis_timeout_s read from config."""
     from unittest.mock import MagicMock
+
     from perspicacite.rag.modes.deep_research import ProfoundRAGMode
 
     cfg = MagicMock()
@@ -194,7 +196,6 @@ async def test_profound_synthesis_timeout_fires():
     This is a behavioral smoke test for the pattern used in both execute()
     and execute_stream() to cap the synthesis phase.
     """
-    import asyncio
 
     status_events: list[str] = []
     timed_out = False
@@ -206,7 +207,7 @@ async def test_profound_synthesis_timeout_fires():
     try:
         async with asyncio.timeout(0.05):  # 50ms
             await hanging_synthesis()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timed_out = True
         status_events.append(
             "Deep research: synthesis time budget reached — returning partial answer."

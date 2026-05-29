@@ -1,5 +1,4 @@
 """Unit tests for rag.utils.json_salvage."""
-import pytest
 
 from perspicacite.rag.utils.json_salvage import (
     clean_control_chars,

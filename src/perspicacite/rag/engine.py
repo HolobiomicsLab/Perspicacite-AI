@@ -17,7 +17,6 @@ from perspicacite.rag.modes import (
     ContradictionRAGMode,
     DeepResearchRAGMode,
     LiteratureSurveyRAGMode,
-    ProfoundRAGMode,
     ReasoningRAGMode,
 )
 from perspicacite.rag.tools import ToolRegistry

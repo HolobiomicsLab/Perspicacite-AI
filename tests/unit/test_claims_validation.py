@@ -1,5 +1,6 @@
 import pytest
 import rdflib
+
 from perspicacite.pipeline.claims import claims_to_graph, validate_claims
 
 ASB = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")

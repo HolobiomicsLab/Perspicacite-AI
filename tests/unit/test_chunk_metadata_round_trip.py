@@ -8,6 +8,7 @@ Pins:
 from __future__ import annotations
 
 import json
+
 from perspicacite.models.documents import ChunkMetadata
 from perspicacite.models.papers import PaperSource
 
@@ -45,6 +46,7 @@ def test_search_two_pass_exposes_decoded_paper_metadata():
     ``paper_metadata_json``; result dict must expose decoded ``paper_metadata``."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
+
     from perspicacite.models.documents import DocumentChunk
     from perspicacite.models.search import RetrievedChunk
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
@@ -90,6 +92,7 @@ def test_search_two_pass_decodes_paper_metadata_via_peek_row():
     The decoded ``paper_metadata`` must still appear on the result dict."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock
+
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
     from perspicacite.rag.query_scope import PaperScopeResult
 

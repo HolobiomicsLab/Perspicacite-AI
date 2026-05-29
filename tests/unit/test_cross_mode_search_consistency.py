@@ -11,10 +11,11 @@ output.
 from __future__ import annotations
 
 import json
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from perspicacite.models.papers import Paper, Author
+import pytest
+
+from perspicacite.models.papers import Author, Paper
 from perspicacite.search.screening import ScreenResult
 
 

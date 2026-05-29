@@ -6,6 +6,7 @@ produce SSE events for the agentic and RAG-mode flows.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -24,6 +25,10 @@ from perspicacite.web.routers._grounding import extract_grounding_context
 from perspicacite.web.state import app_state
 
 logger = logging.getLogger(__name__)
+
+# Strong refs to fire-and-forget cancel-clear tasks so the event loop does
+# not GC them before completion (ruff RUF006).
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 
 # Module-level map from mode string to RAGMode enum.
 # Referenced by _stream_rag_mode and exposed for testing.
@@ -145,7 +150,7 @@ async def _pre_screen_query(text: str, history: list[Any] | None) -> tuple[str, 
         reason = obj.get("reason")
         if verdict in ("research", "chat"):
             return verdict, reason if isinstance(reason, str) else None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("pre_screen_failed: %s", exc)
     return "research", None
 
@@ -193,7 +198,7 @@ async def _chat_only_reply(query: str, history: list[Any] | None) -> str:
             max_tokens=900,
         )
         return out.strip() or "(no answer)"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("chat_only_reply_failed: %s", exc)
         return "(unable to answer from context — please try again)"
 
@@ -238,7 +243,7 @@ async def _translate_query_to_english(text: str) -> tuple[str | None, str | None
         lang = obj.get("lang")
         if isinstance(english, str) and english.strip():
             return english.strip(), lang if isinstance(lang, str) else None
-    except Exception as exc:  # noqa: BLE001 — best-effort
+    except Exception as exc:
         logger.warning("query_translation_failed: %s", exc)
     return None, None
 
@@ -251,6 +256,8 @@ async def _translate_query_to_english(text: str) -> tuple[str | None, str | None
 # Cancellation now lives in the shared registry so MCP and chat both
 # use the same state. The chat router only needs sync read access
 # (is_chat_cancelled) — the registry's is_cancelled is sync.
+import contextlib
+
 from perspicacite.rag.cancellation import (
     clear as _registry_clear,
 )
@@ -269,11 +276,12 @@ def is_chat_cancelled(conversation_id: str | None) -> bool:
 
 def _clear_chat_cancel(conversation_id: str | None) -> None:
     if conversation_id:
-        import asyncio
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                asyncio.create_task(_registry_clear(conversation_id))
+                task = asyncio.create_task(_registry_clear(conversation_id))
+                _BACKGROUND_TASKS.add(task)
+                task.add_done_callback(_BACKGROUND_TASKS.discard)
             else:
                 loop.run_until_complete(_registry_clear(conversation_id))
         except Exception:
@@ -516,10 +524,9 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             event_count += 1
 
             # Bug 4: Check for client disconnect every 5 events
-            if event_count % 5 == 0:
-                if await raw_request.is_disconnected():
-                    logger.warning("client_disconnected_aborting_pipeline")
-                    break
+            if event_count % 5 == 0 and await raw_request.is_disconnected():
+                logger.warning("client_disconnected_aborting_pipeline")
+                break
 
             if not event.startswith("data:"):
                 continue
@@ -623,10 +630,8 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
             )
             # Replace the query field so all downstream code (modes,
             # retrievers, LLM prompts) sees the English text.
-            try:
+            with contextlib.suppress(Exception):
                 request.query = english
-            except Exception:
-                pass
 
     # --- Optional pre-screen: route chat-only turns away from retrieval ---
     # A cheap LLM classifier decides whether the user's turn warrants the
@@ -1200,7 +1205,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
                             )
                             + "\n\n"
                         )
-                except Exception as _exc:  # noqa: BLE001
+                except Exception as _exc:
                     logger.warning(f"asb_metadata_emit_failed: {_exc}")
                 yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
                 return
@@ -1241,7 +1246,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
 
 
 async def _invoke_basic_rag(
-    request: "ChatRequest",
+    request: ChatRequest,
     conversation_id: str | None = None,
     *,
     context: str | None = None,
@@ -1259,10 +1264,8 @@ async def _invoke_basic_rag(
 
     # Propagate the resolved grounding context so _stream_rag_mode can
     # thread it onto the RAGRequest for BasicRAGMode.execute to consume.
-    try:
+    with contextlib.suppress(Exception):
         object.__setattr__(request, "_resolved_context", context)
-    except Exception:
-        pass
 
     async for event in _stream_rag_mode(request, conversation_id):
         if not event.startswith("data:"):

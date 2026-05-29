@@ -18,7 +18,9 @@ from perspicacite.config.schema import Config
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.models.papers import PaperSource
 from perspicacite.models.search import RetrievedChunk
-from perspicacite.rag.modes.deep_research import DeepResearchRAGMode as ProfoundRAGMode  # renamed; alias kept for backward compat
+from perspicacite.rag.modes.deep_research import (
+    DeepResearchRAGMode as ProfoundRAGMode,  # renamed; alias kept for backward compat
+)
 
 
 def _retrieved(paper_id: str, text: str, score: float) -> RetrievedChunk:

@@ -109,8 +109,9 @@ def test_write_replaces_previous_perspicacite_stamp(tmp_path):
 
 
 def test_write_missing_file_raises(tmp_path):
-    from perspicacite.pipeline.asb.skill_kb_writer import write_skill_kb_entries
     import pytest
+
+    from perspicacite.pipeline.asb.skill_kb_writer import write_skill_kb_entries
     with pytest.raises(FileNotFoundError):
         write_skill_kb_entries(tmp_path / "no_such.json", entries=[])
 

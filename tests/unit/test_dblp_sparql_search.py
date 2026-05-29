@@ -1,7 +1,6 @@
 """Unit tests for DBLP SPARQL + SemOpenAlex search provider helpers."""
 from __future__ import annotations
 
-
 # ── _tokenise_query ───────────────────────────────────────────────────────────
 
 def test_tokenise_removes_stop_words():
@@ -192,8 +191,9 @@ def test_parse_semoa_response_empty():
 
 # ── DBLPSPARQLSearchProvider ──────────────────────────────────────────────────
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 _FAKE_DBLP_RECORDS = [
     {"title": "Graph Neural Networks Survey", "doi": "10.9999/gnn", "year": 2020, "cites": 800},

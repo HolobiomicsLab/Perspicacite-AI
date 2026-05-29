@@ -1,6 +1,6 @@
 """Enforce: no production code reads/writes legacy metadata['sources']."""
-from pathlib import Path
 import re
+from pathlib import Path
 
 import perspicacite
 
