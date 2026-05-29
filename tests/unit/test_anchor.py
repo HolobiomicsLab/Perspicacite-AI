@@ -87,3 +87,23 @@ def test_missing_quote_is_unverified_kept_failopen():
     assert len(out) == 1
     assert out[0]["_anchor"]["status"] == "unverified"
     assert out[0]["_anchor"]["matched_index"] is None
+
+
+@pytest.mark.unit
+def test_verifier_unavailable_degrades_all_to_unverified(monkeypatch):
+    # Simulate the indicia extra being absent: `from indicium import verify_quote`
+    # raises. Even though the quote IS verbatim in the passage and strict=True,
+    # fail-soft must keep the claim, tagged unverified (we cannot judge).
+    import sys
+
+    monkeypatch.setitem(sys.modules, "indicium", None)
+    passages = [{"chunk_text": "We found that compound A inhibits enzyme B strongly."}]
+    out = anchor_claims(
+        [_claim("c0", "compound A inhibits enzyme B")], passages, strict=True
+    )
+    assert len(out) == 1
+    anc = out[0]["_anchor"]
+    assert anc["status"] == "unverified"
+    assert anc["matched_index"] is None
+    assert anc["positional_index"] == 0
+    assert anc["divergent"] is False

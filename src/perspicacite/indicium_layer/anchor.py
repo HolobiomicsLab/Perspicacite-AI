@@ -55,7 +55,11 @@ def anchor_claims(
         claim["_anchor"] = {status, matched_index, quote_exact, score,
                             positional_index, divergent}
     where divergent = (matched_index is not None and matched_index != positional_index).
-    Fail-soft: a verification error degrades that claim to "unverified".
+    Fail-soft: a verification error degrades that claim to "unverified". Modifies
+    the input claim dicts in place (adds "_anchor") and returns the kept subset.
+    If the verifier itself is unavailable (indicia extra absent), every claim is
+    tagged "unverified" and returned regardless of `strict` — dropping everything
+    when we cannot judge would be worse than keeping it tagged.
     """
     try:
         from indicium import verify_quote
@@ -69,7 +73,9 @@ def anchor_claims(
             }
         return claims
 
-    candidates = [str(p.get("chunk_text", "")) for p in passages]
+    candidates = [
+        str(p.get("chunk_text", "")) if isinstance(p, dict) else "" for p in passages
+    ]
     audit_records: list[dict] = []
     kept: list[dict] = []
 
