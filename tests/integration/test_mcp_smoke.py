@@ -77,6 +77,7 @@ def _make_mock_state() -> MagicMock:
     state.vector_store.delete_collection = AsyncMock()
     state.vector_store.paper_exists = AsyncMock(return_value=False)
     state.vector_store.list_paper_metadata = AsyncMock(return_value=[])
+    state.vector_store.get_chunks_by_paper_ids = AsyncMock(return_value=[])
 
     # Embedding provider stub
     state.embedding_provider = MagicMock()
@@ -299,6 +300,40 @@ _TOOL_ARGS: dict[str, dict[str, Any]] = {
         "query": "CRISPR off-target effects",
     },
     "get_usage_guide": {},
+    # ---- web/skill + claim-graph tools (require query / kb_name positionals) ----
+    # In CI the claim-graph tools short-circuit at `import indicium` (the indicia
+    # extra is never installed there) and return a clean "not installed" error.
+    "general_web_search": {
+        "query": "fastmcp python library documentation",
+        "max_results": 3,
+    },
+    "search_skill_kb": {
+        "query": "sequence alignment",
+        "kb_name": "nonexistent-smoke-kb",
+    },
+    "build_claim_graph": {
+        "kb_name": "nonexistent-smoke-kb",
+    },
+    "claim_graph_status": {
+        "kb_name": "nonexistent-smoke-kb",
+    },
+    "query_claim_graph": {
+        "kb_name": "nonexistent-smoke-kb",
+        # Invalid name → clean "unknown query_name" error before any store access,
+        # so the tool stays exception-free even with the indicia extra installed.
+        "query_name": "__smoke_invalid_query__",
+    },
+    "get_claim_figures": {
+        "kb_name": "nonexistent-smoke-kb",
+        "claim_iri": "kb://nonexistent-smoke-kb/claim/fake",
+    },
+    "get_claim_links": {
+        "kb_name": "nonexistent-smoke-kb",
+        "claim_iri": "kb://nonexistent-smoke-kb/claim/fake",
+    },
+    "claim_graph_export": {
+        "kb_name": "nonexistent-smoke-kb",
+    },
 }
 
 # ---------------------------------------------------------------------------

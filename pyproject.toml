@@ -304,12 +304,23 @@ module = [
     "indicium_adapters.*",
     "lxml.*",
     "pandas.*",
+    "pyoxigraph.*",
     "pytesseract.*",
     "rank_bm25.*",
+    "rdflib.*",
     "scilex.*",
     "yaml.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# indicium_layer.store types its SPARQL result loop against rdflib, which only
+# ships with the `indicia` extra. CI's lint env installs base deps only, so
+# rdflib resolves to Any there and a `# type: ignore[union-attr]` that is
+# genuinely *needed* in a full local/indicia checkout reads as *unused* in CI.
+# The divergence is expected — don't gate on unused-ignore for this module.
+module = ["perspicacite.indicium_layer.store"]
+warn_unused_ignores = false
 
 [tool.coverage.run]
 source = ["src/perspicacite"]

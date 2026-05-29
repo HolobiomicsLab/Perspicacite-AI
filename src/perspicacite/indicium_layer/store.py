@@ -25,9 +25,8 @@ from typing import Literal as LiteralType
 from rdflib import Dataset, URIRef
 from rdflib import Literal as RdflibLiteral
 
-# rdflib ≥ 6.0 deprecates ConjunctiveGraph in favour of Dataset.
-# Dataset is a drop-in for our usage (add/query named graphs).
-ConjunctiveGraph = Dataset  # alias for backward compat in type hints below
+# rdflib ≥ 6.0 deprecates ConjunctiveGraph in favour of Dataset, a drop-in for
+# our add/query-named-graphs usage.
 
 _RDF_SUBJECT = URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#subject")
 _RDF_PREDICATE = URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate")
@@ -59,7 +58,7 @@ class ClaimGraphStore:
             backend = "oxigraph" if data_dir is not None else "memory"
         self._backend = backend
         if backend == "memory":
-            self._g: ConjunctiveGraph | None = ConjunctiveGraph()
+            self._g: Dataset | None = Dataset()
             self._oxistore = None
         elif backend == "oxigraph":
             self._g = None
