@@ -19,13 +19,14 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
-from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import indicium
 
+from perspicacite.indicium_layer.anchor import anchor_claims
 from perspicacite.indicium_layer.cito_classifier import classify_pairs
 from perspicacite.indicium_layer.invalidation import (
     compute_paper_hash,
@@ -83,7 +84,6 @@ from perspicacite.indicium_layer.queries import (
 )
 from perspicacite.logging import get_logger
 from perspicacite.pipeline.claims import claims_to_graph, extract_claims
-from perspicacite.indicium_layer.anchor import anchor_claims
 
 logger = get_logger("perspicacite.indicium_layer.builder")
 
@@ -333,7 +333,7 @@ async def build_claim_graph(
             audit_path=audit_path,
         )
 
-        for ci, claim in enumerate(extracted):
+        for claim in extracted:
             # SHACL validate — validate_graph returns (conforms, report) tuple
             conforms, report = indicium.validate_graph(claims_to_graph([claim]))
             if not conforms:

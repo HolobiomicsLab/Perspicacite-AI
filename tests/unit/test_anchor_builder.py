@@ -26,12 +26,20 @@ _PAYLOAD = (
 
 
 @pytest.mark.unit
-async def test_builder_binds_quote_to_content_matched_passage(tmp_path):
+async def test_builder_binds_quote_to_content_matched_passage(tmp_path, monkeypatch):
+    # Redirect the on-disk manifest to tmp so the rebuild decision is hermetic
+    # (otherwise a prior run's manifest marks the paper unchanged and it's skipped).
+    monkeypatch.setattr(
+        "perspicacite.indicium_layer.manifest._DATA_DIR",
+        tmp_path / "claim_graphs",
+    )
     papers = {"10.1/x": {"paper_id": "10.1/x", "doi": "10.1/x", "title": "T"}}
     passages = {
         "10.1/x": [
-            {"chunk_idx": 0, "text": "Unrelated weather passage.", "char_start": 0, "char_end": 25},
-            {"chunk_idx": 1, "text": "Unrelated traffic passage.", "char_start": 26, "char_end": 51},
+            {"chunk_idx": 0, "text": "Unrelated weather passage.",
+             "char_start": 0, "char_end": 25},
+            {"chunk_idx": 1, "text": "Unrelated traffic passage.",
+             "char_start": 26, "char_end": 51},
             {"chunk_idx": 2, "text": "We found that compound A inhibits enzyme B strongly.",
              "char_start": 52, "char_end": 103},
         ]
