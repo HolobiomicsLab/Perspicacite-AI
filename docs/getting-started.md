@@ -37,7 +37,7 @@ SciLEx is optional — all KB-side tools work without it.
 ## 2. Configure
 
 ```bash
-cp config.example.yml config.yml
+cp config/example.yml config.yml
 cp .env.example .env
 ```
 

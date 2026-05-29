@@ -22,7 +22,7 @@
 # Costs: codestral-embed billed per OpenRouter pricing (new docs only; queries cheap).
 #
 # Launch:
-#   OPENROUTER_API_KEY=$OPENROUTER_API_KEY uv run perspicacite -c config_code_kb.yml serve
+#   OPENROUTER_API_KEY=$OPENROUTER_API_KEY uv run perspicacite -c config/embeddings/code-kb.yml serve
 
 version: "2.0.0"
 config_name: "code-kb-codestral-port8003"

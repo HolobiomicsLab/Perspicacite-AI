@@ -1,0 +1,90 @@
+# Perspicacité config — dunzhang/stella_en_1.5B_v5 — cross-domain generalist
+#
+# stella_en_1.5B_v5: 1.5B model, matryoshka representation (1024-dim output).
+# Top performer on MTEB v2 in the 1–2B param class.
+# Best cross-domain balance: strong on NFCorpus, SciDocs, and keeps SciFact competitive.
+#
+# Expected benchmarks (BEIR, zero-shot):
+#   SciFact  NDCG@10 ≈ 0.80   (competitive with OpenAI 0.872 with reranker)
+#   NFCorpus NDCG@10 ≈ 0.42   (SOTA for <2B models; vs MiniLM 0.316)
+#   SciDocs  nDCG@10 ≈ 0.26   (vs MiniLM 0.1055)
+#
+# Hardware: 1.5B model — ~3 GB VRAM (FP16).
+# On Apple M2 Max (64 GB unified memory): fast MPS ingest.
+# Good price/performance ratio — recommended if 7B VRAM is a concern.
+#
+# GPU: auto-detected (MPS on Apple Silicon, CUDA on NVIDIA, CPU fallback).
+#
+# Note: requires `st:` prefix in embedding_model since dunzhang/ is not
+# in the auto-detected namespace list; prefix stripped before loading.
+#
+# Launch:
+#   uv run perspicacite -c config/embeddings/stella-1-5b.yml serve
+
+version: "2.0.0"
+config_name: "stella-1.5b-port8006"
+
+server:
+  host: "0.0.0.0"
+  port: 8006
+  reload: false
+
+llm:
+  default_provider: "openrouter"
+  default_model: "deepseek/deepseek-v4-flash"
+
+  providers:
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      timeout: 120
+      max_retries: 3
+
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+
+knowledge_base:
+  embedding_model: "st:dunzhang/stella_en_1.5B_v5"  # st: prefix → sentence-transformers
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  similarity_threshold: 0.0    # matryoshka models have different cosine score ranges
+  use_two_pass: true
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+rag_modes:
+  reranker_model: "BAAI/bge-reranker-v2-m3"
+
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+
+scilex:
+  enabled: false
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8006
+  transport: "streamable-http"
+
+auth:
+  enabled: true
+
+logging:
+  level: "INFO"
+  format: "json"

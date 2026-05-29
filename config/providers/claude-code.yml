@@ -9,7 +9,7 @@
 # 2. Sign in (one-time):  `claude login`
 # 3. Verify the CLI works:  `echo "say hi" | claude -p --model haiku`
 # 4. Use this file as your config:
-#       perspicacite -c config.claude_code.example.yml serve
+#       perspicacite -c config/providers/claude-code.yml serve
 #
 # **Caveat — shared rate limits.** Perspicacité shares your
 # interactive Claude Code rate window. A heavy ingest can freeze
@@ -18,7 +18,7 @@
 # - Pair with the `pdf_download.cache_pdfs: true` setting so re-ingest
 #   reuses on-disk PDFs.
 # - For unattended/concurrent use, prefer the direct Anthropic API
-#   with prompt caching (config.example.yml + ANTHROPIC_API_KEY).
+#   with prompt caching (config/example.yml + ANTHROPIC_API_KEY).
 #
 # **What you gain:**
 # - $0 marginal per-call cost (within your subscription limits).

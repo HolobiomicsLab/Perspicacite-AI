@@ -55,7 +55,7 @@ cd Perspicacite-AI
 **Verify:**
 
 ```bash
-test -f pyproject.toml && test -f config.example.yml && echo OK
+test -f pyproject.toml && test -f config/example.yml && echo OK
 ```
 
 ---
@@ -93,7 +93,7 @@ uv run perspicacite version
 ## Step 3 — Configure
 
 ```bash
-cp config.example.yml config.yml
+cp config/example.yml config.yml
 cp .env.example .env
 ```
 

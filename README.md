@@ -61,7 +61,7 @@ uv sync
 ### Configure
 
 ```bash
-cp config.example.yml config.yml
+cp config/example.yml config.yml
 cp .env.example .env
 # Edit .env — add at least one LLM API key
 ```
@@ -254,7 +254,7 @@ Full flags and usage: [docs/reference/cli.md](docs/reference/cli.md).
 
 ## Configuration
 
-Copy `config.example.yml` and edit. Key sections:
+Copy `config/example.yml` and edit. Key sections:
 
 ```yaml
 llm:
@@ -274,9 +274,9 @@ mcp:
 
 Full schema: [docs/reference/config.md](docs/reference/config.md).
 
-Alternative config presets: `config.ollama.example.yml` (local Ollama),
-`config.claude_code.example.yml` (Claude Code CLI), `config.codex.example.yml`,
-`config.hermes.example.yml`, `config.openclaw.example.yml`.
+Alternative config presets: `config/providers/ollama.yml` (local Ollama),
+`config/providers/claude-code.yml` (Claude Code CLI), `config/providers/codex.yml`,
+`config/providers/hermes.yml`, `config/providers/openclaw.yml`.
 
 ---
 
@@ -305,7 +305,8 @@ Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 <p align="center">
 <b>Citation:</b> <em>An AI Pipeline for Scientific Literacy and Discovery: a Demonstration of Perspicacité-AI Integration with Knowledge Graphs</em><br>
-L. Pradi, T. Jiang, M. Feraud, M. Bekbergenova, Y. Taghzouti, L.-F. Nothias — <em>ISWC-C 2025</em>
+L. Pradi, T. Jiang, M. Feraud, M. Bekbergenova, Y. Taghzouti, L.-F. Nothias — <em>ISWC-C 2025</em><br>
+<a href="https://ceur-ws.org/Vol-4085/paper77.pdf">CEUR-WS PDF</a> · <a href="https://hal.science/hal-05233151v1">HAL archive</a>
 </p>
 
 ```bibtex
@@ -313,7 +314,11 @@ L. Pradi, T. Jiang, M. Feraud, M. Bekbergenova, Y. Taghzouti, L.-F. Nothias — 
   title     = {An AI Pipeline for Scientific Literacy and Discovery: a Demonstration of Perspicacit\'{e}-AI Integration with Knowledge Graphs},
   author    = {Pradi, Lucas and Jiang, Tao and Feraud, Matthieu and Bekbergenova, Madina and Taghzouti, Yousouf and Nothias, Louis-Felix},
   booktitle = {ISWC-C 2025},
-  year      = {2025}
+  series    = {CEUR Workshop Proceedings},
+  volume    = {4085},
+  year      = {2025},
+  url       = {https://ceur-ws.org/Vol-4085/paper77.pdf},
+  note      = {HAL archive: https://hal.science/hal-05233151v1}
 }
 ```
 

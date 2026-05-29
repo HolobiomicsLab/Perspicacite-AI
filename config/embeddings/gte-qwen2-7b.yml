@@ -1,32 +1,31 @@
-# Perspicacité config — dunzhang/stella_en_1.5B_v5 — cross-domain generalist
+# Perspicacité config — Alibaba-NLP/gte-Qwen2-7B-instruct — best cross-domain
 #
-# stella_en_1.5B_v5: 1.5B model, matryoshka representation (1024-dim output).
-# Top performer on MTEB v2 in the 1–2B param class.
-# Best cross-domain balance: strong on NFCorpus, SciDocs, and keeps SciFact competitive.
+# gte-Qwen2-7B-instruct: 7B model, 3584-dim, best zero-shot NDCG on MTEB avg.
+# Top on SciDocs (nDCG@10 ≈ 0.2891) — best for citation-prediction tasks.
+# Also strong on cross-domain medical (NFCorpus ≈ 0.41).
 #
 # Expected benchmarks (BEIR, zero-shot):
-#   SciFact  NDCG@10 ≈ 0.80   (competitive with OpenAI 0.872 with reranker)
-#   NFCorpus NDCG@10 ≈ 0.42   (SOTA for <2B models; vs MiniLM 0.316)
-#   SciDocs  nDCG@10 ≈ 0.26   (vs MiniLM 0.1055)
+#   SciFact  NDCG@10 ≈ 0.79   (with reranker, slightly below BGE-M3 0.879)
+#   NFCorpus NDCG@10 ≈ 0.40–0.41   (vs MiniLM 0.316)
+#   SciDocs  nDCG@10 ≈ 0.28–0.29   (vs MiniLM 0.1055 — ~3× better)
 #
-# Hardware: 1.5B model — ~3 GB VRAM (FP16).
-# On Apple M2 Max (64 GB unified memory): fast MPS ingest.
-# Good price/performance ratio — recommended if 7B VRAM is a concern.
+# Hardware: 7B model — ~14 GB VRAM (FP16), ~7.5 GB (INT8).
+# On Apple M2 Max (64 GB unified memory): runs on MPS.
+# Ingest will be slower than smaller models but feasible for SciFact-size corpora.
 #
 # GPU: auto-detected (MPS on Apple Silicon, CUDA on NVIDIA, CPU fallback).
 #
-# Note: requires `st:` prefix in embedding_model since dunzhang/ is not
-# in the auto-detected namespace list; prefix stripped before loading.
+# Note: requires `st:` prefix since Alibaba-NLP/ is not in auto-detected namespaces.
 #
 # Launch:
-#   uv run perspicacite -c config_stella_1_5b.yml serve
+#   uv run perspicacite -c config/embeddings/gte-qwen2-7b.yml serve
 
 version: "2.0.0"
-config_name: "stella-1.5b-port8006"
+config_name: "gte-qwen2-7b-port8007"
 
 server:
   host: "0.0.0.0"
-  port: 8006
+  port: 8007
   reload: false
 
 llm:
@@ -49,12 +48,12 @@ llm:
     chat_history_turns: 10
 
 knowledge_base:
-  embedding_model: "st:dunzhang/stella_en_1.5B_v5"  # st: prefix → sentence-transformers
+  embedding_model: "st:Alibaba-NLP/gte-Qwen2-7B-instruct"  # st: prefix → sentence-transformers
   chunk_size: 1000
   chunk_overlap: 200
   chunking_method: "token"
   default_top_k: 10
-  similarity_threshold: 0.0    # matryoshka models have different cosine score ranges
+  similarity_threshold: 0.0    # LLM-based; cosine scores differ from BERT models
   use_two_pass: true
 
 database:
@@ -79,7 +78,7 @@ scilex:
 mcp:
   enabled: true
   host: "0.0.0.0"
-  port: 8006
+  port: 8007
   transport: "streamable-http"
 
 auth:

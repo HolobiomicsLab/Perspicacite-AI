@@ -24,7 +24,7 @@ dispatch (config-resolver, no network).
 | `gemini` | SKIPPED | `gemini-1.5-flash` | `GOOGLE_API_KEY` not in environment |
 | `ollama` | SKIPPED | first available model | Ollama not reachable at localhost:11434 |
 | `claude_cli` | **PASS** | `haiku` | `claude` binary found; `~/.claude/config.json` present; real call returned non-empty string |
-| `agent_cli` (codex) | **PASS** | `gpt-5.5` | `codex` binary found, `~/.codex/auth.json` present; full preset flags from `config.codex.example.yml` (`exec --skip-git-repo-check --sandbox read-only --ephemeral --output-last-message`); ~8 s round-trip |
+| `agent_cli` (codex) | **PASS** | `gpt-5.5` | `codex` binary found, `~/.codex/auth.json` present; full preset flags from `config/providers/codex.yml` (`exec --skip-git-repo-check --sandbox read-only --ephemeral --output-last-message`); ~8 s round-trip |
 
 ## Stage-routing results
 
@@ -68,7 +68,7 @@ Stage-routing PASS: 8 of 8 (all stages + fallback + dispatch-capture)
   is benign — the event loop is created implicitly on Python 3.13. A future cleanup
   could switch to `asyncio.run()` instead of `get_event_loop().run_until_complete()`.
 - `agent_cli` (codex) works fine via subprocess pipe stdin — no TTY required.
-  Verified live with the full preset from `config.codex.example.yml`:
+  Verified live with the full preset from `config/providers/codex.yml`:
   `exec --skip-git-repo-check --sandbox read-only --ephemeral
   --output-last-message <tempfile>`. Earlier draft of this test included an
   incorrect `sys.stdin.isatty()` skip; removed.

@@ -33,7 +33,7 @@ def test_add_to_kb_ingest_mode_overrides_config(tmp_path):
         result = runner.invoke(
             cli,
             [
-                "-c", "config.example.yml",
+                "-c", "config/example.yml",
                 "add-to-kb", "mytest",
                 "--from-bibtex", str(bib),
                 "--ingest-mode", "abstract_only",
@@ -67,10 +67,10 @@ def test_add_to_kb_default_ingest_mode_unchanged(tmp_path):
         runner = CliRunner()
         runner.invoke(
             cli,
-            ["-c", "config.example.yml", "add-to-kb", "mytest", "--from-bibtex", str(bib)],
+            ["-c", "config/example.yml", "add-to-kb", "mytest", "--from-bibtex", str(bib)],
         )
 
-    # config.example.yml has ingest_mode: "auto" — flag not given, stays "auto"
+    # config/example.yml has ingest_mode: "auto" — flag not given, stays "auto"
     assert captured.get("mode") == "auto"
 
 
@@ -95,7 +95,7 @@ def test_add_to_kb_ingest_mode_full_text(tmp_path):
         runner = CliRunner()
         runner.invoke(
             cli,
-            ["-c", "config.example.yml", "add-to-kb", "mytest",
+            ["-c", "config/example.yml", "add-to-kb", "mytest",
              "--from-bibtex", str(bib), "--ingest-mode", "full_text"],
         )
 
@@ -112,7 +112,7 @@ def test_add_to_kb_invalid_ingest_mode_rejected(tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["-c", "config.example.yml", "add-to-kb", "mytest",
+        ["-c", "config/example.yml", "add-to-kb", "mytest",
          "--from-bibtex", str(bib), "--ingest-mode", "banana"],
     )
     assert result.exit_code != 0
@@ -142,7 +142,7 @@ def test_create_kb_ingest_mode_overrides_config(tmp_path):
         runner = CliRunner()
         result = runner.invoke(
             cli,
-            ["-c", "config.example.yml", "create-kb", "newkb",
+            ["-c", "config/example.yml", "create-kb", "newkb",
              "--from-bibtex", str(bib), "--ingest-mode", "abstract_only"],
         )
 

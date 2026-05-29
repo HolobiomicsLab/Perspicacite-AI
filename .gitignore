@@ -95,6 +95,15 @@ packages_to_use/
 # Ruff cache
 .ruff_cache/
 
+# Tooling caches & coverage data
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+
+# Local claim-graph stores (pyoxigraph/RocksDB; per-machine runtime state)
+data/claim_graphs/
+
 # Documentation files (keep only main docs)
 *.md
 !README.md

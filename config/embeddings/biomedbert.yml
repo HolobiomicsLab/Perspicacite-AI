@@ -12,7 +12,7 @@
 # No API key required (fully local via sentence-transformers).
 #
 # Launch:
-#   uv run perspicacite -c config_biomedbert.yml serve
+#   uv run perspicacite -c config/embeddings/biomedbert.yml serve
 
 version: "2.0.0"
 config_name: "biomedbert-port8006"

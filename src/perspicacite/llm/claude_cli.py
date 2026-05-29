@@ -7,7 +7,7 @@ Claude Code's flags baked in. Existing imports
 working unchanged.
 
 See ``agent_cli.py`` for the underlying implementation and
-``config.claude_code.example.yml`` for a config-only setup.
+``config/providers/claude-code.yml`` for a config-only setup.
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ uv sync
 uv pip install -e ".[scilex,cookies]"
 
 # Copy config and add at least one LLM key
-cp config.example.yml config.yml
+cp config/example.yml config.yml
 cp .env.example .env
 ```
 

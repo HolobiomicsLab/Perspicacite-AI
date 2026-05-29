@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Perspicacité is configured via a YAML file. Copy `config.example.yml` to `config.yml`
+Perspicacité is configured via a YAML file. Copy `config/example.yml` to `config.yml`
 and edit from there. The file path is passed with the `-c` flag:
 
 ```bash
@@ -111,7 +111,7 @@ llm:
   providers:
     agent_cli:
       executable: "claude"
-      # ... see config.claude_code.example.yml
+      # ... see config/providers/claude-code.yml
 ```
 
 ---

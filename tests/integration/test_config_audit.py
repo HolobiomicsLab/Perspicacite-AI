@@ -78,8 +78,8 @@ def _wrap_config(llm: LLMConfig) -> object:
 # ---------------------------------------------------------------------------
 
 _YAML_PRESETS = sorted(
-    glob.glob(str(REPO_ROOT / "config.*.example.yml"))
-    + glob.glob(str(REPO_ROOT / "config.example.yml"))
+    glob.glob(str(REPO_ROOT / "config" / "example.yml"))
+    + glob.glob(str(REPO_ROOT / "config" / "providers" / "*.yml"))
 )
 
 

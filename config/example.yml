@@ -28,7 +28,7 @@ llm:
   # ── Free-tier auto-rotation (zero-cost alternative) ──────────────────────
   # Set free_auto_mode: true + add your OPENROUTER_API_KEY (free account at
   # openrouter.ai — no credits needed) to rotate through free models instead.
-  # See config.example.openrouter-free.yml for a full zero-cost preset.
+  # See config/providers/openrouter-free.yml for a full zero-cost preset.
   # free_auto_mode: false
   # free_tier_fallback_models:
   #   - "deepseek/deepseek-v4-flash:free"

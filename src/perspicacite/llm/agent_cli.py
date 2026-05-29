@@ -51,8 +51,8 @@ Configuration shape (``config.yml``):
             claude-sonnet-4-5: sonnet  # names into CLI aliases
             claude-haiku-4-5:  haiku
 
-See ``config.claude_code.example.yml``, ``config.codex.example.yml``,
-``config.openclaw.example.yml``, and ``config.hermes.example.yml`` for
+See ``config/providers/claude-code.yml``, ``config/providers/codex.yml``,
+``config/providers/openclaw.yml``, and ``config/providers/hermes.yml`` for
 ready-made presets.
 
 **Caveat: rate limits are shared with your interactive agent

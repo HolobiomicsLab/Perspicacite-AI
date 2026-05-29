@@ -11,16 +11,16 @@
 
 | Preset file | Outcome | default_provider |
 |---|---|---|
-| `config.example.yml` | PASS | `anthropic` |
-| `config.claude_code.example.yml` | PASS | `claude_cli` |
-| `config.codex.example.yml` | PASS | `agent_cli` |
-| `config.hermes.example.yml` | PASS | `agent_cli` |
-| `config.openclaw.example.yml` | PASS | `agent_cli` |
-| `config.ollama.example.yml` | PASS | `ollama` |
+| `config/example.yml` | PASS | `anthropic` |
+| `config/providers/claude-code.yml` | PASS | `claude_cli` |
+| `config/providers/codex.yml` | PASS | `agent_cli` |
+| `config/providers/hermes.yml` | PASS | `agent_cli` |
+| `config/providers/openclaw.yml` | PASS | `agent_cli` |
+| `config/providers/ollama.yml` | PASS | `ollama` |
 
 All 6 presets parse into `Config` without validation errors. For each, `default_provider` is present in `cfg.llm.providers`.
 
-Note: `config.example.yml` uses a flat name pattern (no middle segment) and is discovered via a separate `glob.glob("config.example.yml")` call alongside the `config.*.example.yml` glob.
+Note: `config/example.yml` uses a flat name pattern (no middle segment) and is discovered via a separate `glob.glob("config/example.yml")` call alongside the `config.*.example.yml` glob.
 
 ---
 

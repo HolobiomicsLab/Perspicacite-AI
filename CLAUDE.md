@@ -15,7 +15,7 @@ uv sync --dev           # install all dependencies including dev extras
 cp .env.example .env    # then add at least one LLM API key
 ```
 
-Configuration lives in `config.yml` (git-ignored; copy from `config.example.yml`). The app reads it at startup via `perspicacite.config.loader.load_config()`.
+Configuration lives in `config.yml` (git-ignored; copy from `config/example.yml`). The app reads it at startup via `perspicacite.config.loader.load_config()`.
 
 ## Commands
 

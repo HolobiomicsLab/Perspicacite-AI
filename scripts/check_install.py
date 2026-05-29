@@ -55,7 +55,7 @@ def _check_venv() -> tuple[str, str]:
 def _check_config() -> tuple[str, str]:
     config = REPO_ROOT / "config.yml"
     if not config.exists():
-        return "FAIL", "config.yml missing — run: cp config.example.yml config.yml"
+        return "FAIL", "config.yml missing — run: cp config/example.yml config.yml"
     return "OK", "config.yml present"
 
 

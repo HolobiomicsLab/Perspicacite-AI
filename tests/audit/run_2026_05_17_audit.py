@@ -245,7 +245,7 @@ def audit_cli_ingest_mode() -> list[dict[str, Any]]:
         return results
 
     # Use absolute path so CliRunner's CWD doesn't matter
-    config_path = str(ROOT / "config.example.yml")
+    config_path = str(ROOT / "config/example.yml")
 
     def _make_bib(tmp: Path) -> Path:
         bib = tmp / "refs.bib"
@@ -304,7 +304,7 @@ def audit_cli_ingest_mode() -> list[dict[str, Any]]:
         results.append(_result(ok2, "add_to_kb_full_text",
                                f"mode={captured2.get('mode')!r}"))
 
-    # -- add-to-kb: default unchanged (config.example.yml has ingest_mode: auto) --
+    # -- add-to-kb: default unchanged (config/example.yml has ingest_mode: auto) --
     with tempfile.TemporaryDirectory() as td:
         bib = _make_bib(Path(td))
         captured3: dict = {}

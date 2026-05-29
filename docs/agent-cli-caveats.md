@@ -5,10 +5,10 @@ subprocess-based LLM routing path). Captured from live testing
 during the May 2026 rollout. Keep this in sync as upstream CLIs evolve.
 
 See also:
-- [`config.claude_code.example.yml`](../config.claude_code.example.yml)
-- [`config.codex.example.yml`](../config.codex.example.yml)
-- [`config.openclaw.example.yml`](../config.openclaw.example.yml)
-- [`config.hermes.example.yml`](../config.hermes.example.yml)
+- [`config/providers/claude-code.yml`](../config/providers/claude-code.yml)
+- [`config/providers/codex.yml`](../config/providers/codex.yml)
+- [`config/providers/openclaw.yml`](../config/providers/openclaw.yml)
+- [`config/providers/hermes.yml`](../config/providers/hermes.yml)
 - [`src/perspicacite/llm/agent_cli.py`](../src/perspicacite/llm/agent_cli.py)
 
 ## What "agent CLI" routing means
@@ -33,7 +33,7 @@ calls and freeze you out of the CLI interactively for hours.
   keep hot-loop stages on a cheap path (Haiku, Ollama) and reserve
   the agent CLI for synthesis only.
 - For unattended / production use, prefer direct API + prompt caching
-  (`config.example.yml` + `ANTHROPIC_API_KEY`).
+  (`config/example.yml` + `ANTHROPIC_API_KEY`).
 
 ### No prompt caching
 Agent CLIs don't expose `cache_control` (Anthropic's prompt-cache
@@ -170,7 +170,7 @@ installed version).
   `hermes setup`), not by a CLI flag.
 - **Simpler alternative for Hermes models:** the Hermes family is
   published on Ollama as `hermes-3:70b` etc. Use
-  [`config.ollama.example.yml`](../config.ollama.example.yml) with
+  [`config/providers/ollama.yml`](../config/providers/ollama.yml) with
   `default_model: "hermes-3:70b"` — fully supported today, no CLI
   dependency.
 

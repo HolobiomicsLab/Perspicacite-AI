@@ -20,7 +20,7 @@
 # Full benchmark: perspicacite-eval/docs/retrieval_benchmark_2026_05_26.md
 #
 # Launch:
-#   OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c config_openai_large.yml serve
+#   OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c config/embeddings/openai-large.yml serve
 
 version: "2.0.0"
 config_name: "openai-large-port8002"
