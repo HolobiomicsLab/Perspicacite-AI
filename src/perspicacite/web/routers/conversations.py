@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -13,12 +14,13 @@ router = APIRouter()
 
 
 @router.get("/api/conversations")
-async def list_conversations(session_id: str | None = None):
+async def list_conversations(session_id: str | None = None) -> list[Any]:
     """List all conversations (optionally filtered by session_id)."""
     if not app_state.session_store:
         return []
 
     # If no session_id provided, return all conversations
+    conversations: list[Any]
     if session_id:
         conversations = await app_state.session_store.list_conversations(session_id)
     else:

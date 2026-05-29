@@ -38,7 +38,8 @@ def _client_from_state(
         raise HTTPException(status_code=503, detail="Zotero not configured")
     eff_library_type = library_type or cfg.library_type
     base_url = getattr(cfg, "base_url", "") or None
-    is_local = bool(base_url) and ("localhost" in base_url or "127.0.0.1" in base_url)
+    _base_url_str = base_url or ""
+    is_local = bool(base_url) and ("localhost" in _base_url_str or "127.0.0.1" in _base_url_str)
     if not cfg.api_key and not is_local:
         raise HTTPException(
             status_code=503,

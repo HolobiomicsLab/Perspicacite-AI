@@ -117,7 +117,7 @@ def _chunk_by_semantic(
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
 
     chunks = []
-    current_chunk = []
+    current_chunk: list[str] = []
     current_length = 0
     chunk_index = 0
 

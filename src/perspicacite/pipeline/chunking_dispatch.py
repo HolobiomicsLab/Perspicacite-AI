@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 
@@ -200,7 +200,12 @@ def _to_chunk_config(config: Any) -> ChunkConfig:
     if method not in {"token", "semantic", "agentic", "section_aware"}:
         method = "token"
     chunk_size, chunk_overlap = _chunk_size_overlap(config)
-    return ChunkConfig(method=method, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    # cast: method is validated against the allowed set above
+    return ChunkConfig(
+        method=cast("Literal['token', 'semantic', 'agentic', 'section_aware']", method),
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
 
 
 async def chunk_document(

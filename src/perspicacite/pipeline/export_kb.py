@@ -360,10 +360,10 @@ async def export_kb(
             if src.exists():
                 dest_dir = si_subdir / doi.replace("/", "_")
                 dest_dir.mkdir(exist_ok=True)
-                for f in src.glob("*"):
-                    if f.is_file():
+                for si_file in src.glob("*"):
+                    if si_file.is_file():
                         try:
-                            shutil.copyfile(f, dest_dir / f.name)
+                            shutil.copyfile(si_file, dest_dir / si_file.name)
                             report.supplementary_copied += 1
                         except OSError:
                             pass

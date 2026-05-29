@@ -57,7 +57,7 @@ class RetrievedChunk(BaseModel):
 
     chunk: DocumentChunk
     score: float = Field(le=1.0)
-    retrieval_method: Literal["vector", "bm25", "hybrid"] = "vector"
+    retrieval_method: Literal["vector", "bm25", "hybrid", "reranked"] = "vector"
 
     def __repr__(self) -> str:
         return (

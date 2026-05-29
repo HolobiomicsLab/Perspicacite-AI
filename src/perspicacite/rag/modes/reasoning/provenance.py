@@ -201,7 +201,7 @@ async def run_provenance_stream(
 
         _has_indicium = True
     except ImportError:
-        claim_jsonld = None  # type: ignore[assignment]
+        claim_jsonld = None
         _has_indicium = False
 
     _claim_graph_store_cls: Any = None
@@ -220,10 +220,10 @@ async def run_provenance_stream(
         # Use a minimal concrete subclass so abstract-method checks pass,
         # then call _build_kb_retriever directly (can be monkeypatched in tests).
         class _MinimalMode(BaseRAGMode):
-            async def execute(self, *a, **kw):  # type: ignore[override]
+            async def execute(self, *a, **kw):
                 raise NotImplementedError
 
-            async def execute_stream(self, *a, **kw):  # type: ignore[override]
+            async def execute_stream(self, *a, **kw):
                 raise NotImplementedError
 
         mode_obj = _MinimalMode(config)

@@ -27,7 +27,7 @@ class BaseRAGMode(ABC):
         pass
 
     @abstractmethod
-    async def execute_stream(
+    def execute_stream(
         self,
         request: RAGRequest,
         llm: Any,
@@ -35,8 +35,16 @@ class BaseRAGMode(ABC):
         embedding_provider: Any,
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
-        """Execute RAG query with streaming."""
-        pass
+        """Execute RAG query with streaming.
+
+        Declared as a plain ``def`` (not ``async def``) returning an
+        ``AsyncIterator``: concrete modes implement it as async generators
+        (``async def`` + ``yield``), and an async-generator function's type is
+        ``AsyncIterator``, not ``Coroutine[..., AsyncIterator]``. Marking the
+        abstract signature ``async def`` would type it as the latter and make
+        every override mismatch. Callers consume it with ``async for``.
+        """
+        ...
 
     def _build_kb_retriever(
         self,
@@ -78,7 +86,11 @@ class BaseRAGMode(ABC):
 
         from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-        single_name = (kb_names[0] if kb_names else None) or getattr(request, "kb_name", "default")
+        single_name: str = (
+            (kb_names[0] if kb_names else None)
+            or getattr(request, "kb_name", None)
+            or "default"
+        )
         dkb = DynamicKnowledgeBase(
             vector_store=vector_store,
             embedding_service=embedding_provider,

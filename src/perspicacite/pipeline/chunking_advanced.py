@@ -31,25 +31,29 @@ from perspicacite.models.papers import Paper
 logger = get_logger("perspicacite.pipeline.chunking_advanced")
 
 # Optional imports for advanced features
+np: Any
 try:
     import numpy as np
 except Exception:
-    np = None
+    np = None  # optional dep fallback
 
+tiktoken: Any
 try:
     import tiktoken
 except Exception:
-    tiktoken = None
+    tiktoken = None  # optional dep fallback
 
+AutoTokenizer: Any
 try:
     from transformers import AutoTokenizer
 except Exception:
-    AutoTokenizer = None
+    AutoTokenizer = None  # optional dep fallback
 
+SentenceTransformer: Any
 try:
     from sentence_transformers import SentenceTransformer
 except Exception:
-    SentenceTransformer = None
+    SentenceTransformer = None  # optional dep fallback
 
 
 # =============================================================================
@@ -207,7 +211,7 @@ def _split_sentences(text: str) -> list[str]:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     parts = [p.strip() for p in text.split("\n") if p.strip()]
     sentences: list[str] = []
-    buffer = []
+    buffer: list[str] = []
 
     for part in parts:
         chunks = re.split(r"(?<=[.!?])\s+", part)
@@ -681,6 +685,7 @@ class AdvancedChunker:
                 "Reply ONLY with the JSON object."
             )
 
+            window_chunks: list[str] = []  # declared once here; assigned in both branches below
             try:
                 response = await llm_client.complete(prompt, temperature=0.0, max_tokens=1024)
             except Exception as e:
@@ -704,41 +709,43 @@ class AdvancedChunker:
                     for sp in raw_spans:
                         if not isinstance(sp, dict):
                             continue
-                        s = sp.get("start")
-                        e = sp.get("end")
-                        if isinstance(s, int) and isinstance(e, int):
-                            spans.append((s, e))
-                except Exception as e:
-                    logger.warning(f"chunking: failed to parse agentic spans: {e}")
+                        sp_s = sp.get("start")
+                        sp_e = sp.get("end")
+                        if isinstance(sp_s, int) and isinstance(sp_e, int):
+                            spans.append((sp_s, sp_e))
+                except Exception as parse_err:
+                    # Python 3 deletes the except-variable at block exit;
+                    # bind message before block ends so it's usable outside.
+                    logger.warning(f"chunking: failed to parse agentic spans: {parse_err}")
 
             # Normalize spans → sorted, clipped, contiguous
             norm_spans: list[tuple[int, int]] = []
             if spans:
                 spans.sort(key=lambda x: (x[0], x[1]))
                 cur = 0
-                for s, e in spans:
-                    s = max(0, min(s, wlen))
-                    e = max(0, min(e, wlen))
-                    if e < s:
-                        s, e = e, s
-                    if s > cur:
-                        norm_spans.append((cur, s))
-                        cur = s
-                    if e > cur:
-                        norm_spans.append((cur, e))
-                        cur = e
+                for ns, ne in spans:
+                    ns = max(0, min(ns, wlen))
+                    ne = max(0, min(ne, wlen))
+                    if ne < ns:
+                        ns, ne = ne, ns
+                    if ns > cur:
+                        norm_spans.append((cur, ns))
+                        cur = ns
+                    if ne > cur:
+                        norm_spans.append((cur, ne))
+                        cur = ne
                 if cur < wlen:
                     norm_spans.append((cur, wlen))
             else:
                 norm_spans = [(0, wlen)]
 
             # Enforce token constraints: merge small, split large
-            window_chunks: list[str] = []
+            window_chunks = []
             buffer = pending_small if pending_small else ""
             pending_small = ""
 
-            for s, e in norm_spans:
-                span_txt = win_text[s:e]
+            for rs, re_ in norm_spans:
+                span_txt = win_text[rs:re_]
                 candidate = (buffer + (" " if buffer and span_txt else "") + span_txt).strip()
                 if not candidate:
                     continue

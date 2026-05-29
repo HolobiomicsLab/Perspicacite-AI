@@ -142,7 +142,9 @@ async def _bibtex_ingest_worker(
         from perspicacite.pipeline.download import retrieve_paper_content
         from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-        kb = await app_state.session_store.get_kb_metadata(name)
+        store = app_state.session_store
+        assert store is not None  # initialize() always sets session_store before workers run
+        kb = await store.get_kb_metadata(name)
         if not kb:
             await registry.fail(job_id, f"Knowledge base '{name}' not found")
             return
@@ -250,7 +252,7 @@ async def _bibtex_ingest_worker(
             added = await dkb.add_papers(papers_to_add, include_full_text=True)
             kb.paper_count += len(papers_to_add)
             kb.chunk_count += added
-            await app_state.session_store.save_kb_metadata(kb)
+            await store.save_kb_metadata(kb)
 
         # Cycle A: on-disk capsule artifacts per added paper (metadata + resources + blocks).
         # Skip per-paper if capsule auto-build disabled.
@@ -299,7 +301,9 @@ async def _dois_ingest_worker(
         from perspicacite.pipeline.download import retrieve_paper_content
         from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-        kb = await app_state.session_store.get_kb_metadata(name)
+        store = app_state.session_store
+        assert store is not None  # initialize() always sets session_store before workers run
+        kb = await store.get_kb_metadata(name)
         if not kb:
             await registry.fail(job_id, f"Knowledge base '{name}' not found")
             return
@@ -401,7 +405,7 @@ async def _dois_ingest_worker(
             added = await dkb.add_papers(papers_to_add, include_full_text=True)
             kb.paper_count += len(papers_to_add)
             kb.chunk_count += added
-            await app_state.session_store.save_kb_metadata(kb)
+            await store.save_kb_metadata(kb)
 
         # Cycle A: on-disk capsule artifacts per added paper (metadata + resources + blocks).
         # Skip per-paper if capsule auto-build disabled.
@@ -594,15 +598,18 @@ async def list_kb_papers(name: str):
     for m in metas:
         m = m or {}
         pid = m.get("paper_id")
-        if not pid or pid in seen:
+        if not pid:
             continue
-        seen.add(pid)
+        pid_str = str(pid)
+        if pid_str in seen:
+            continue
+        seen.add(pid_str)
         authors = m.get("authors")
         if isinstance(authors, str):
             authors = [a.strip() for a in authors.split(",") if a.strip()]
         papers.append(
             {
-                "paper_id": pid,
+                "paper_id": pid_str,
                 "title": m.get("title"),
                 "authors": authors or [],
                 "year": m.get("year"),
@@ -785,7 +792,7 @@ async def get_kb_stats(name: str):
         by_source[source_key] = by_source.get(source_key, 0) + 1
         ct_key = str(m.get("content_type") or "unknown")
         by_content_type[ct_key] = by_content_type.get(ct_key, 0) + 1
-        j = (m.get("journal") or "").strip()
+        j = str(m.get("journal") or "").strip()
         if j:
             by_journal[j] = by_journal.get(j, 0) + 1
     top_journals = sorted(by_journal.items(), key=lambda kv: kv[1], reverse=True)[:10]
@@ -849,7 +856,8 @@ async def kb_export(name: str, format: str = "obsidian-vault"):
                 "abstract": m.get("abstract"),
             })
     except Exception as exc:
-        logger.warning("kb_export_paper_enum_failed", kb=name, error=str(exc))
+        # kb.py uses the stdlib logger (%s-style), not structlog kwargs.
+        logger.warning("kb_export_paper_enum_failed kb=%s error=%s", name, str(exc))
         papers = []
 
     # Conversations linked to this KB
@@ -869,7 +877,8 @@ async def kb_export(name: str, format: str = "obsidian-vault"):
             c_dict["messages"] = msgs
             conv_dicts.append(c_dict)
     except Exception as exc:
-        logger.warning("kb_export_conv_enum_failed", kb=name, error=str(exc))
+        # kb.py uses the stdlib logger (%s-style), not structlog kwargs.
+        logger.warning("kb_export_conv_enum_failed kb=%s error=%s", name, str(exc))
         conv_dicts = []
 
     kb_dict = kb.model_dump()
@@ -908,7 +917,7 @@ async def get_kb_chunks(
     result = coll.get(
         limit=limit,
         offset=offset,
-        where=where_filter,
+        where=where_filter,  # type: ignore[arg-type]  # chromadb Where accepts a plain dict filter
         include=["documents", "metadatas"],
     )
 
@@ -1464,13 +1473,17 @@ async def add_local_paths(name: str, payload: AddLocalPathsRequest) -> dict:
 @router.post("/api/kb/{name}/build-capsules")
 async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
     """Retro-build capsules for every paper in this KB. Returns job_id + sse_url."""
-    if app_state.job_registry is None:
+    reg = app_state.job_registry
+    if reg is None:
         raise HTTPException(status_code=503, detail="Job registry not available")
-    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    store = app_state.session_store
+    if store is None:
+        raise HTTPException(status_code=503, detail="session store unavailable")
+    kb_meta = await store.get_kb_metadata(name)
     if kb_meta is None:
         raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
     rows = await app_state.vector_store.list_paper_metadata(kb_meta.collection_name)
-    job_id = await app_state.job_registry.create("capsule_build", total=len(rows))
+    job_id = await reg.create("capsule_build", total=len(rows))
 
     async def _runner():
         from perspicacite.pipeline.capsule_builder import (
@@ -1486,16 +1499,16 @@ async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
                     paper=paper, pdf_path=pdf_path,
                     kb_name=name, app_state=app_state, force=force,
                 )
-                await app_state.job_registry.publish(job_id, {
+                await reg.publish(job_id, {
                     "type": "progress", "done": i + 1, "paper": paper.id,
                     "status": res.get("status"),
                 })
             except Exception as exc:
-                await app_state.job_registry.publish(job_id, {
+                await reg.publish(job_id, {
                     "type": "progress", "done": i + 1, "paper": paper.id,
                     "status": "errored", "error": str(exc),
                 })
-        await app_state.job_registry.finish(job_id, {"total": len(rows)})
+        await reg.finish(job_id, {"total": len(rows)})
 
     task = asyncio.create_task(_runner())
     _local_tasks.add(task)
@@ -1520,12 +1533,16 @@ async def expand_similar_cutoff(name: str, payload: ExpandSimilarCutoffRequest) 
 async def expand_similar_score(name: str, payload: ExpandSimilarScoreRequest) -> dict:
     """Phase 1: snowball + similarity-score candidates against the KB. Returns
     a job whose SSE ``done`` event carries {candidates, histogram, samples}."""
-    if app_state.job_registry is None:
+    reg = app_state.job_registry
+    if reg is None:
         raise HTTPException(status_code=503, detail="Job registry not available")
-    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    store = app_state.session_store
+    if store is None:
+        raise HTTPException(status_code=503, detail="session store unavailable")
+    kb_meta = await store.get_kb_metadata(name)
     if kb_meta is None:
         raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
-    job_id = await app_state.job_registry.create("expand_similar_score", total=1)
+    job_id = await reg.create("expand_similar_score", total=1)
 
     async def _runner():
         from perspicacite.pipeline.similarity_expansion import score_expansion_candidates
@@ -1537,7 +1554,7 @@ async def expand_similar_score(name: str, payload: ExpandSimilarScoreRequest) ->
                 max_per_seed=payload.max_per_seed,
                 method=payload.method,
             )
-            await app_state.job_registry.finish(job_id, {
+            await reg.finish(job_id, {
                 "candidates": report.candidates,
                 "histogram": report.histogram,
                 "samples": report.samples,
@@ -1545,7 +1562,7 @@ async def expand_similar_score(name: str, payload: ExpandSimilarScoreRequest) ->
                 "method": report.method,
             })
         except Exception as exc:
-            await app_state.job_registry.fail(job_id, str(exc))
+            await reg.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())
     _local_tasks.add(task)
@@ -1557,13 +1574,17 @@ async def expand_similar_score(name: str, payload: ExpandSimilarScoreRequest) ->
 async def expand_similar_commit(name: str, payload: ExpandSimilarCommitRequest) -> dict:
     """Phase 2: ingest the candidates scoring at/above ``cutoff`` into the KB.
     Returns a job whose SSE ``done`` event carries the ingest report."""
-    if app_state.job_registry is None:
+    reg = app_state.job_registry
+    if reg is None:
         raise HTTPException(status_code=503, detail="Job registry not available")
-    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    store = app_state.session_store
+    if store is None:
+        raise HTTPException(status_code=503, detail="session store unavailable")
+    kb_meta = await store.get_kb_metadata(name)
     if kb_meta is None:
         raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
     scored = [{"doi": c.doi, "score": c.score} for c in payload.scored]
-    job_id = await app_state.job_registry.create("expand_similar_commit", total=len(scored))
+    job_id = await reg.create("expand_similar_commit", total=len(scored))
 
     async def _runner():
         from perspicacite.pipeline.similarity_expansion import commit_expansion
@@ -1571,9 +1592,9 @@ async def expand_similar_commit(name: str, payload: ExpandSimilarCommitRequest) 
             res = await commit_expansion(
                 app_state=app_state, kb_name=name, scored=scored, cutoff=payload.cutoff
             )
-            await app_state.job_registry.finish(job_id, res)
+            await reg.finish(job_id, res)
         except Exception as exc:
-            await app_state.job_registry.fail(job_id, str(exc))
+            await reg.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())
     _local_tasks.add(task)
@@ -1593,9 +1614,13 @@ async def fetch_paper_resources_async(name: str, paper_id: str, body: dict | Non
     Body: ``{"kinds": ["github","zenodo","doi"], "ingest": true, "force": false}``
     Returns: ``{"job_id": "...", "sse_url": "..."}``.
     """
-    if app_state.job_registry is None:
+    reg = app_state.job_registry
+    if reg is None:
         raise HTTPException(status_code=503, detail="Job registry not available")
-    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    store = app_state.session_store
+    if store is None:
+        raise HTTPException(status_code=503, detail="session store unavailable")
+    kb_meta = await store.get_kb_metadata(name)
     if kb_meta is None:
         raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
     rows = await app_state.vector_store.list_paper_metadata(kb_meta.collection_name)
@@ -1625,17 +1650,17 @@ async def fetch_paper_resources_async(name: str, paper_id: str, body: dict | Non
     cap_dir = capsule_dir_for(paper, root=app_state.config.capsule.root)
     paper._kb_name = name
 
-    job_id = await app_state.job_registry.create("external_fetch", total=0)
+    job_id = await reg.create("external_fetch", total=0)
 
     async def _runner():
         try:
             await fetch_paper_resources(
                 paper=paper, capsule_dir=cap_dir, kinds=kinds,
-                app_state=app_state, registry=app_state.job_registry,
+                app_state=app_state, registry=reg,
                 job_id=job_id, ingest=ingest, force=force,
             )
         except Exception as exc:
-            await app_state.job_registry.fail(job_id, str(exc))
+            await reg.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())
     _local_tasks.add(task)

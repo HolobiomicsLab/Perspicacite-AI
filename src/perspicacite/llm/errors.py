@@ -12,6 +12,7 @@ provider Wave 3.2's fallback chain will skip next.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 
@@ -53,7 +54,7 @@ class AuthError(LLMError):
 
 # (compiled pattern, retry_seconds_extractor). Extractors return None
 # when no usable retry hint is available. First match wins.
-_RATE_LIMIT_PATTERNS: list[tuple[re.Pattern[str], callable]] = [
+_RATE_LIMIT_PATTERNS: list[tuple[re.Pattern[str], Callable[[re.Match[str]], int | None]]] = [
     # Claude Code: "Rate limit reached. Try again in 1h 23m."
     (
         re.compile(r"rate\s*limit\s*reached.*?try\s*again\s*in\s*"

@@ -1,12 +1,12 @@
 """ChromaDB vector store implementation."""
 
-from typing import Any
+from typing import Any, cast
 
 import chromadb
 
 # Note: IncludeEnum was removed in ChromaDB 0.6.0+, use Include type instead
 try:
-    from chromadb.api.types import IncludeEnum
+    from chromadb.api.types import IncludeEnum  # type: ignore[attr-defined]
 except ImportError:
     IncludeEnum = None  # Will use literal values instead
 
@@ -177,16 +177,18 @@ class ChromaVectorStore:
                 count=len(texts_to_embed),
                 collection=collection,
             )
-            embeddings = await self.embedding_provider.embed(texts_to_embed)
-            for idx, embedding in zip(indices_to_embed, embeddings, strict=True):
+            new_embeddings = await self.embedding_provider.embed(texts_to_embed)
+            for idx, embedding in zip(indices_to_embed, new_embeddings, strict=True):
                 chunks[idx].embedding = embedding
 
         # Prepare data for Chroma (lists must stay aligned — never filter embeddings)
         ids = [chunk.id for chunk in chunks]
         documents = [chunk.text for chunk in chunks]
-        embeddings = [chunk.embedding for chunk in chunks]
-        if any(e is None for e in embeddings):
+        _embeddings_maybe: list[list[float] | None] = [chunk.embedding for chunk in chunks]
+        if any(e is None for e in _embeddings_maybe):
             raise ValueError("All chunks must have embeddings before add_documents")
+        # After the guard above, no element is None; cast narrows the type.
+        embeddings: list[list[float]] = cast("list[list[float]]", _embeddings_maybe)
         metadatas = [_chunk_to_metadata(chunk.metadata) for chunk in chunks]
 
         # Add to Chroma
@@ -194,8 +196,8 @@ class ChromaVectorStore:
             coll.add(
                 ids=ids,
                 documents=documents,
-                embeddings=embeddings,
-                metadatas=metadatas,
+                embeddings=embeddings,  # type: ignore[arg-type]  # chromadb embeddings arg union impedance
+                metadatas=metadatas,  # type: ignore[arg-type]  # chromadb metadatas arg union impedance
             )
             logger.info(
                 "documents_added",
@@ -247,7 +249,7 @@ class ChromaVectorStore:
 
         try:
             results = coll.query(
-                query_embeddings=[query_embedding],
+                query_embeddings=[query_embedding],  # type: ignore[arg-type]  # chromadb query_embeddings arg union impedance
                 n_results=top_k,
                 where=where_clause,
                 include=["documents", "metadatas", "distances"],
@@ -257,9 +259,9 @@ class ChromaVectorStore:
             retrieved = []
             if results["ids"] and results["ids"][0]:
                 for i, doc_id in enumerate(results["ids"][0]):
-                    metadata = results["metadatas"][0][i]
-                    distance = float(results["distances"][0][i])
-                    document = results["documents"][0][i]
+                    metadata = results["metadatas"][0][i]  # type: ignore[index]  # chromadb result | None impedance; guarded above
+                    distance = float(results["distances"][0][i])  # type: ignore[index]  # chromadb result | None impedance; guarded above
+                    document = results["documents"][0][i]  # type: ignore[index]  # chromadb result | None impedance; guarded above
 
                     # Chroma returns a distance (lower = more similar). Map to (0,1] so
                     # downstream min_score filters work for both cosine and legacy L2 collections.
@@ -276,7 +278,7 @@ class ChromaVectorStore:
                     chunk = DocumentChunk(
                         id=doc_id,
                         text=document or "",
-                        metadata=_metadata_to_chunk(metadata),
+                        metadata=_metadata_to_chunk(metadata),  # type: ignore[arg-type]  # chromadb Mapping impedance
                     )
 
                     retrieved.append(
@@ -352,7 +354,7 @@ class ChromaVectorStore:
                 include=["metadatas"],
             )
             metas = r.get("metadatas") or []
-            return metas[0] if metas else None
+            return metas[0] if metas else None  # type: ignore[return-value]  # chromadb Mapping impedance
         except Exception as e:
             logger.error(
                 "peek_paper_metadata_failed",
@@ -380,7 +382,7 @@ class ChromaVectorStore:
         for m in metas:
             if not m:
                 continue
-            pid = m.get("paper_id")
+            pid = str(m.get("paper_id") or "")  # chromadb metadata value is a union; coerce to str
             if not pid:
                 continue
             cur = by_pid.get(pid)
@@ -436,7 +438,7 @@ class ChromaVectorStore:
         for doc, meta in zip(docs, metas, strict=False):
             if not doc:
                 continue
-            pid = (meta or {}).get("paper_id") or ""
+            pid = str((meta or {}).get("paper_id") or "")  # chromadb metadata value is a union; coerce to str
             if not pid:
                 continue
             bucket = by_paper.setdefault(pid, [])
@@ -476,7 +478,7 @@ class ChromaVectorStore:
         for meta in data.get("metadatas") or []:
             if not meta:
                 continue
-            pid = meta.get("paper_id")
+            pid = str(meta.get("paper_id") or "")  # chromadb metadata value is a union; coerce to str
             if not pid:
                 continue
             entry = counts.setdefault(pid, {"title": meta.get("title", "") or "", "n": 0})
@@ -505,15 +507,16 @@ class ChromaVectorStore:
             for i in range(0, len(paper_ids), batch_size):
                 batch = paper_ids[i : i + batch_size]
                 result = coll.get(
-                    where={"paper_id": {"$in": batch}},
+                    where={"paper_id": {"$in": batch}},  # type: ignore[dict-item]  # chromadb Where impedance
                     include=["documents", "metadatas"],
                 )
-                for j, doc in enumerate(result["documents"]):
+                docs_list = result["documents"] or []
+                for j, doc in enumerate(docs_list):
                     meta = result["metadatas"][j] if result["metadatas"] else {}
                     chunk = DocumentChunk(
                         id=result["ids"][j],
                         text=doc or "",
-                        metadata=_metadata_to_chunk(meta),
+                        metadata=_metadata_to_chunk(meta),  # type: ignore[arg-type]  # chromadb Mapping impedance
                     )
                     all_chunks.append(chunk)
             all_chunks.sort(
@@ -728,7 +731,7 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
 
 def _filters_to_where(filters: SearchFilters) -> dict[str, Any] | None:
     """Convert SearchFilters to Chroma where clause."""
-    conditions = []
+    conditions: list[Any] = []  # heterogeneous chromadb Where sub-clauses
 
     if filters.year_min is not None:
         conditions.append({"year": {"$gte": filters.year_min}})

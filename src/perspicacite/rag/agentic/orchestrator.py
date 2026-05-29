@@ -302,6 +302,12 @@ class AgentSession:
     # AgenticRAGMode → orchestrator.chat(task_id=...).
     task_id: str | None = None
 
+    # Cross-turn paper accumulation: papers found in previous turns are
+    # archived here so subsequent turns can pre-populate _found_papers.
+    found_papers_archive: list[dict[str, Any]] = field(default_factory=list)
+    # Stores the query string from the current turn for downstream use.
+    original_query: str | None = None
+
     def add_message(self, role: str, content: str, metadata: dict | None = None):
         """Add a message to the session."""
         self.messages.append(Message(role=role, content=content, metadata=metadata or {}))
@@ -3180,7 +3186,7 @@ Generate your answer:"""
         logger.info("agentic_openalex_fallback_search", search_terms=search_terms)
 
         url = "https://api.openalex.org/works"
-        params = {
+        params: dict[str, str | int] = {
             "search": search_terms,
             "per_page": max_results,
             "mailto": "perspicacite@example.com",

@@ -366,7 +366,7 @@ class AsyncLLMClient:
 
     def __init__(self, config: LLMConfig):
         self.config = config
-        self._litellm = None
+        self._litellm: Any = None  # optional dep; assigned lazily in _get_litellm
         # Cache one AgentCLIClient instance per provider key (claude_cli,
         # agent_cli, plus any user-defined alias).
         self._agent_clis: dict[str, Any] = {}
@@ -444,7 +444,7 @@ class AsyncLLMClient:
                     "hermes}.example.yml presets."
                 )
             client = AgentCLIClient(
-                executable=cli_cfg.executable,
+                executable=cli_cfg.executable or "",  # guard already raised above if None/falsy
                 provider_label=provider,
                 prompt_via=cli_cfg.prompt_via,
                 prompt_flag=cli_cfg.prompt_flag,

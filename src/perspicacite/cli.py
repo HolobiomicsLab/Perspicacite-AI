@@ -221,6 +221,7 @@ def create_kb(
         async def _create_empty() -> dict[str, Any]:
             state = AppState()
             await state.initialize()
+            assert state.session_store is not None
             existing = await state.session_store.get_kb_metadata(name)
             if existing is not None:
                 raise FileExistsError(f"KB '{name}' already exists")
@@ -391,6 +392,7 @@ def list_kb(ctx: click.Context, as_json: bool) -> None:
     async def _run() -> None:
         state = AppState()
         await state.initialize()
+        assert state.session_store is not None
         kbs = await state.session_store.list_kbs()
         if as_json:
             import json as _json
@@ -619,6 +621,7 @@ async def _run_query(
 
     state = AppState()
     await state.initialize()
+    assert state.session_store is not None
 
     # Verify the KB exists so we fail fast with a clear message instead
     # of letting the RAG engine spit a chroma error.
@@ -643,7 +646,6 @@ async def _run_query(
         query=query,
         kb_name=kb,
         mode=rag_mode,
-        stream=False,
         provider=eff_provider,
         model=eff_model,
     )
@@ -880,6 +882,7 @@ def build_capsule_cmd(ctx, paper_id: str, kb: str, force: bool) -> None:
     async def _run() -> None:
         state = AppState()
         await state.initialize()
+        assert state.session_store is not None
         kb_meta = await state.session_store.get_kb_metadata(kb)
         if kb_meta is None:
             click.echo(f"Error: KB '{kb}' not found", err=True)
@@ -920,6 +923,7 @@ def build_capsules_cmd(ctx, kb_name: str, force: bool) -> None:
     async def _run() -> None:
         state = AppState()
         await state.initialize()
+        assert state.session_store is not None
         kb_meta = await state.session_store.get_kb_metadata(kb_name)
         if kb_meta is None:
             click.echo(f"Error: KB '{kb_name}' not found", err=True)
@@ -977,6 +981,7 @@ def fetch_resources_cmd(
     async def _run() -> None:
         state = AppState()
         await state.initialize()
+        assert state.session_store is not None
         kb_meta = await state.session_store.get_kb_metadata(kb_name)
         if kb_meta is None:
             click.echo(f"Error: KB '{kb_name}' not found", err=True)
@@ -1334,6 +1339,7 @@ def delete_kb_cmd(
     async def _run() -> None:
         state = AppState()
         await state.initialize()
+        assert state.session_store is not None
         kb = await state.session_store.get_kb_metadata(name)
         if not kb:
             click.echo(f"KB '{name}' not found.", err=True)

@@ -228,7 +228,7 @@ def assign_subcomponents(page_results: list[RawFigure]) -> None:
         if len(sortable) < len(group):
             # Some images have no bbox; can't position-assign reliably.
             continue
-        min_h = min((rf.record.bbox[3] - rf.record.bbox[1]) for rf in sortable) or 1.0
+        min_h = min((rf.record.bbox[3] - rf.record.bbox[1]) for rf in sortable if rf.record.bbox is not None) or 1.0
         row_tol = max(min_h * 0.5, 5.0)
 
         def _key(rf: RawFigure, _row_tol: float = row_tol) -> tuple[int, float]:

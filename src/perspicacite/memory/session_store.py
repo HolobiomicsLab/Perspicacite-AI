@@ -149,10 +149,10 @@ class SessionStore:
             db.row_factory = aiosqlite.Row
 
             # Get conversation
-            row = await db.execute_fetchall(
+            row = list(await db.execute_fetchall(
                 "SELECT * FROM conversations WHERE id = ?",
                 (conv_id,),
-            )
+            ))
 
             if not row:
                 return None
@@ -358,10 +358,10 @@ class SessionStore:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
 
-            rows = await db.execute_fetchall(
+            rows = list(await db.execute_fetchall(
                 "SELECT * FROM kb_metadata WHERE name = ?",
                 (name,),
-            )
+            ))
 
             if not rows:
                 return None
@@ -516,7 +516,7 @@ class SessionStore:
         """
         async with aiosqlite.connect(self.db_path) as db:
             # Get count before deletion
-            row = await db.execute_fetchall("SELECT COUNT(*) as count FROM conversations")
+            row = list(await db.execute_fetchall("SELECT COUNT(*) as count FROM conversations"))
             count = row[0]["count"] if row else 0
 
             # Purge the entire FTS index

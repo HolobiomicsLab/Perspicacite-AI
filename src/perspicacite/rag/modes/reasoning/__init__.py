@@ -56,7 +56,7 @@ class ReasoningRAGMode(BaseRAGMode):
         super().__init__(config)
         self.session_store = session_store
 
-    async def execute_stream(  # type: ignore[override]
+    async def execute_stream(
         self,
         request: RAGRequest,
         llm: Any,

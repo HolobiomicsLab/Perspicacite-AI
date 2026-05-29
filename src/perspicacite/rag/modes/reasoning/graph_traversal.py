@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -95,7 +96,9 @@ def _parse_json(raw: Any, default: dict) -> dict:
         return default
 
 
-_QUERY_TABLE = {
+_QueryFn = Callable[..., list[dict]]
+
+_QUERY_TABLE: dict[str, _QueryFn] = {
     "claims_supporting": queries.claims_supporting,
     "claims_disputing": queries.claims_disputing,
     "evidence_trace": queries.evidence_trace,

@@ -338,6 +338,7 @@ class StreamEvent(BaseModel):
         "figure_ref",  # Figure-reference attachment (sub-project C, 2026-05-15)
         "metadata",  # Run summary: iteration_count, completion_reason
         "diagnostic",  # Early-return diagnostics: papers_searched, filtered_as_known, …
+        "revision",  # Post-answer corrected text (e.g. copyright filter); client may render or ignore
     ]
     data: str  # JSON-encoded payload
 

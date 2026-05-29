@@ -467,9 +467,11 @@ def _derive_org_from_manifest(manifest: BundleManifest) -> str:
     (Task 5) overrides this when ingesting a GitHub repo URL where the
     org is known.
     """
-    return manifest.raw.get("org") if isinstance(manifest.raw.get("org"), str) else "bundle"
+    org = manifest.raw.get("org")
+    return org if isinstance(org, str) else "bundle"
 
 
 def _derive_repo_from_manifest(manifest: BundleManifest) -> str:
     """Likewise for the repo component of the id."""
-    return manifest.raw.get("repo") if isinstance(manifest.raw.get("repo"), str) else manifest.name
+    repo = manifest.raw.get("repo")
+    return repo if isinstance(repo, str) else manifest.name

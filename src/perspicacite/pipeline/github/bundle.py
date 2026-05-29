@@ -355,7 +355,7 @@ def _parse_papers(payload) -> list[PaperRef]:
                 # by the DOI standard); keep suffix case-preserved.
                 if kind == "doi":
                     value = _normalize_doi(value)
-                out.append(PaperRef(kind=kind, value=value))  # type: ignore[arg-type]
+                out.append(PaperRef(kind=kind, value=value))
                 break  # one kind per list item
     return out
 

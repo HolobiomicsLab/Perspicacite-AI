@@ -165,7 +165,7 @@ def truncate_messages(
         return system_messages
 
     # Keep most recent messages that fit
-    kept_messages = []
+    kept_messages: list[dict[str, str]] = []
     current_count = 0
 
     for message in reversed(other_messages):

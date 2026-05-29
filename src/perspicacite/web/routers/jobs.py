@@ -14,9 +14,10 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 @router.get("/{job_id}")
 async def get_job(job_id: str):
-    if app_state.job_registry is None:
+    reg = app_state.job_registry
+    if reg is None:
         raise HTTPException(status_code=503, detail="jobs not configured")
-    row = await app_state.job_registry.get(job_id)
+    row = await reg.get(job_id)
     if row is None:
         raise HTTPException(status_code=404, detail="job not found")
     return row
@@ -24,9 +25,10 @@ async def get_job(job_id: str):
 
 @router.get("/{job_id}/events")
 async def stream_job_events(job_id: str):
-    if app_state.job_registry is None:
+    reg = app_state.job_registry
+    if reg is None:
         raise HTTPException(status_code=503, detail="jobs not configured")
-    row = await app_state.job_registry.get(job_id)
+    row = await reg.get(job_id)
     if row is None:
         raise HTTPException(status_code=404, detail="job not found")
 
@@ -39,7 +41,7 @@ async def stream_job_events(job_id: str):
             }
             yield f"data: {json.dumps(payload)}\n\n"
             return
-        async for ev in app_state.job_registry.subscribe(job_id):
+        async for ev in reg.subscribe(job_id):
             yield f"data: {json.dumps(ev)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")

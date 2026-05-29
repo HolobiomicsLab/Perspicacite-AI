@@ -298,7 +298,7 @@ async def _ss_fetch_graph(
         if api_key:
             headers["x-api-key"] = api_key
 
-        params = {"fields": _SS_REF_CIT_FIELDS, "limit": clamped_limit}
+        params: dict[str, str | int] = {"fields": _SS_REF_CIT_FIELDS, "limit": clamped_limit}
         response = await client.get(url, params=params, headers=headers)
 
         # If a configured API key is rejected (403/401), retry without it

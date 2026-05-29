@@ -127,7 +127,7 @@ def _build_ro_crate_metadata(
             continue
         if role == "assistant":
             mid = m.get("id")
-            rec = prov_by_msg.get(mid, {})
+            rec = prov_by_msg.get(str(mid) if mid is not None else "", {})
             instruments = sorted({c.get("model") for c in (rec.get("llm_calls_index") or []) if c.get("model")})
             mentions = [
                 {

@@ -46,7 +46,7 @@ def load_yaml_file(path: Path) -> dict[str, Any] | None:
 
 def load_from_env() -> dict[str, Any]:
     """Load configuration overrides from environment variables."""
-    overrides = {}
+    overrides: dict[str, Any] = {}
 
     # Map of env var -> config path. Keep secrets (api keys, tokens) here so
     # they don't have to live in config.yml. Standard ZOTERO_API_KEY also
@@ -72,16 +72,19 @@ def load_from_env() -> dict[str, Any]:
     }
 
     for env_var, (section, key) in env_mappings.items():
-        if value := os.environ.get(env_var):
+        if raw := os.environ.get(env_var):
             # Convert types
-            if value.lower() in ("true", "false"):
-                value = value.lower() == "true"
-            elif value.isdigit():
-                value = int(value)
+            converted: str | bool | int
+            if raw.lower() in ("true", "false"):
+                converted = raw.lower() == "true"
+            elif raw.isdigit():
+                converted = int(raw)
+            else:
+                converted = raw
 
             if section not in overrides:
                 overrides[section] = {}
-            overrides[section][key] = value
+            overrides[section][key] = converted
 
     return overrides
 

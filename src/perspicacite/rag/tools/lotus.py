@@ -138,7 +138,7 @@ class LotusSearchTool:
             algorithm: "default" (Ullmann), "df" (depth-first), or "vf" (Vento-Foggia)
         """
         url = f"{self.BASE_URL}/search/substructure"
-        params = {
+        params: dict[str, str | int] = {
             "type": algorithm,
             "max-hits": max_results,
             "smiles": smiles,

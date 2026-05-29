@@ -126,14 +126,14 @@ async def run_web_aggregator_search(
                 if name in allowed_provider_names:
                     kept_providers.append(p)
             if kept_providers:
-                aggregator._providers = kept_providers  # type: ignore[attr-defined]
+                aggregator._providers = kept_providers
                 # The aggregator's built-in domain classifier filters
                 # providers whose ``domains`` don't intersect the
                 # classified domain of the query (e.g. EuropePMC is
                 # tagged "biomedical" and gets dropped on a "general"
                 # query). The user already explicitly picked these
                 # providers — bypass the filter so their choice sticks.
-                aggregator._select_providers = lambda _domains: list(  # type: ignore[attr-defined]
+                aggregator._select_providers = lambda _domains: list(  # type: ignore[method-assign,assignment]  # runtime monkeypatch of _select_providers
                     kept_providers
                 )
             elif databases:
@@ -147,8 +147,8 @@ async def run_web_aggregator_search(
                 # surfacing why, instead of silently running unrelated
                 # databases (which produced misleading "I picked Scholar,
                 # got CORE results" behaviour).
-                aggregator._providers = []  # type: ignore[attr-defined]
-                aggregator._select_providers = lambda _domains: []  # type: ignore[attr-defined]
+                aggregator._providers = []
+                aggregator._select_providers = lambda _domains: []  # type: ignore[method-assign,assignment]  # runtime monkeypatch of _select_providers
                 _available_names = sorted(
                     (getattr(p, "name", "") or type(p).__name__).lower()
                     for p in providers_attr

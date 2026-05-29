@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import json
 import logging
 import re
@@ -706,7 +707,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
                             content_b64 = data.get("content_b64")
                             if content_b64:
                                 assistant_content = base64.b64decode(content_b64).decode("utf-8")
-                    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
+                    except (json.JSONDecodeError, binascii.Error, UnicodeDecodeError):
                         pass
                 yield event
         else:
@@ -723,7 +724,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
                             new_msg_id = data.get("message_id")
                             if new_msg_id:
                                 assistant_message_id_outer = new_msg_id
-                    except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
+                    except (json.JSONDecodeError, binascii.Error, UnicodeDecodeError):
                         pass
                 yield event
 
@@ -853,7 +854,11 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
         }
         return f"data: {json.dumps(safe, separators=(',', ':'))}\n\n"
 
-    async for event in app_state.orchestrator.chat(
+    orchestrator = app_state.orchestrator
+    if orchestrator is None:
+        yield f"data: {json.dumps({'type': 'error', 'message': 'Orchestrator not initialized'})}\n\n"
+        return
+    async for event in orchestrator.chat(
         query=request.query,
         session_id=request.session_id,
         kb_name=request.kb_name,
@@ -1092,7 +1097,6 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
         kb_name=effective_kb_name,
         kb_names=effective_kb_names,
         mode=rag_mode,
-        stream=True,
         databases=request.databases,
         conversation_history=conv_hist,
         max_papers_retrieval=request.max_papers,

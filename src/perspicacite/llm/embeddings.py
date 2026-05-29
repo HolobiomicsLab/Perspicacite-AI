@@ -52,7 +52,7 @@ class LiteLLMEmbeddingProvider:
     ):
         self.model = model
         self.batch_size = batch_size
-        self._litellm = None
+        self._litellm: Any = None  # optional dep; assigned lazily in _get_litellm
         self._dimension = self._get_dimension()
 
     def _get_litellm(self) -> Any:
@@ -435,7 +435,7 @@ class SentenceTransformerEmbeddingProvider:
                 )
             else:
                 # Apply a string prefix to each query text
-                prefixed = [prompt_prefix + t for t in valid_texts]
+                prefixed = [(prompt_prefix or "") + t for t in valid_texts]
                 embeddings = await asyncio.get_running_loop().run_in_executor(
                     None,
                     lambda: model.encode(
@@ -862,7 +862,7 @@ def create_embedding_provider(
         by_type: dict[str, EmbeddingProvider] = {}
         for ctype, ctype_model in embedding_models_per_type.items():
             by_type[ctype] = _build_single(ctype_model)
-        inner = TypedEmbeddingProvider(default=inner, by_content_type=by_type)
+        inner = TypedEmbeddingProvider(default=inner, by_content_type=by_type)  # type: ignore[assignment]  # TypedEmbeddingProvider.dimension is int|None; Protocol requires int; runtime safe
 
     if not cache_enabled:
         return inner

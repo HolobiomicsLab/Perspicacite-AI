@@ -80,8 +80,9 @@ class ContradictionRAGMode(BaseRAGMode):
         for c in chunks:
             if isinstance(c, dict):
                 meta = c.get("metadata") or {}
-                if hasattr(meta, "paper_id"):
-                    pid = meta.paper_id or meta.doi or "?"
+                if not isinstance(meta, dict):
+                    # Pydantic / dataclass metadata object
+                    pid = getattr(meta, "paper_id", None) or getattr(meta, "doi", None) or "?"
                 else:
                     pid = meta.get("paper_id") or meta.get("doi") or "?"
             else:
@@ -108,7 +109,7 @@ class ContradictionRAGMode(BaseRAGMode):
             meta = chunk.get("metadata") or {}
         else:
             meta = getattr(chunk, "metadata", {}) or {}
-        if hasattr(meta, "__dict__"):
+        if not isinstance(meta, dict):
             # Pydantic / dataclass object → convert to dict
             try:
                 return meta.model_dump()
@@ -335,7 +336,7 @@ class ContradictionRAGMode(BaseRAGMode):
             sources.append(
                 SourceReference(
                     title=meta.get("title") or pid,
-                    authors=meta.get("authors"),
+                    authors=meta.get("authors"),  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
                     year=meta.get("year"),
                     doi=meta.get("doi"),
                     relevance_score=min(1.0, max(0.0, self._chunk_score(chunks[0]))),
@@ -350,7 +351,7 @@ class ContradictionRAGMode(BaseRAGMode):
     # execute_stream — main streaming entry point
     # ------------------------------------------------------------------
 
-    async def execute_stream(  # type: ignore[override]
+    async def execute_stream(
         self,
         request: RAGRequest,
         llm: Any,
@@ -546,7 +547,7 @@ class ContradictionRAGMode(BaseRAGMode):
                     yield StreamEvent.source(
                         SourceReference(
                             title=meta.get("title") or pid,
-                            authors=meta.get("authors"),
+                            authors=meta.get("authors"),  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
                             year=meta.get("year"),
                             doi=meta.get("doi"),
                             relevance_score=min(

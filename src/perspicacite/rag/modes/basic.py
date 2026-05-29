@@ -349,7 +349,7 @@ class BasicRAGMode(BaseRAGMode):
         collection = dkb.collection_name
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
-            request.refined_query = refined  # type: ignore[misc]
+            request.refined_query = refined
 
         # HyDE: replace the retrieval query with a synthetic abstract.
         if getattr(request, "use_hyde", False):
@@ -555,7 +555,7 @@ class BasicRAGMode(BaseRAGMode):
         collection = dkb.collection_name
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
-            request.refined_query = refined  # type: ignore[misc]
+            request.refined_query = refined
             yield StreamEvent.status_kind(
                 f"Rewrote question using conversation context: '{request.query}' → '{refined}'",
                 kind="query_rephrased",

@@ -61,8 +61,8 @@ try:
 
     _HAS_INDICIUM_VALIDATE = True
 except ImportError:
-    _validate_graph = None  # type: ignore[assignment]
-    _claim_jsonld = None  # type: ignore[assignment]
+    _validate_graph = None
+    _claim_jsonld = None
     _HAS_INDICIUM_VALIDATE = False
 
 RETRIEVAL_TOP_K = 30
@@ -191,10 +191,10 @@ async def run_evidence_graded_stream(
 ) -> AsyncIterator[StreamEvent]:
     # Minimal concrete subclass to access _build_kb_retriever (can be monkeypatched)
     class _MinimalMode(BaseRAGMode):
-        async def execute(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
+        async def execute(self, *a: Any, **kw: Any) -> Any:
             raise NotImplementedError
 
-        async def execute_stream(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]
+        async def execute_stream(self, *a: Any, **kw: Any) -> Any:  # type: ignore[override]  # stub subclass; return type differs from AsyncIterator base
             raise NotImplementedError
 
     kb_name = (request.kb_names[0] if request.kb_names else request.kb_name) or "default"

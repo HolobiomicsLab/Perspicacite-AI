@@ -558,7 +558,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         _tid = getattr(request, "task_id", None)
         if _tid and _is_cancelled(_tid):
             logger.info("literature_survey_cancelled", task_id=_tid, stage="pre_analysis")
-            yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+            yield StreamEvent(event="error", data=json.dumps({"reason": "cancelled", "task_id": _tid}))
             return
 
         emit_phase(_phase_sink, phase="extract_themes", state="running")
@@ -587,7 +587,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     except Exception:
                         pass  # swallow any other exception from the cancelled task
                     logger.info("literature_survey_cancelled", task_id=_tid, stage="mid_analysis")
-                    yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+                    yield StreamEvent(event="error", data=json.dumps({"reason": "cancelled", "task_id": _tid}))
                     return
                 continue
             yield StreamEvent.status_kind(
@@ -666,7 +666,6 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         yield StreamEvent.content(survey_answer)
 
         # Emit metadata for UI
-        import json
         yield StreamEvent(
             event="status",
             data=json.dumps({
@@ -1618,7 +1617,7 @@ Respond with theme names separated by commas, or "None" if no match."""
         return [
             SourceReference(
                 title=p.title,
-                authors=", ".join(p.authors[:3]) if p.authors else None,
+                authors=", ".join(p.authors[:3]) if p.authors else None,  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
                 year=p.year,
                 doi=p.doi,
                 relevance_score=_normalize(p.relevance_score),

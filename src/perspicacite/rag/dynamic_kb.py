@@ -66,6 +66,12 @@ class DynamicKnowledgeBase:
         self.collection_name = f"{self.config.collection_prefix}{self.session_id}"
         self._initialized = False
         self._paper_ids: set[str] = set()
+        # Optional descriptive tags assigned by callers after construction
+        # (base.py tags kb_name for single-KB provenance parity; run_ingest
+        # sets name/description). None unless a caller sets them.
+        self.kb_name: str | None = None
+        self.name: str | None = None
+        self.description: str | None = None
 
     async def initialize(self) -> None:
         """Create the session collection."""
@@ -598,8 +604,8 @@ def stamp_embedding_models_on_chunks(
     from perspicacite.models.documents import DocumentChunk as _DocumentChunk
 
     if isinstance(embedder, TypedEmbeddingProvider):
-        by_type = embedder._by_type            # type: ignore[attr-defined]
-        default = embedder._default            # type: ignore[attr-defined]
+        by_type = embedder._by_type
+        default = embedder._default
 
         def _model_for(ctype: str | None) -> str:
             if ctype and ctype in by_type:

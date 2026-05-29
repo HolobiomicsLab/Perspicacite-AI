@@ -59,8 +59,9 @@ async def download_from_alternative_endpoint(
         # Look for PDF in <embed> tags
         embeds = soup.find_all("embed", type="application/pdf")
         for embed in embeds:
-            src = embed.get("src")
-            if src:
+            src_raw = embed.get("src")
+            if src_raw:
+                src: str = str(src_raw)  # bibtexparser values type as str|AttributeValueList
                 pdf_url = src if src.startswith(("http:", "https:")) else urljoin(url, src)
                 logger.info("alternative_endpoint_pdf_found", source="embed", url=pdf_url)
                 pdf_response = await client.get(pdf_url)
@@ -70,18 +71,20 @@ async def download_from_alternative_endpoint(
         # Look for PDF in <iframe> tags
         iframes = soup.find_all("iframe")
         for iframe in iframes:
-            src = iframe.get("src")
-            if src and ".pdf" in src.lower():
-                pdf_url = src if src.startswith(("http:", "https:")) else urljoin(url, src)
-                logger.info("alternative_endpoint_pdf_found", source="iframe", url=pdf_url)
-                pdf_response = await client.get(pdf_url)
-                pdf_response.raise_for_status()
-                return pdf_response.content
+            src_raw = iframe.get("src")
+            if src_raw:
+                src = str(src_raw)  # bibtexparser values type as str|AttributeValueList
+                if ".pdf" in src.lower():
+                    pdf_url = src if src.startswith(("http:", "https:")) else urljoin(url, src)
+                    logger.info("alternative_endpoint_pdf_found", source="iframe", url=pdf_url)
+                    pdf_response = await client.get(pdf_url)
+                    pdf_response.raise_for_status()
+                    return pdf_response.content
 
         # Look for PDF links in <a> tags
         links = soup.find_all("a", href=True)
         for link in links:
-            href = link["href"]
+            href: str = str(link["href"])  # bibtexparser values type as str|AttributeValueList
             if href.endswith(".pdf"):
                 pdf_url = href if href.startswith(("http:", "https:")) else urljoin(url, href)
                 logger.info("alternative_endpoint_pdf_found", source="link", url=pdf_url)

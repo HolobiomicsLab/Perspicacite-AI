@@ -59,13 +59,14 @@ def setup_logging(config: LoggingConfig, *, stream: Any = None) -> None:
         return
 
     # Choose a renderer for the final output
+    renderer: Any  # JSONRenderer and ConsoleRenderer share no common structlog base
     if config.format == "json":
         renderer = structlog.processors.JSONRenderer()
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=False)
 
     # Shared processors that run for *all* structlog loggers
-    shared_processors = [
+    shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,

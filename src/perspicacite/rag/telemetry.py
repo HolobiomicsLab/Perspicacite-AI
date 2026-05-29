@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import Any, Protocol
 
 
@@ -67,7 +67,7 @@ class CallbackTelemetrySink:
     """
 
     def __init__(
-        self, callback: Callable[[dict[str, Any]], Awaitable[None]],
+        self, callback: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
     ) -> None:
         self._callback = callback
         # Mirror events into a buffer for diagnostics.
@@ -81,7 +81,7 @@ class CallbackTelemetrySink:
         self.events.append(event)
         try:
             loop = asyncio.get_running_loop()
-            task = loop.create_task(self._callback(event))
+            task: asyncio.Task[None] = loop.create_task(self._callback(event))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         except RuntimeError:

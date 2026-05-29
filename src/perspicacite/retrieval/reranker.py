@@ -1,6 +1,7 @@
 """Cross-encoder reranker for two-stage retrieval."""
 
 import asyncio
+import functools
 from typing import Any
 
 from perspicacite.logging import get_logger
@@ -78,8 +79,8 @@ class CrossEncoderReranker:
         model = self._get_model()
         all_scores: list[float] = []
         for i in range(0, len(pairs), self.batch_size):
-            batch = pairs[i : i + self.batch_size]
-            scores = await loop.run_in_executor(None, lambda b=batch: model.predict(b))
+            batch: list[tuple[str, str]] = pairs[i : i + self.batch_size]
+            scores = await loop.run_in_executor(None, functools.partial(model.predict, batch))
             all_scores.extend(float(s) for s in scores.tolist())
         return all_scores
 
@@ -121,12 +122,12 @@ class CrossEncoderReranker:
             loop = asyncio.get_running_loop()
             model = self._get_model()
 
-            all_scores = []
+            all_scores: list[float] = []
             for i in range(0, len(pairs), self.batch_size):
-                batch = pairs[i : i + self.batch_size]
+                batch: list[tuple[str, str]] = pairs[i : i + self.batch_size]
                 scores = await loop.run_in_executor(
                     None,
-                    lambda b=batch: model.predict(b),
+                    functools.partial(model.predict, batch),
                 )
                 all_scores.extend(scores.tolist())
 

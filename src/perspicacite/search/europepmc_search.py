@@ -38,7 +38,7 @@ class EuropePMCSearchProvider:
             y_max = year_max or 2100
             q = f"({q}) AND (FIRST_PDATE:[{y_min}-01-01 TO {y_max}-12-31])"
 
-        params = {
+        params: dict[str, str | int] = {
             "query": q,
             "resultType": "core",
             "pageSize": min(max_results, 100),

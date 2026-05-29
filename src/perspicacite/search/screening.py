@@ -319,7 +319,7 @@ async def screen_papers_rerank(
         (query, _candidate_text(c)[:2000])  # cap each input for throughput
         for c in candidates_list
     ]
-    raw_scores = await loop.run_in_executor(None, lambda: model.predict(pairs))
+    raw_scores = await loop.run_in_executor(None, lambda: model.predict(pairs))  # type: ignore[arg-type]  # CrossEncoder.predict accepts list[tuple[str,str]] at runtime
 
     # Tempered sigmoid -> [0,1]. The ms-marco family emits logits roughly
     # -10..+10; a plain sigmoid saturates above ~10 so every "good" hit

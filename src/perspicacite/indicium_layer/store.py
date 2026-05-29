@@ -116,6 +116,7 @@ class ClaimGraphStore:
             assert self._g is not None
             return any(self._g.quads((URIRef(iri), None, None, None)))
         # oxigraph: cheap ASK
+        assert self._oxistore is not None  # guaranteed by __init__ when backend == "oxigraph"
         ask = f"ASK {{ {{ <{iri}> ?p ?o }} UNION {{ GRAPH ?g {{ <{iri}> ?p ?o }} }} }}"
         return bool(self._oxistore.query(ask))
 
@@ -141,7 +142,7 @@ class ClaimGraphStore:
         out: list[dict[str, str]] = []
         for row in results:
             d: dict[str, str] = {}
-            for var, val in row.asdict().items():
+            for var, val in row.asdict().items():  # type: ignore[union-attr]  # pyoxigraph ResultRow always has asdict(); union includes non-row types due to broad query return stub
                 if val is None:
                     continue
                 d[str(var)] = str(val.toPython()) if isinstance(val, RdflibLiteral) else str(val)
@@ -153,8 +154,10 @@ class ClaimGraphStore:
     def _add_oxi(self, s: str, p: str, o: str | LiteralTuple, graph: str | None) -> None:
         import pyoxigraph as oxi
 
+        assert self._oxistore is not None  # guaranteed by __init__ when backend == "oxigraph"
         subj = oxi.NamedNode(s)
         pred = oxi.NamedNode(p)
+        obj: Any  # NamedNode or Literal depending on branch; both are valid RDF term types
         if isinstance(o, tuple):
             _, val, dt = o
             obj = oxi.Literal(
@@ -167,6 +170,7 @@ class ClaimGraphStore:
         self._oxistore.add(oxi.Quad(subj, pred, obj, ctx))
 
     def _select_oxi(self, sparql: str) -> list[dict[str, str]]:
+        assert self._oxistore is not None  # guaranteed by __init__ when backend == "oxigraph"
         solutions = self._oxistore.query(sparql)
         out: list[dict[str, str]] = []
         for sol in solutions:

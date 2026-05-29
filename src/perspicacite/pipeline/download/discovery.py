@@ -311,9 +311,9 @@ async def discover_paper_sources(
             # Authors
             authorships = work.get("authorships") or []
             disc.authors = [
-                (a.get("author") or {}).get("display_name")
+                name
                 for a in authorships
-                if (a.get("author") or {}).get("display_name")
+                if (name := (a.get("author") or {}).get("display_name")) is not None
             ] or None
             # Year
             py = work.get("publication_year")

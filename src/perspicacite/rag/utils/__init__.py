@@ -151,7 +151,7 @@ def prepare_sources(
         sources.append(
             SourceReference(
                 title=title,
-                authors=authors_str,
+                authors=authors_str,  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
                 year=year,
                 doi=doi,
                 url=url,
@@ -180,11 +180,12 @@ def get_doc_citation(doc: Any) -> str:
     if hasattr(doc, "chunk") and hasattr(doc.chunk, "metadata"):
         meta = doc.chunk.metadata
         if hasattr(meta, "citation"):
-            return meta.citation
+            return str(meta.citation) if meta.citation is not None else "Unknown"
         if hasattr(meta, "title"):
-            return meta.title
+            return str(meta.title) if meta.title is not None else "Unknown"
     if isinstance(doc, dict):
-        return doc.get("citation", doc.get("source", "Unknown"))
+        val = doc.get("citation") or doc.get("source") or "Unknown"
+        return str(val)
     return "Unknown"
 
 

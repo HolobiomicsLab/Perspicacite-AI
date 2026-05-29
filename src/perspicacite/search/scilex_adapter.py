@@ -433,7 +433,7 @@ class SciLExAdapter:
                     )
                     return []
 
-                all_records = []
+                all_records: list[Any] = []
 
                 # Walk through API directories
                 for api_dir in repo_path.iterdir():

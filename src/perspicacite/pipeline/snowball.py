@@ -335,7 +335,7 @@ async def _fetch_forward_citations(
             body = r.json() or {}
             out.extend(body.get("results") or [])
             meta = body.get("meta") or {}
-            cursor = meta.get("next_cursor")
+            cursor = meta.get("next_cursor") or ""
             if not cursor or not body.get("results"):
                 break
         except httpx.HTTPError as exc:

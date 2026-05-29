@@ -835,7 +835,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                     iteration_count=self.iterations,
                     completion_reason="cancelled",
                 )
-                yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+                yield StreamEvent(event="error", data=json.dumps({"reason": "cancelled", "task_id": _tid}))
                 return
 
             # F-17: hard wall-clock budget. Break before starting a new
@@ -2284,7 +2284,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         )
         if limitations:
             cr_display = (
-                completion_reason.replace("_", " ")
+                (completion_reason or "").replace("_", " ")
                 if completion_reason != "limitations_detected"
                 else "limited by available information"
             )
@@ -2786,7 +2786,7 @@ Follow the system instructions for this situation."""
                 sources.append(
                     SourceReference(
                         title=title,
-                        authors=doc.get("authors"),
+                        authors=doc.get("authors"),  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
                         year=doc.get("year"),
                         doi=doc.get("doi"),
                         relevance_score=doc.get("paper_score", 0.5),
@@ -2865,7 +2865,7 @@ Follow the system instructions for this situation."""
             sources.append(
                 SourceReference(
                     title=title,
-                    authors=authors_str,
+                    authors=authors_str,  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
                     year=year,
                     doi=doi,
                     relevance_score=getattr(doc, "score", 0.0),

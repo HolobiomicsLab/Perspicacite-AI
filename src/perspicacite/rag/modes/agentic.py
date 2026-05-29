@@ -54,7 +54,7 @@ class AgenticRAGMode(BaseRAGMode):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        self._orchestrator = None
+        self._orchestrator: AgenticOrchestrator | None = None
         self._config = config
 
         # Extract settings for backward compatibility

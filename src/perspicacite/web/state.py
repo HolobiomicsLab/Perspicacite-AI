@@ -10,11 +10,24 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from perspicacite.jobs.registry import JobRegistry
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.provenance.store import ProvenanceStore
+
+if TYPE_CHECKING:
+    # Imported only for type annotations. The real imports happen lazily inside
+    # initialize() to avoid import cycles and heavy startup imports; `from
+    # __future__ import annotations` keeps these references string-only at
+    # runtime, so there's no cost or cycle here.
+    from perspicacite.llm import AsyncLLMClient
+    from perspicacite.llm.embeddings import EmbeddingProvider
+    from perspicacite.pipeline.download import PDFDownloader
+    from perspicacite.pipeline.parsers.pdf import PDFParser
+    from perspicacite.rag.agentic import AgenticOrchestrator
+    from perspicacite.rag.engine import RAGEngine
+    from perspicacite.retrieval import ChromaVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -70,21 +83,93 @@ class AppState:
     """Application state with agentic orchestrator and RAG engine."""
 
     def __init__(self, config_path: str | None = None):
-        self.llm_client = None
-        self.embedding_provider = None
-        self.vector_store = None
-        self.orchestrator = None
-        self.rag_engine = None  # Multi-mode RAG engine
+        # Required components: None until initialize() runs, non-None forever
+        # after. Exposed via properties below that return the concrete type and
+        # raise if read before init — so call sites don't carry `| None` noise
+        # and a pre-init access fails loudly instead of as an opaque NoneType
+        # AttributeError deep in a request handler.
+        self._llm_client: AsyncLLMClient | None = None
+        self._vector_store: ChromaVectorStore | None = None
+        self._rag_engine: RAGEngine | None = None  # Multi-mode RAG engine
+        self._pdf_downloader: PDFDownloader | None = None
+        self._embedding_provider: EmbeddingProvider | None = None
+        self._pdf_parser: PDFParser | None = None
+        # Genuinely-optional components: may legitimately stay None (degraded
+        # mode) and are guarded with `is None` at their use sites — these stay
+        # plain attributes so `if not app_state.session_store:` checks work.
         self.session_store: SessionStore | None = None
         self.provenance_store: ProvenanceStore | None = None
         self.job_registry: JobRegistry | None = None
-        self.pdf_downloader = None
-        self.pdf_parser = None
+        # Set in initialize(), but kept a plain `| None` attribute (not a raising
+        # property) because tests monkeypatch `app_state.orchestrator` directly —
+        # a raising getter breaks monkeypatch's save-old-value read. Call sites
+        # guard with `is None`.
+        self.orchestrator: AgenticOrchestrator | None = None
         self.initialized = False
         # Config path — set by CLI before lifespan fires so AppState reads
         # the same config file as the CLI (previously it re-called load_config()
         # with no path and always loaded the default config.yml).
         self._config_path: str | None = config_path
+
+    # --- Required-component accessors -------------------------------------
+    # Each returns the concrete component (never None) once initialize() has
+    # run. Setters accept the value (used by initialize() and by tests that
+    # inject mocks). Reading before init raises a clear RuntimeError.
+    def _require(self, value: Any, name: str) -> Any:
+        if value is None:
+            raise RuntimeError(
+                f"AppState.{name} accessed before initialize() — the FastAPI "
+                f"lifespan must run AppState.initialize() before handlers use it."
+            )
+        return value
+
+    @property
+    def llm_client(self) -> AsyncLLMClient:
+        return self._require(self._llm_client, "llm_client")
+
+    @llm_client.setter
+    def llm_client(self, value: AsyncLLMClient | None) -> None:
+        self._llm_client = value
+
+    @property
+    def vector_store(self) -> ChromaVectorStore:
+        return self._require(self._vector_store, "vector_store")
+
+    @vector_store.setter
+    def vector_store(self, value: ChromaVectorStore | None) -> None:
+        self._vector_store = value
+
+    @property
+    def rag_engine(self) -> RAGEngine:
+        return self._require(self._rag_engine, "rag_engine")
+
+    @rag_engine.setter
+    def rag_engine(self, value: RAGEngine | None) -> None:
+        self._rag_engine = value
+
+    @property
+    def pdf_downloader(self) -> PDFDownloader:
+        return self._require(self._pdf_downloader, "pdf_downloader")
+
+    @pdf_downloader.setter
+    def pdf_downloader(self, value: PDFDownloader | None) -> None:
+        self._pdf_downloader = value
+
+    @property
+    def embedding_provider(self) -> EmbeddingProvider:
+        return self._require(self._embedding_provider, "embedding_provider")
+
+    @embedding_provider.setter
+    def embedding_provider(self, value: EmbeddingProvider | None) -> None:
+        self._embedding_provider = value
+
+    @property
+    def pdf_parser(self) -> PDFParser:
+        return self._require(self._pdf_parser, "pdf_parser")
+
+    @pdf_parser.setter
+    def pdf_parser(self, value: PDFParser | None) -> None:
+        self._pdf_parser = value
 
     async def initialize(self):
         """Initialize all components."""
@@ -158,10 +243,17 @@ class AppState:
         # tool reads ``self`` (AppState) to reach the aggregator config.
         try:
             from perspicacite.rag.tools import WebSearchTool
-            tool_registry.register(WebSearchTool(app_state=self))
+
+            # WebSearchTool.execute has a richer signature (explicit `query`)
+            # than the Tool ABC's `execute(self, **kwargs)`; it is always
+            # invoked through the registry with kwargs, so the Liskov mismatch
+            # is intentional and safe here.
+            tool_registry.register(WebSearchTool(app_state=self))  # type: ignore[arg-type]
             logger.info("Tool registry initialized (web_search registered, LOTUS deactivated)")
         except Exception as exc:  # pragma: no cover - best-effort
-            logger.warning("web_search_tool_register_failed", error=str(exc))
+            # NB: module logger is a stdlib logging.Logger, not structlog — it
+            # takes %-args, not kwargs. `error=str(exc)` would raise TypeError.
+            logger.warning("web_search_tool_register_failed error=%s", str(exc))
             logger.info("Tool registry initialized (LOTUS deactivated)")
 
         # Create LLM adapter for agentic components

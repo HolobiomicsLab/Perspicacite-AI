@@ -115,7 +115,7 @@ class MultimodalPDFExtractor:
         side_effect callables with a single positional arg work without
         modification.
         """
-        pdf_path: Path = getattr(self, "_active_pdf_path", None)
+        pdf_path: Path | None = getattr(self, "_active_pdf_path", None)
         if pdf_path is None:
             raise ValueError("_active_pdf_path not set; call extract_visuals")
         doc = self._open_pdf(pdf_path)

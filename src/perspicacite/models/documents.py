@@ -42,7 +42,7 @@ class ChunkMetadata(BaseModel):
     symbol_name: str | None = None
     symbol_kind: str | None = None  # "function" | "class" | "method" | "cell" | "module"
     parent_class: str | None = Field(
-        None,
+        default=None,
         description="If symbol_kind is a method, the enclosing class name. None otherwise.",
     )
     start_line: int | None = None   # 1-indexed inclusive

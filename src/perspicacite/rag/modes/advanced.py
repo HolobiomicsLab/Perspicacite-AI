@@ -244,7 +244,7 @@ EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXP
         collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
-            request.refined_query = refined  # type: ignore[misc]
+            request.refined_query = refined
         scope = await resolve_paper_scope_for_query(
             retrieval_query,
             kb_collection,
@@ -362,12 +362,17 @@ EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXP
                 detail={"papers": len(paper_results), "kb_name": request.kb_name},
             )
             for rank, p in enumerate(paper_results):
+                _raw_pid = p.get("paper_id")
+                _raw_doi = p.get("doi")
+                _raw_title = p.get("title")
+                _raw_kb = p.get("kb_name")
+                _raw_score = p.get("paper_score") or p.get("score") or 0.0
                 _c.add_retrieval(
-                    paper_id=p.get("paper_id"),
-                    doi=p.get("doi"),
-                    title=p.get("title"),
-                    score=float(p.get("paper_score", p.get("score", 0.0)) or 0.0),
-                    kb_name=p.get("kb_name"),
+                    paper_id=str(_raw_pid) if _raw_pid is not None else None,
+                    doi=str(_raw_doi) if _raw_doi is not None else None,
+                    title=str(_raw_title) if _raw_title is not None else None,
+                    score=float(_raw_score),  # type: ignore[arg-type]  # metadata dict value union includes list
+                    kb_name=str(_raw_kb) if _raw_kb is not None else None,
                     content_type=None,
                     pipeline_step=None,
                     rank=rank,
@@ -412,16 +417,19 @@ EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXP
             for p in paper_results:
                 from perspicacite.models.rag import SourceReference
 
+                _raw_year = p.get("year")
+                _raw_score_p = p.get("paper_score")
+                _raw_meta_p = p.get("paper_metadata")
                 sources.append(
                     SourceReference(
-                        title=p.get("title") or "Untitled",
-                        authors=p.get("authors"),
-                        year=p.get("year"),
-                        doi=p.get("doi"),
-                        relevance_score=p.get("paper_score", 0.0),
-                        kb_name=p.get("kb_name") or request.kb_name,
-                        paper_id=p.get("paper_id"),
-                        metadata=p.get("paper_metadata"),
+                        title=str(p.get("title") or "Untitled"),
+                        authors=p.get("authors"),  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
+                        year=int(_raw_year) if _raw_year is not None else None,  # type: ignore[arg-type]  # metadata dict value union
+                        doi=str(p["doi"]) if p.get("doi") is not None else None,
+                        relevance_score=float(_raw_score_p or 0.0),  # type: ignore[arg-type]  # metadata dict value union
+                        kb_name=str(p["kb_name"]) if p.get("kb_name") is not None else request.kb_name,
+                        paper_id=str(p["paper_id"]) if p.get("paper_id") is not None else None,
+                        metadata=_raw_meta_p,  # type: ignore[arg-type]  # metadata dict value union
                     )
                 )
         else:
@@ -546,7 +554,7 @@ Sources:
         collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
-            request.refined_query = refined  # type: ignore[misc]
+            request.refined_query = refined
             yield StreamEvent.status_kind(
                 f"Rewrote question using conversation context: '{request.query}' → '{refined}'",
                 kind="query_rephrased",
@@ -791,12 +799,17 @@ Sources:
                 detail={"papers": len(paper_results), "kb_name": request.kb_name},
             )
             for rank, p in enumerate(paper_results):
+                _raw_pid = p.get("paper_id")
+                _raw_doi = p.get("doi")
+                _raw_title = p.get("title")
+                _raw_kb = p.get("kb_name")
+                _raw_score = p.get("paper_score") or p.get("score") or 0.0
                 _c.add_retrieval(
-                    paper_id=p.get("paper_id"),
-                    doi=p.get("doi"),
-                    title=p.get("title"),
-                    score=float(p.get("paper_score", p.get("score", 0.0)) or 0.0),
-                    kb_name=p.get("kb_name"),
+                    paper_id=str(_raw_pid) if _raw_pid is not None else None,
+                    doi=str(_raw_doi) if _raw_doi is not None else None,
+                    title=str(_raw_title) if _raw_title is not None else None,
+                    score=float(_raw_score),
+                    kb_name=str(_raw_kb) if _raw_kb is not None else None,
                     content_type=None,
                     pipeline_step=None,
                     rank=rank,
@@ -807,12 +820,15 @@ Sources:
         if paper_results:
             sources = []
             for p in paper_results:
+                _raw_year_s = p.get("year")
+                _raw_score_s = p.get("paper_score")
+                _raw_meta_s = p.get("paper_metadata")
                 sources.append(
                     SourceReference(
-                        title=p.get("title") or "Untitled",
-                        authors=p.get("authors"),
-                        year=p.get("year"),
-                        doi=p.get("doi"),
+                        title=str(p.get("title") or "Untitled"),
+                        authors=p.get("authors"),  # type: ignore[arg-type]  # _coerce_authors validator widens authors at runtime
+                        year=int(_raw_year_s) if _raw_year_s is not None else None,
+                        doi=str(p["doi"]) if p.get("doi") is not None else None,
                         url=p.get("url") or p.get("pdf_url"),
                         # Propagate provider provenance from the web-fallback
                         # path so the UI shows "europepmc" / "openalex" /
@@ -822,10 +838,10 @@ Sources:
                         source_apis=p.get("source_apis"),
                         sources_all=p.get("sources_all"),
                         enrichment_sources=p.get("enrichment_sources"),
-                        relevance_score=p.get("paper_score", 0.0),
-                        kb_name=p.get("kb_name") or request.kb_name,
-                        paper_id=p.get("paper_id"),
-                        metadata=p.get("paper_metadata"),
+                        relevance_score=float(_raw_score_s or 0.0),
+                        kb_name=str(p["kb_name"]) if p.get("kb_name") is not None else request.kb_name,
+                        paper_id=str(p["paper_id"]) if p.get("paper_id") is not None else None,
+                        metadata=_raw_meta_s,
                     )
                 )
         else:
@@ -1123,7 +1139,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         # Calculate WRRF scores
         wrrf_scores = {}
         for doc_id in rankings:
-            total_score = 0
+            total_score: float = 0.0
             for q_idx, rank in rankings[doc_id].items():
                 norm_score = scores_per_query[q_idx][doc_id]
                 # WRRF formula: weighted reciprocal rank fusion
@@ -1306,7 +1322,7 @@ Provide a comprehensive answer based on the documents above."""
 
         if paper_results:
             context_with_citations = ""
-            sc = Counter()
+            sc: Counter[tuple[str, str]] = Counter()
             for p in paper_results:
                 text = (p.get("full_text") or "")[:12000]
                 cit = p.get("title") or p.get("doi") or "Unknown"
@@ -1427,13 +1443,15 @@ Sources:
         """
         mi = max_iterations if max_iterations is not None else self.refinement_iterations
         current_response = response
+        _docs: list[Any] = documents if documents is not None else []
+        assert request is not None, "_refine_response requires a non-None request"
 
         for i in range(mi):
             # Evaluate current response
             feedback = await self._evaluate_response(
                 response=current_response,
                 query=query,
-                documents=documents,
+                documents=_docs,
                 llm=llm,
                 request=request,
                 eval_model=eval_model,
@@ -1450,7 +1468,7 @@ Sources:
             current_response = await self._improve_response(
                 response=current_response,
                 query=query,
-                documents=documents,
+                documents=_docs,
                 feedback=feedback,
                 llm=llm,
                 request=request,
@@ -1462,7 +1480,7 @@ Sources:
             final_fb = await self._evaluate_response(
                 response=current_response,
                 query=query,
-                documents=documents,
+                documents=_docs,
                 llm=llm,
                 request=request,
                 eval_model=eval_model,

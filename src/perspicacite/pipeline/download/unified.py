@@ -90,9 +90,9 @@ async def _parse_pdf_bytes(pdf_bytes: bytes, pdf_parser: Any) -> str | None:
         text = pdf_bytes.decode("utf-8", errors="replace")
         return text if len(text.strip()) > 200 else None
     parsed = await pdf_parser.parse(pdf_bytes)
-    text = parsed.text if parsed else None
-    if text and len(text.strip()) > 200:
-        return text
+    parsed_text: str | None = parsed.text if parsed else None
+    if parsed_text and len(parsed_text.strip()) > 200:
+        return parsed_text
     return None
 
 
@@ -309,6 +309,7 @@ async def retrieve_paper_content(
                     get_cached_pdf,
                 )
                 cached_bytes = get_cached_pdf(clean, pdf_cache_dir)
+            pdf_result: tuple[bytes, str] | None
             if cached_bytes is not None:
                 pdf_result = (cached_bytes, "pdf_cache")
             else:

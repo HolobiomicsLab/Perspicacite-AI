@@ -317,7 +317,7 @@ class GoogleScholarPlaywrightProvider:
             )
             return []
 
-        papers: list[Paper] = []
+        papers = []
         for card in cards[:max_results]:
             doi = _extract_doi_from_url(card.get("url", ""))
             authors_str, _venue, year = _parse_meta_line(card.get("meta", ""))

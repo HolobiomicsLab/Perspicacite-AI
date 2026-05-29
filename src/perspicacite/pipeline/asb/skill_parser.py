@@ -78,8 +78,8 @@ def _parse_one_skill(*, skill_dir: Path, index_entry: dict) -> ParsedSkill:
     links_list = links_raw.get("links") or [] if isinstance(links_raw, dict) else links_raw or []
 
     return ParsedSkill(
-        slug=slug,
-        name=index_entry.get("name", slug),
+        slug=slug or "",
+        name=index_entry.get("name") or slug or "",
         description=index_entry.get("description") or frontmatter.get("description") or "",
         edam_operation=index_entry.get("edam_operation") or frontmatter.get("edam_operation"),
         edam_topics=frontmatter.get("edam_topics") or [],

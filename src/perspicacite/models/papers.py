@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 
 class PaperSource(str, Enum):
@@ -104,6 +104,12 @@ class Paper(BaseModel):
     content_type: str | None = None
     license: str | None = None  # OA license id from discovery (e.g. "cc-by")
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    # Runtime-only tag (never serialized): which KB this Paper instance was
+    # loaded from. Set on enumeration paths (kb.py, cli.py) and read via
+    # getattr in fetch_orchestrator. Declared as a PrivateAttr so pydantic v2
+    # permits the assignment (plain attribute assignment would raise).
+    _kb_name: str | None = PrivateAttr(default=None)
 
     @field_validator("year")
     @classmethod

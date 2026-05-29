@@ -65,7 +65,7 @@ async def fetch_paper_resources(
     cfg = app_state.config.external_resources
     if not cfg.fetch_on_demand:
         logger.info("external_fetch_disabled_by_config")
-        result = {"disabled": True}
+        result: dict[str, object] = {"disabled": True}
         await registry.finish(job_id, result)
         return result
 

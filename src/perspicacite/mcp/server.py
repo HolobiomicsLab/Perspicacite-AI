@@ -30,8 +30,12 @@ import asyncio
 import contextlib
 import json
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 from perspicacite.logging import get_logger
 from perspicacite.pipeline.asb.collection_ingest import (
@@ -58,7 +62,7 @@ try:
 
     mcp = FastMCP("perspicacite")
 except ImportError:
-    mcp = None
+    mcp = None  # type: ignore[assignment]  # fastmcp not installed; mcp is a FastMCP[Any] at runtime
     Context = Any  # type: ignore[misc, assignment]
 
 
@@ -597,7 +601,7 @@ async def search_literature(
         # Convert Paper models to dicts
         results = []
         for p in papers:
-            pd = {
+            pd: dict[str, Any] = {
                 "id": p.id,
                 "title": p.title,
                 "year": p.year,
@@ -1643,6 +1647,8 @@ async def add_papers_to_kb(
             async def _fetch(idx: int) -> tuple[int, str | None, bool]:
                 paper = paper_models[idx]
                 try:
+                    if paper.doi is None:
+                        return idx, None, False
                     result = await retrieve_paper_content(
                         paper.doi,
                         url=paper.url,
@@ -2354,11 +2360,11 @@ async def screen_papers(
             results = _bm25(items, reference=query, method="bm25", threshold=threshold)
 
         screened = []
-        for r in results[:max_results]:
-            entry: dict = {"score": r.score, "kept": r.kept, "reason": r.reason}
-            if r.item.get("doi"):
-                entry["doi"] = r.item["doi"]
-            entry["title"] = r.item.get("title")
+        for sr in results[:max_results]:
+            entry: dict = {"score": sr.score, "kept": sr.kept, "reason": sr.reason}
+            if sr.item.get("doi"):
+                entry["doi"] = sr.item["doi"]
+            entry["title"] = sr.item.get("title")
             screened.append(entry)
         logger.info(
             "mcp_screen_papers",
@@ -3687,14 +3693,14 @@ async def ingest_urls_to_kb(
                         if r.get("doi") == doi:
                             r["status"] = "arxiv_no_content"
                     continue
-                md = pc.metadata or {}
+                paper_meta: dict[str, Any] = pc.metadata or {}
                 p = Paper(
                     id=doi,
-                    title=md.get("title") or doi,
-                    authors=[Author(name=a) for a in (md.get("authors") or [])],
-                    year=md.get("year"),
+                    title=paper_meta.get("title") or doi,
+                    authors=[Author(name=a) for a in (paper_meta.get("authors") or [])],
+                    year=paper_meta.get("year"),
                     doi=doi,
-                    abstract=pc.abstract or md.get("abstract"),
+                    abstract=pc.abstract or paper_meta.get("abstract"),
                     full_text=pc.full_text,
                     source=PaperSource.OPENALEX,
                     content_type=pc.content_type,
@@ -5069,7 +5075,7 @@ async def zotero_get_paper_resources(
             matched = [
                 it
                 for it in items
-                if (it.get("data") or {}).get("DOI", "").lower().strip() == doi.lower().strip()
+                if (it.get("data") or {}).get("DOI", "").lower().strip() == (doi or "").lower().strip()
             ]
             if not matched:
                 return {"error": "PAPER_NOT_FOUND", "message": f"DOI {doi} not in library"}
@@ -5091,7 +5097,7 @@ async def zotero_get_paper_resources(
         return {"error": "ZOTERO_ERROR", "message": str(exc)}
 
     item_doi = (zotero_item.get("data") or {}).get("DOI") or doi or ""
-    item_key = zotero_item.get("key") or zotero_key
+    item_key = str(zotero_item.get("key") or zotero_key or "")
 
     clf = LicenseClassifier()
     async with httpx.AsyncClient() as http:
@@ -5595,6 +5601,7 @@ async def search_by_passage(
     try:
         from perspicacite.retrieval.passage_search import search_passages
 
+        retriever: Any  # MultiKBRetriever | DynamicKnowledgeBase — share no common typed base
         # Multi-KB path
         if kb_names and len(kb_names) > 1:
             from perspicacite.retrieval.multi_kb import (
@@ -5756,6 +5763,7 @@ async def get_relevant_passages(
     try:
         from perspicacite.retrieval.passage_search import search_passages
 
+        retriever: Any  # MultiKBRetriever | DynamicKnowledgeBase — share no common typed base
         # Build retriever (same pattern as search_by_passage).
         if kb_names and len(kb_names) > 1:
             from perspicacite.retrieval.multi_kb import (
@@ -6384,7 +6392,7 @@ async def query_claim_graph(
 
     from perspicacite.indicium_layer import queries as _q
 
-    _query_table = {
+    _query_table: dict[str, Callable[..., Any]] = {
         "claims_supporting": _q.claims_supporting,
         "claims_disputing": _q.claims_disputing,
         "evidence_trace": _q.evidence_trace,

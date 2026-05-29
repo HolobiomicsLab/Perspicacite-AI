@@ -216,9 +216,11 @@ async def enrich_papers_with_pdf(
         local_path = _parse_local_file_field(paper.pdf_url)
         if local_path:
             try:
-                result = await pdf_parser.parse(local_path)
-                if result.text:
-                    paper.full_text = result.text
+                # pdf_parser.parse returns ParsedContent; keep a separate var
+                # so the later `result` (PaperContent) has its own type.
+                parsed_result = await pdf_parser.parse(local_path)
+                if parsed_result.text:
+                    paper.full_text = parsed_result.text
                     stats["local_pdf"] += 1
                     continue
             except Exception as ex:

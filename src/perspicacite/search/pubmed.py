@@ -164,9 +164,9 @@ class PubMedSearchAdapter:
         self.email = email
         self.api_key = api_key or None
 
-        Entrez.email = email
+        Entrez.email = email  # type: ignore[assignment]  # Biopython stubs type email/api_key as None; runtime accepts str
         if self.api_key:
-            Entrez.api_key = self.api_key
+            Entrez.api_key = self.api_key  # type: ignore[assignment]  # same as above
 
         # Rate-limit metadata: 10 req/s with key, 3 req/s without (NCBI guidelines)
         self._min_interval = 1.0 / (rate_limit_per_sec or (10.0 if self.api_key else 3.0))

@@ -172,7 +172,7 @@ async def download_from_arxiv(
 async def fetch_arxiv_html(
     arxiv_id: str,
     http_client: httpx.AsyncClient | None = None,
-) -> tuple[str | None, dict[str, str] | None, dict[str, str | None] | None]:
+) -> tuple[str | None, dict[str, str] | None, str | None]:
     """Fetch and parse arXiv HTML version of a paper.
 
     arXiv serves HTML at https://arxiv.org/html/{id} for many papers.
