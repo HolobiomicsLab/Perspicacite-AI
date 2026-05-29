@@ -5900,6 +5900,7 @@ async def extract_parameters_from_passages(
     try:
         from perspicacite.pipeline.extraction import (
             Passage,
+            annotate_anchor_status,
             extract_structured,
             handle_quote_for_license,
         )
@@ -5946,6 +5947,10 @@ async def extract_parameters_from_passages(
                 timeout_s=80.0,
             )
             records = []  # return empty list on timeout rather than error
+
+        # R3 — verify each record's quote against the source passages BEFORE the
+        # license-tier rewrite, so verification sees the model's original quote.
+        records = annotate_anchor_status(records, passage_objs)
 
         # Apply license-tier policy to source_quote on each record.
         doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
@@ -6028,6 +6033,7 @@ async def extract_failure_modes_from_passages(
     try:
         from perspicacite.pipeline.extraction import (
             Passage,
+            annotate_anchor_status,
             extract_structured,
             handle_quote_for_license,
         )
@@ -6067,6 +6073,9 @@ async def extract_failure_modes_from_passages(
                 timeout_s=80.0,
             )
             records = []  # return empty list on timeout rather than error
+
+        # R3 — verify quotes before the license-tier rewrite.
+        records = annotate_anchor_status(records, passage_objs)
 
         doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
         cleaned: list[dict] = []
@@ -6253,6 +6262,9 @@ async def build_claim_graph(
             refresh=refresh,
             max_pairs_per_claim=max_pairs_per_claim,
             model=model,
+            anchor_strict=state.config.anchor.strict,
+            anchor_near_threshold=state.config.anchor.near_threshold,
+            anchor_audit_dir=state.config.anchor.audit_dir,
         )
     finally:
         store.close()

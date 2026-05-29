@@ -190,3 +190,50 @@ async def extract_structured(
             out.append(r)
 
     return out
+
+
+def annotate_anchor_status(
+    records: list[dict],
+    passages: list[Passage],
+    *,
+    quote_key: str = "source_quote",
+) -> list[dict]:
+    """Tag each extracted record with anchor verification of its quote against
+    the source passage texts. Mutates and returns `records`.
+
+    Adds:
+        record["anchor_status"]  -> "verified" | "repaired" | "unverified" | "unchecked"
+        record["quote_exact"]    -> verbatim span (only when verified/repaired)
+
+    Verifies BEFORE any license-tier rewrite of source_quote, so the check runs
+    against the model's original quote. Degrades to "unchecked" (never raises)
+    when the indicium verifier is unavailable.
+    """
+    if not records:
+        return records
+    try:
+        from indicium import verify_quote
+    except Exception:  # indicia extra absent
+        for r in records:
+            if isinstance(r, dict):
+                r["anchor_status"] = "unchecked"
+        logger.warning("anchor_verifier_unavailable_extraction")
+        return records
+
+    candidates = [p.text for p in passages]
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        quote = r.get(quote_key)
+        if not quote:
+            r["anchor_status"] = "unverified"
+            continue
+        try:
+            res = verify_quote(str(quote), candidates)
+        except Exception:
+            r["anchor_status"] = "unchecked"
+            continue
+        r["anchor_status"] = res.status
+        if res.status in ("verified", "repaired") and res.quote_exact:
+            r["quote_exact"] = res.quote_exact
+    return records
