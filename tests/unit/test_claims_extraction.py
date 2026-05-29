@@ -477,3 +477,44 @@ def test_compose_adapters_all_unknown_gives_none():
     result = compose_adapters(valid) if valid else None
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# claims_to_graph() — R3 anchor provenance
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_claims_to_graph_emits_anchor_status_and_quote_exact():
+    import rdflib
+
+    from perspicacite.pipeline.claims import claims_to_graph
+
+    asb = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")
+    claims = [{
+        "id": "c1", "context": "in vitro", "subject": "A",
+        "qualifier": "inhibits", "relation": "inhibits", "object": "B",
+        "_anchor": {"status": "verified", "quote_exact": "A inhibits B"},
+    }]
+    g = claims_to_graph(claims)
+    node = rdflib.URIRef("urn:perspicacite:claim:c1")
+    assert (node, asb["anchorStatus"], rdflib.Literal("verified")) in g
+    assert (node, asb["quoteExact"], rdflib.Literal("A inhibits B")) in g
+
+
+@pytest.mark.unit
+def test_claims_to_graph_unverified_emits_status_but_not_quote():
+    import rdflib
+
+    from perspicacite.pipeline.claims import claims_to_graph
+
+    asb = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")
+    claims = [{
+        "id": "c2", "context": "in vitro", "subject": "A",
+        "qualifier": "inhibits", "relation": "inhibits", "object": "B",
+        "_anchor": {"status": "unverified", "quote_exact": None},
+    }]
+    g = claims_to_graph(claims)
+    node = rdflib.URIRef("urn:perspicacite:claim:c2")
+    assert (node, asb["anchorStatus"], rdflib.Literal("unverified")) in g
+    # No quote may be laundered into the graph for an unverified claim.
+    assert (node, asb["quoteExact"], None) not in g
