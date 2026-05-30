@@ -71,5 +71,5 @@ For contributors and people extending the codebase.
 - [README](../README.md) — project overview and quick start
 - [VISION.md](VISION.md) — framework vision and design philosophy
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — contributor agreement and CLA workflow
-- [MANUAL_QA.md](../MANUAL_QA.md) — manual QA checklist for UI features
+- [MANUAL_QA.md](development/MANUAL_QA.md) — manual QA checklist for UI features
 - [ROADMAP.md](../ROADMAP.md) — high-level roadmap

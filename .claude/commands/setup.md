@@ -14,4 +14,4 @@ provider API keys (chat + embedding), Unpaywall email config, and whether a
 server is already running on :8000. Exits 0 if all critical checks pass.
 
 If something fails, the script names the exact next command to run.
-For the full step-by-step install walkthrough see [`INSTALL_AGENT.md`](../../INSTALL_AGENT.md).
+For the full step-by-step install walkthrough see [`INSTALL_AGENT.md`](../../docs/INSTALL_AGENT.md).

@@ -129,4 +129,4 @@ For integration tests:
 ## Related topics
 
 - [development/contributing.md](contributing.md) — setting up the dev environment
-- [MANUAL_QA.md](../../MANUAL_QA.md) — manual QA checklist for UI features
+- [MANUAL_QA.md](MANUAL_QA.md) — manual QA checklist for UI features
