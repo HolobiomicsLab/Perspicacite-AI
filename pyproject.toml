@@ -2,9 +2,31 @@
 name = "perspicacite"
 version = "2.0.0"
 description = "AI-powered scientific literature research assistant"
+readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
+authors = [
+    { name = "Lucas Pradi" },
+    { name = "Louis-Félix Nothias" },
+    { name = "HolobiomicsLab" },
+]
+keywords = [
+    "rag",
+    "literature-review",
+    "knowledge-base",
+    "mcp",
+    "scientific-research",
+    "retrieval-augmented-generation",
+]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Environment :: Web Environment",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Indexing",
 ]
 requires-python = ">=3.12"
 dependencies = [
@@ -37,6 +59,13 @@ dependencies = [
     "langchain-text-splitters>=0.3.0",
     "pathspec>=1.1.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/HolobiomicsLab/Perspicacite-AI"
+Repository = "https://github.com/HolobiomicsLab/Perspicacite-AI"
+Issues = "https://github.com/HolobiomicsLab/Perspicacite-AI/issues"
+Changelog = "https://github.com/HolobiomicsLab/Perspicacite-AI/blob/main/CHANGELOG.md"
+Paper = "https://ceur-ws.org/Vol-4085/paper77.pdf"
 
 [project.optional-dependencies]
 dev = [
