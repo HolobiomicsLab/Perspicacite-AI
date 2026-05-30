@@ -110,7 +110,7 @@ FastAPI app is defined in [src/perspicacite/web/app.py](src/perspicacite/web/app
 - `GET /api/conversations/search?q=...` — full-text search across all conversations; uses SQLite FTS5 over message content with a LIKE fallback. `SessionStore.init_db()` creates the FTS5 shadow table idempotently; `add_message()` keeps it in sync.
 - `GET /api/conversations/{id}/export?format=markdown` — downloadable Markdown rendering of a conversation (Q&A turns + cited sources/references footer).
 - New static JS files: `static/js/kb_stats.js` (KB stats tab) and `static/js/paper_detail.js` (paper-detail slide-over panel + pipeline-step badges on chat source cards).
-- `MANUAL_QA.md` (git-tracked, repo root) — human click-through checklist for Phase 5 features.
+- `docs/development/MANUAL_QA.md` (git-tracked) — human click-through checklist for Phase 5 features.
 
 ### MCP Server
 
