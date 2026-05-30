@@ -310,7 +310,8 @@ async def screen_papers_rerank(
     def _load_offline_or_fallback() -> CrossEncoder:
         try:
             return CrossEncoder(model_name, local_files_only=True)
-        except Exception:
+        except Exception as exc:
+            logger.debug("offline cross-encoder load failed", error=str(exc))
             return CrossEncoder(model_name)
 
     model = await loop.run_in_executor(None, _load_offline_or_fallback)
@@ -488,6 +489,7 @@ async def screen_papers_embedding(
         ref_vecs = await embedding_provider.embed(list(flat))
         cand_vecs = await embedding_provider.embed(to_embed) if to_embed else []
     except Exception as exc:
+        logger.warning("screening embedding failed", error=str(exc))
         return [
             ScreenResult(item=c, score=0.0, kept=False, reason=f"embedding_error: {exc}")
             for c in cands

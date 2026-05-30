@@ -8,7 +8,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 
+from perspicacite.logging import get_logger
 from perspicacite.web.state import app_state
+
+logger = get_logger("perspicacite.web.routers.conversations")
 
 router = APIRouter()
 
@@ -171,7 +174,8 @@ def _parse_sources(raw) -> list[dict]:
     if isinstance(raw, str):
         try:
             raw = _json.loads(raw)
-        except Exception:
+        except Exception as exc:
+            logger.debug("failed to parse sources json", error=str(exc))
             return []
     if isinstance(raw, list):
         return [s for s in raw if isinstance(s, dict)]

@@ -14,7 +14,10 @@ from typing import Any
 
 import click
 
+from perspicacite.logging import get_logger
 from perspicacite.pipeline.github_kb import IngestSummary
+
+logger = get_logger("perspicacite.cli_helpers")
 
 
 def _start_mcp_and_web(config, app) -> None:
@@ -149,7 +152,8 @@ async def _run_query(
                 try:
                     import json as _json
                     delta = _json.loads(data).get("delta", "")
-                except Exception:
+                except Exception as exc:
+                    logger.debug("content delta parse failed", error=str(exc))
                     delta = str(data)
                 if delta:
                     full_answer_parts.append(delta)
@@ -164,6 +168,7 @@ async def _run_query(
                 click.echo(f"\n❌ Error from RAG engine: {data}", err=True)
                 sys.exit(1)
     except Exception as exc:
+        logger.warning("query stream failed", error=str(exc))
         click.echo(f"\n❌ Query failed: {exc}", err=True)
         sys.exit(1)
 

@@ -89,7 +89,8 @@ def _try_parse_json(raw: str) -> list[dict] | None:
     try:
         from perspicacite.rag.utils.json_salvage import clean_control_chars
         raw_clean = clean_control_chars(raw)
-    except Exception:
+    except Exception as exc:
+        logger.debug("json salvage import/clean failed", error=str(exc))
         raw_clean = raw
 
     try:
@@ -231,7 +232,8 @@ def annotate_anchor_status(
             continue
         try:
             res = verify_quote(str(quote), candidates)
-        except Exception:
+        except Exception as exc:
+            logger.debug("quote verification failed", error=str(exc))
             r["anchor_status"] = "unchecked"
             continue
         r["anchor_status"] = res.status

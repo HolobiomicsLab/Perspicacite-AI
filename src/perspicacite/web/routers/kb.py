@@ -118,7 +118,8 @@ def _count_bibtex_entries(bibtex_text: str) -> int:
         import bibtexparser
 
         return len(bibtexparser.loads(bibtex_text).entries)
-    except Exception:
+    except Exception as exc:
+        logger.debug("failed to count bibtex entries: %s", exc)
         return 0
 
 
@@ -340,6 +341,7 @@ async def _dois_ingest_worker(
                     doi, pdf_parser=app_state.pdf_parser, **pdf_kw
                 )
             except Exception as exc:
+                logger.warning("paper download failed: %s", exc)
                 failed.append({"doi": doi, "reason": str(exc)})
                 dl["failed"] += 1
                 await registry.publish(
@@ -843,7 +845,8 @@ async def kb_export(name: str, format: str = "obsidian-vault"):
                 import json as _json
                 try:
                     authors_raw = _json.loads(authors_raw)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("failed to parse authors json: %s", exc)
                     authors_raw = [authors_raw]
             papers.append({
                 "doi": m.get("doi") or m.get("paper_id"),
@@ -963,7 +966,8 @@ async def add_bibtex_to_kb(name: str, request: Request):
     try:
         body = await request.json()
         bibtex_content = body.get("bibtex", "")
-    except Exception:
+    except Exception as exc:
+        logger.warning("failed to parse request body: %s", exc)
         return {"error": "Invalid request body"}
 
     if not bibtex_content.strip():
@@ -1229,6 +1233,7 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
         try:
             result = await retrieve_paper_content(doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
         except Exception as e:
+            logger.warning("paper download failed: %s", e)
             failed.append({"doi": doi, "reason": str(e)})
             dl["failed"] += 1
             continue
@@ -1359,6 +1364,7 @@ async def get_paper_detail(doi: str):
     try:
         result = await retrieve_paper_content(doi, pdf_parser=None, **pdf_kw)
     except Exception as e:
+        logger.warning("paper content preview failed: %s", e)
         return {"doi": doi, "error": str(e), "content_type": "none"}
     md = result.metadata or {}
     return {
@@ -1504,6 +1510,7 @@ async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
                     "status": res.get("status"),
                 })
             except Exception as exc:
+                logger.warning("paper capsule step failed: %s", exc)
                 await reg.publish(job_id, {
                     "type": "progress", "done": i + 1, "paper": paper.id,
                     "status": "errored", "error": str(exc),
@@ -1562,6 +1569,7 @@ async def expand_similar_score(name: str, payload: ExpandSimilarScoreRequest) ->
                 "method": report.method,
             })
         except Exception as exc:
+            logger.warning("expansion scoring job failed: %s", exc)
             await reg.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())
@@ -1594,6 +1602,7 @@ async def expand_similar_commit(name: str, payload: ExpandSimilarCommitRequest) 
             )
             await reg.finish(job_id, res)
         except Exception as exc:
+            logger.warning("expansion commit job failed: %s", exc)
             await reg.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())
@@ -1660,6 +1669,7 @@ async def fetch_paper_resources_async(name: str, paper_id: str, body: dict | Non
                 job_id=job_id, ingest=ingest, force=force,
             )
         except Exception as exc:
+            logger.warning("capsule build job failed: %s", exc)
             await reg.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())

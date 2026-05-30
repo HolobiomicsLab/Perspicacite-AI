@@ -79,8 +79,8 @@ import logging as _stdlib_logging
 try:
     import litellm as _litellm
     _litellm.suppress_debug_info = True
-except Exception:  # pragma: no cover — litellm is a hard dep
-    pass
+except Exception as exc:  # pragma: no cover — litellm is a hard dep
+    logger.debug("litellm debug suppression failed", error=str(exc))
 _stdlib_logging.getLogger("LiteLLM").setLevel(_stdlib_logging.ERROR)
 _stdlib_logging.getLogger("litellm").setLevel(_stdlib_logging.ERROR)
 

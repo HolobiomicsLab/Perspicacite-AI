@@ -34,25 +34,29 @@ logger = get_logger("perspicacite.pipeline.chunking_advanced")
 np: Any
 try:
     import numpy as np
-except Exception:
+except Exception as exc:
+    logger.debug("numpy not available", error=str(exc))
     np = None  # optional dep fallback
 
 tiktoken: Any
 try:
     import tiktoken
-except Exception:
+except Exception as exc:
+    logger.debug("tiktoken not available", error=str(exc))
     tiktoken = None  # optional dep fallback
 
 AutoTokenizer: Any
 try:
     from transformers import AutoTokenizer
-except Exception:
+except Exception as exc:
+    logger.debug("transformers not available", error=str(exc))
     AutoTokenizer = None  # optional dep fallback
 
 SentenceTransformer: Any
 try:
     from sentence_transformers import SentenceTransformer
-except Exception:
+except Exception as exc:
+    logger.debug("sentence_transformers not available", error=str(exc))
     SentenceTransformer = None  # optional dep fallback
 
 

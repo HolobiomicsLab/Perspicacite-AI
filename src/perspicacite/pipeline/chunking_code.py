@@ -308,7 +308,8 @@ try:
 
     importlib.import_module("tree_sitter_languages")
     HAS_TREE_SITTER = True
-except Exception:
+except Exception as exc:
+    logger.debug("tree_sitter_languages not available", error=str(exc))
     HAS_TREE_SITTER = False
 
 

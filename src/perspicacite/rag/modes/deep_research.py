@@ -1978,7 +1978,8 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 max_tokens=500,
             )
             return t.strip()
-        except Exception:
+        except Exception as exc:
+            logger.debug("information summarization failed", error=str(exc))
             return text[:500]
 
     async def _generate_contextual_queries(

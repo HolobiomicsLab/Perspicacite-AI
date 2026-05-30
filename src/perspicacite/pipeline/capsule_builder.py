@@ -306,8 +306,8 @@ async def build_capsule(
             existing = json.loads(meta_path.read_text())
             if existing.get("capsule_version", "0.0") >= app_state.config.capsule.min_version:
                 return {"status": "skipped", "capsule_dir": str(cap)}
-        except Exception:
-            pass  # fall through and rebuild
+        except Exception as exc:
+            logger.debug("existing capsule metadata read failed", error=str(exc))  # fall through and rebuild
 
     # 1. Parse PDF if available
     text = ""
@@ -371,7 +371,8 @@ async def _write_supplementary_manifest(cap: Path, *, paper: Paper) -> int:
     try:
         from perspicacite.pipeline.download.supplementary import discover_supplementary
         result = await discover_supplementary(doi)
-    except Exception:
+    except Exception as exc:
+        logger.debug("supplementary discovery failed", error=str(exc))
         return 0
     items = result.get("items") or []
     if not items:

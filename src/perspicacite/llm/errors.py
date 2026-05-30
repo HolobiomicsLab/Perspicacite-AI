@@ -15,6 +15,10 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from perspicacite.logging import get_logger
+
+logger = get_logger("perspicacite.llm.errors")
+
 
 class LLMError(RuntimeError):
     """Base class for Perspicacité LLM errors."""
@@ -98,7 +102,8 @@ def detect_rate_limit(text: str) -> _RateLimitHit | None:
         if m:
             try:
                 seconds = extractor(m)
-            except Exception:
+            except Exception as exc:
+                logger.debug("retry-after extract failed", error=str(exc))
                 seconds = None
             return _RateLimitHit(retry_after_seconds=seconds)
     return None

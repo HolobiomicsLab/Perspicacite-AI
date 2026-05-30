@@ -303,7 +303,8 @@ def _hit_from_oa_work(work: dict) -> CiteHit | None:
                     positions.append((i, word))
             positions.sort()
             abstract = " ".join(w for _, w in positions)
-        except Exception:
+        except Exception as exc:
+            logger.debug("abstract inverted-index reconstruction failed", error=str(exc))
             abstract = None
     return CiteHit(
         doi=doi, title=title, year=year, venue=venue,

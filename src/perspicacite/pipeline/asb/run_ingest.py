@@ -252,7 +252,8 @@ async def ingest_asb_run(
             try:
                 import yaml
                 corpus = yaml.safe_load(corpus_path.read_text()) or {}
-            except Exception:
+            except Exception as exc:
+                logger.debug("corpus.yaml parse failed extra=%s", {"error": str(exc)})
                 corpus = {}
             known_dois = {
                 ((p or {}).get("doi") or "").lower().strip()

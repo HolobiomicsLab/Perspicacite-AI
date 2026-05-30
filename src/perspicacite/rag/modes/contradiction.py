@@ -309,14 +309,17 @@ class ContradictionRAGMode(BaseRAGMode):
                     answer = str(answer)
                 yield StreamEvent.content(answer)
             except Exception as exc:
+                logger.warning("contradiction fallback answer generation failed", error=str(exc))
                 yield StreamEvent.content(f"(Answer generation failed: {exc})")
-        except Exception:
+        except Exception as exc:
+            logger.warning("contradiction streaming fallback failed", error=str(exc))
             try:
                 answer = await llm.complete(messages=messages, stage="contradiction.fallback")
                 if not isinstance(answer, str):
                     answer = str(answer)
                 yield StreamEvent.content(answer)
             except Exception as exc2:
+                logger.warning("contradiction fallback answer generation failed", error=str(exc2))
                 yield StreamEvent.content(f"(Answer generation failed: {exc2})")
 
     # ------------------------------------------------------------------
@@ -642,7 +645,8 @@ class ContradictionRAGMode(BaseRAGMode):
                 try:
                     data = json.loads(ev.data)
                     delta = data.get("delta", "") or data.get("content", "") or ""
-                except Exception:
+                except Exception as exc:
+                    logger.debug("content event json parse failed", error=str(exc))
                     delta = ev.data
                 answer_parts.append(delta)
             elif ev.event == "source":
@@ -654,7 +658,8 @@ class ContradictionRAGMode(BaseRAGMode):
             elif ev.event == "error":
                 try:
                     msg = json.loads(ev.data).get("message", ev.data)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("error event json parse failed", error=str(exc))
                     msg = ev.data
                 answer_parts.append(f"\n\n[Error: {msg}]")
 

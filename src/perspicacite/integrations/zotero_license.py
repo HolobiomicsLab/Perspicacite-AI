@@ -172,7 +172,8 @@ class LicenseClassifier:
             # 4. Heuristic
             return self._store(doi, self.heuristic(is_oa=is_oa or False))
 
-        except Exception:
+        except Exception as exc:
+            logger.debug("zotero license probe failed", error=str(exc))
             # Never crash the caller over a license lookup failure.
             return LicenseInfo(spdx=None, classification="unknown", policy="reflavor", source="unknown")
         finally:

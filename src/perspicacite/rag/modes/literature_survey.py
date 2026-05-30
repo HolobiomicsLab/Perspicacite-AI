@@ -584,8 +584,8 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                         await analysis_task
                     except asyncio.CancelledError:
                         pass
-                    except Exception:
-                        pass  # swallow any other exception from the cancelled task
+                    except Exception as exc:
+                        logger.debug("cancelled analysis task raised", error=str(exc))  # swallow any other exception from the cancelled task
                     logger.info("literature_survey_cancelled", task_id=_tid, stage="mid_analysis")
                     yield StreamEvent(event="error", data=json.dumps({"reason": "cancelled", "task_id": _tid}))
                     return

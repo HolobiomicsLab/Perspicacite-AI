@@ -12,6 +12,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from perspicacite.logging import get_logger
+
+logger = get_logger("perspicacite.web.routers.zotero")
+
 router = APIRouter(prefix="/api/zotero", tags=["zotero"])
 
 
@@ -108,6 +112,7 @@ async def zotero_push(payload: PushRequest) -> dict[str, Any]:
                 else:
                     failed.append({"doi": doi, "reason": "no key returned"})
             except Exception as exc:
+                logger.warning("zotero push failed", error=str(exc))
                 failed.append({"doi": doi, "reason": str(exc)})
 
         return {"created": created, "skipped": [], "failed": failed}

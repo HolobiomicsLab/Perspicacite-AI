@@ -55,7 +55,8 @@ class CrossEncoderReranker:
                     self._model = CrossEncoder(
                         self.model_name, local_files_only=True
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.debug("cross-encoder cache-only load failed, retrying online", error=str(exc))
                     self._model = CrossEncoder(self.model_name)
             except ImportError:
                 raise ImportError(

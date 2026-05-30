@@ -92,7 +92,8 @@ def _parse_json(raw: Any, default: dict) -> dict:
             s = s[:-3].strip()
     try:
         return json.loads(s)
-    except Exception:
+    except Exception as exc:
+        logger.debug("json parse failed", error=str(exc))
         return default
 
 

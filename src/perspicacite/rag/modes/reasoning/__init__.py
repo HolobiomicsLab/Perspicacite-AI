@@ -177,7 +177,8 @@ class ReasoningRAGMode(BaseRAGMode):
             if ev.event == "content":
                 try:
                     delta = json.loads(ev.data).get("delta", "")
-                except Exception:
+                except Exception as exc:
+                    logger.debug("content event json parse failed", error=str(exc))
                     delta = ev.data
                 answer_parts.append(delta)
             elif ev.event == "source":
@@ -186,7 +187,8 @@ class ReasoningRAGMode(BaseRAGMode):
             elif ev.event == "error":
                 try:
                     msg = json.loads(ev.data).get("message", ev.data)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("error event json parse failed", error=str(exc))
                     msg = ev.data
                 answer_parts.append(f"\n\n[Error: {msg}]")
         return RAGResponse(

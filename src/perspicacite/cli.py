@@ -62,6 +62,7 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
     try:
         cfg = load_config(str(config) if config else None)
     except Exception as e:
+        logger.debug("config load failed", error=str(e))
         click.echo(f"Error loading config: {e}", err=True)
         sys.exit(1)
 
@@ -784,6 +785,7 @@ def build_capsules_cmd(ctx, kb_name: str, force: bool) -> None:
                 counts[status] = counts.get(status, 0) + 1
                 click.echo(f"  {paper.id}: {status}")
             except Exception as exc:
+                logger.warning("capsule build failed", error=str(exc))
                 counts["errored"] += 1
                 click.echo(f"  {paper.id}: errored — {exc}", err=True)
         click.echo(f"Summary: {counts}")
@@ -1200,6 +1202,7 @@ def delete_kb_cmd(
                 await state.vector_store.delete_collection(kb.collection_name)
                 collection_dropped = True
             except Exception as exc:
+                logger.warning("chroma collection delete failed", error=str(exc))
                 click.echo(
                     f"Warning: failed to delete Chroma collection "
                     f"{kb.collection_name}: {exc}", err=True,

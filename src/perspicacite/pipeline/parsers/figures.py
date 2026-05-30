@@ -71,7 +71,8 @@ def extract_figures(pdf_path: Path, min_px: int = 100) -> list[RawFigure]:
         return _extract_via_pymupdf(pdf_path, min_px)
     except ImportError:
         return []
-    except Exception:
+    except Exception as exc:
+        logger.debug("figure extraction failed", error=str(exc))
         return []
 
 

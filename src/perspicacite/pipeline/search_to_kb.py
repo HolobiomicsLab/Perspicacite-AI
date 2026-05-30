@@ -204,7 +204,8 @@ async def kb_aware_query(
     collection = kb_meta.collection_name or chroma_collection_name_for_kb(kb_name)
     try:
         rows = await app_state.vector_store.list_paper_metadata(collection)
-    except Exception:
+    except Exception as exc:
+        logger.warning("kb paper metadata listing failed", error=str(exc))
         rows = []
     titles = [r.get("title") or "" for r in rows[:sample_papers]]
 
@@ -582,6 +583,7 @@ async def ingest_dois_into_kb(
                     **pdf_kwargs,
                 )
             except Exception as e:
+                logger.warning("paper ingest failed", error=str(e))
                 failed.append({"doi": doi, "reason": str(e)})
                 dl["failed"] += 1
                 ck_state.record(doi, "failed", reason=str(e))

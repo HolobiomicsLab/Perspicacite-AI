@@ -308,7 +308,8 @@ async def build_kbs_from_zotero(
                 # Attach notes
                 try:
                     notes = await client.get_item_notes(it["key"])
-                except Exception:
+                except Exception as exc:
+                    logger.debug("zotero notes fetch failed", error=str(exc))
                     notes = []
                 if notes:
                     note_block = "\n\n# Notes\n\n" + "\n\n".join(notes)

@@ -106,7 +106,8 @@ class SessionStore:
                     "USING fts5(content, conversation_id UNINDEXED)"
                 )
                 self._fts_available = True
-            except Exception:
+            except Exception as exc:
+                logger.debug("fts table unavailable", error=str(exc))
                 self._fts_available = False
             if self._fts_available:
                 cur = await db.execute("SELECT count(*) FROM messages_fts")
@@ -304,7 +305,8 @@ class SessionStore:
                 else:
                     raise RuntimeError("fts unavailable")
                 rows = await cur.fetchall()
-            except Exception:
+            except Exception as exc:
+                logger.debug("fts search failed, falling back to like", error=str(exc))
                 like = f"%{q}%"
                 cur = await db.execute(
                     "SELECT conversation_id, substr(content, 1, 200) AS snippet "

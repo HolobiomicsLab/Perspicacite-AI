@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import json
 
+from perspicacite.logging import get_logger
+
+logger = get_logger("perspicacite.pipeline.external.notebooks")
+
 
 def strip_notebook_outputs(raw: str) -> str:
     """Remove cell outputs and execution counts from a Jupyter notebook JSON.
@@ -21,5 +25,6 @@ def strip_notebook_outputs(raw: str) -> str:
             cell["outputs"] = []
             cell["execution_count"] = None
         return json.dumps(nb, indent=1, ensure_ascii=False)
-    except Exception:
+    except Exception as exc:
+        logger.debug("notebook output stripping failed", error=str(exc))
         return raw

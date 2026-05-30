@@ -143,7 +143,8 @@ class ChromaVectorStore:
         # Get or create collection
         try:
             coll = self.client.get_collection(name=collection)
-        except Exception:
+        except Exception as exc:
+            logger.debug("get_collection failed, creating collection", error=str(exc))
             await self.create_collection(collection)
             coll = self.client.get_collection(name=collection)
 
@@ -317,7 +318,8 @@ class ChromaVectorStore:
                 "count": count,
                 "unique_papers": unique_papers,
             }
-        except Exception:
+        except Exception as exc:
+            logger.warning("collection stats failed", error=str(exc))
             return {"name": collection, "count": 0}
 
     async def paper_exists(self, collection: str, paper_id: str) -> bool:
@@ -677,7 +679,8 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
         try:
             parsed = _json.loads(raw)
             return list(parsed) if isinstance(parsed, list) else []
-        except Exception:
+        except Exception as exc:
+            logger.debug("metadata list json parse failed", error=str(exc))
             return []
 
     cs_raw = metadata.get("char_span")
@@ -686,7 +689,8 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
         try:
             a, b = cs_raw.split(",", 1)
             char_span = (int(a), int(b))
-        except Exception:
+        except Exception as exc:
+            logger.debug("char_span parse failed", error=str(exc))
             char_span = None
 
     return ChunkMetadata(

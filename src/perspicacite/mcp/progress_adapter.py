@@ -17,6 +17,10 @@ import json
 import time
 from typing import Any
 
+from perspicacite.logging import get_logger
+
+logger = get_logger("perspicacite.mcp.progress_adapter")
+
 
 class MCPProgressAdapter:
     """Forwards RAG telemetry events to ``ctx.report_progress``."""
@@ -102,6 +106,7 @@ class MCPProgressAdapter:
                 total=self._total,
                 message=msg,
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug("progress callback failed", error=str(exc))
             # Never let MCP transport hiccups break the RAG pipeline.
             return
