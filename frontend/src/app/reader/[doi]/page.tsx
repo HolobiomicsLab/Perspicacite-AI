@@ -24,6 +24,7 @@ export default function PaperReaderPage({
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-start flag before async load
     setLoading(true);
     papers
       .byDoi(doi)
@@ -62,6 +63,7 @@ export default function PaperReaderPage({
   useEffect(() => {
     if (!paper) return;
     const first = tabs.find((t) => t.available);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fall back to first available tab when current becomes unavailable
     if (first && !tabs.find((t) => t.id === tab)?.available) setTab(first.id);
   }, [paper, tab, tabs]);
 

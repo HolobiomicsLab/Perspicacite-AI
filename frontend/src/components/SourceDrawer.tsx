@@ -33,6 +33,7 @@ export function SourceDrawer({
   // already gave us.
   useEffect(() => {
     if (!source) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset drawer state when source cleared
       setDetail(null);
       setError(null);
       setTab("info");

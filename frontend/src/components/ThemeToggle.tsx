@@ -18,6 +18,7 @@ export function ThemeToggle() {
 
   useEffect(() => {
     const stored = (localStorage.getItem(STORAGE_KEY) as Theme) ?? "system";
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage theme hydration after mount (SSR-safe)
     setTheme(stored);
     applyTheme(stored);
   }, []);

@@ -90,6 +90,7 @@ export function ChatPanel({
   // default DBs, default KB). Composer toggles still override per-request.
   useEffect(() => {
     const p = loadPreferences();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time preferences hydration after mount (SSR-safe; values then user-overridable)
     setMode(p.defaultMode);
     setDatabases(p.defaultDatabases);
     setMaxPapers(p.maxPapers);
@@ -106,6 +107,7 @@ export function ChatPanel({
   useEffect(() => {
     conversationIdRef.current = initialConversationId;
     if (!initialConversationId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset turns when navigating to a fresh chat
       setTurns([]);
       return;
     }
@@ -136,6 +138,7 @@ export function ChatPanel({
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: do not re-fetch history when mode changes
   }, [initialConversationId]);
 
   // Auto-scroll only when a NEW turn is added — not on every token —
@@ -177,6 +180,11 @@ export function ChatPanel({
     return () => clearInterval(interval);
   }, [streaming]);
 
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    if (conversationIdRef.current) cancelChat(conversationIdRef.current);
+  }, []);
+
   // Esc to cancel during streaming.
   useEffect(() => {
     if (!streaming) return;
@@ -188,8 +196,7 @@ export function ChatPanel({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streaming]);
+  }, [streaming, cancel]);
 
   const submit = useCallback(
     async (queryArg?: string) => {
@@ -388,11 +395,6 @@ export function ChatPanel({
     },
     [draft, mode, streaming, databases, initialConversationId, kbName, maxPapers, hybridWeight],
   );
-
-  const cancel = useCallback(() => {
-    abortRef.current?.abort();
-    if (conversationIdRef.current) cancelChat(conversationIdRef.current);
-  }, []);
 
   const hasMessages = turns.length > 0;
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");

@@ -47,10 +47,12 @@ export default function KBListPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async mount fetch; setState post-await
     refresh();
   }, [refresh]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration after mount (SSR-safe; cannot run during render)
     setActiveKbName(loadPreferences().defaultKbName);
   }, []);
 

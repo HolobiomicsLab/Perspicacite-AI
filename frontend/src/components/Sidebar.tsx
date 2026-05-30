@@ -42,6 +42,7 @@ export function Sidebar() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch on mount/route change; setState post-await
     refresh();
   }, [refresh, pathname]);
 

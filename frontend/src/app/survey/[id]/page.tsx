@@ -52,6 +52,7 @@ export default function SurveyDetailPage({
 
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-start flag before async load
     setLoading(true);
     setError(null);
     survey

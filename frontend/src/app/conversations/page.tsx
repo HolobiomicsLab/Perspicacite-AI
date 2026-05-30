@@ -68,12 +68,14 @@ export default function ConversationsPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async mount/debounce fetch; setState runs post-await, not synchronously
     void loadList(debounced);
   }, [debounced, loadList]);
 
   // Fetch selected detail.
   useEffect(() => {
     if (!selectedId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing derived detail when selection cleared
       setDetail(null);
       setDetailError(null);
       return;

@@ -21,6 +21,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration after mount (SSR-safe)
     setPrefs(loadPreferences());
     health().then(setH).catch(() => setH(null));
     kbApi.list().then(setKbs).catch(() => setKbs([]));

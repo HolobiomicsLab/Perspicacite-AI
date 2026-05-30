@@ -40,6 +40,7 @@ export function ThinkingSteps({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- auto-open the trail when a run starts (one-way latch; user can re-collapse)
     if (running && steps.length > 0) setOpen(true);
   }, [running, steps.length]);
 

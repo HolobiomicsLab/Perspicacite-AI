@@ -51,6 +51,13 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [prevQuery, setPrevQuery] = useState(query);
+  if (query !== prevQuery) {
+    // Reset highlighted row when the query changes — done during render
+    // (React's recommended alternative to a setState-in-effect).
+    setPrevQuery(query);
+    setActive(0);
+  }
   const [chats, setChats] = useState<Conversation[]>([]);
   const [kbs, setKbs] = useState<KBSummary[]>([]);
 
@@ -111,10 +118,6 @@ export function CommandPalette() {
       .filter((i) => (i.label + " " + i.sub).toLowerCase().includes(q))
       .slice(0, 60);
   }, [chats, kbs, query]);
-
-  useEffect(() => {
-    setActive(0);
-  }, [query]);
 
   const choose = useCallback(
     (item: Item) => {

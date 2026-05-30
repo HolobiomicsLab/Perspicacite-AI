@@ -50,17 +50,23 @@ export function useTypewriter(target: string, charsPerFrame = 60): string {
 // DOM progressively, which lets the user follow the cascade.
 export function useStaggeredList<T>(items: T[], delayMs = 200): T[] {
   const [shownCount, setShownCount] = useState(items.length);
+  const [prevLen, setPrevLen] = useState(items.length);
   const lastTickRef = useRef<number>(0);
 
+  // Reset during render when the list shrank (turn restart) — avoids a
+  // setState-in-effect cascade.
+  if (items.length < prevLen) {
+    setPrevLen(items.length);
+    setShownCount(items.length);
+  } else if (items.length !== prevLen) {
+    setPrevLen(items.length);
+  }
+
   useEffect(() => {
-    // Reset if the list shrank (turn restart).
-    if (items.length < shownCount) {
-      setShownCount(items.length);
-      return;
-    }
     if (shownCount >= items.length) return;
     // Caller passed delayMs ≤ 0 — they want everything now.
     if (delayMs <= 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- caller opted out of staggering; reveal all items at once
       setShownCount(items.length);
       return;
     }

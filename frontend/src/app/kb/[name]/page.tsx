@@ -74,6 +74,7 @@ export default function KBDetailPage({
   }, [name]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async mount fetch; setState post-await
     refresh();
   }, [refresh]);
 

@@ -13,10 +13,7 @@ export function useLlmModelLabel(): string | null {
   const [llm, setLlm] = useState<string | null>(cached);
 
   useEffect(() => {
-    if (cached !== null) {
-      setLlm(cached);
-      return;
-    }
+    if (cached !== null) return; // already captured by useState(cached) initializer
     if (!inflight) {
       inflight = health()
         .then((h) => {
