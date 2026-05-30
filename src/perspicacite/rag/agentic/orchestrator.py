@@ -57,7 +57,8 @@ def _strip_html_if_needed(text: str) -> str:
         # Collapse runs of whitespace
         import re as _re
         return _re.sub(r"\s+", " ", cleaned).strip()
-    except Exception:
+    except Exception as exc:
+        logger.debug("html strip failed, returning raw text", error=str(exc))
         return text
 
 

@@ -297,7 +297,8 @@ async def _resolve_push_input(inp: dict, *, http_client: Any) -> tuple[dict, str
                     http_client=http_client,
                     enable_browser=enable_browser,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.debug("DOI resolution failed", error=str(exc))
                 resolved_doi = None
 
         promoted = {
@@ -593,7 +594,8 @@ async def search_literature(
                         )
                         if already:
                             continue
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug("dedup check failed", error=str(exc))
                         pass  # dedup is best-effort; don't drop on error
                 filtered_papers.append(paper)
             papers = filtered_papers
@@ -1659,7 +1661,8 @@ async def add_papers_to_kb(
                     if result.success and result.full_text:
                         return idx, result.full_text, True
                     return idx, None, False
-                except Exception:
+                except Exception as exc:
+                    logger.debug("full-text fetch failed", error=str(exc))
                     return idx, None, False
 
             if fetch_idxs:
@@ -2335,7 +2338,8 @@ async def screen_papers(
                                     "abstract": r.abstract or md.get("abstract") or "",
                                 }
                             )
-                        except Exception:
+                        except Exception as exc:
+                            logger.debug("screen_papers metadata fetch failed", error=str(exc))
                             items.append({"doi": doi, "title": doi, "abstract": ""})
                     else:
                         items.append({"title": c, "abstract": ""})
@@ -2494,6 +2498,7 @@ async def add_dois_to_kb(
                         **pdf_kwargs,
                     )
                 except Exception as e:
+                    logger.warning("add_dois_to_kb download failed", error=str(e))
                     failed.append({"doi": doi, "reason": str(e)})
                     dl["failed"] += 1
                     continue
@@ -2751,6 +2756,7 @@ async def push_to_zotero(
                 try:
                     paper, doi, url = await _resolve_push_input(inp, http_client=http_client)
                 except Exception as exc:
+                    logger.warning("push input resolution failed", error=str(exc))
                     route_err = str(exc)
                 if route_err is not None:
                     failed.append({"input": inp, "reason": route_err})
@@ -2846,6 +2852,7 @@ async def push_to_zotero(
                                 )
                                 entry["attached_pdf"] = bool(att_key)
                             except Exception as exc:
+                                logger.warning("push_to_zotero pdf attach failed", error=str(exc))
                                 entry["pdf_attach_error"] = str(exc)
                         elif pdf_path is None:
                             entry["attached_pdf"] = False
@@ -2898,6 +2905,7 @@ async def push_to_zotero(
                                 entry["transcript_chars"] = len(md)
                                 attached_transcript = True
                             except Exception as exc:
+                                logger.warning("push_to_zotero transcript attach failed", error=str(exc))
                                 entry["transcript_attach_error"] = str(exc)
 
                     # HTML attach: always for URL-route items, or as a
@@ -2935,6 +2943,7 @@ async def push_to_zotero(
                                 entry["html_source"] = html_attach.tier
                                 entry["html_chars"] = html_attach.char_count
                         except Exception as exc:
+                            logger.warning("push_to_zotero html attach failed", error=str(exc))
                             entry["html_attach_error"] = str(exc)
 
                     # Step 3 (optional): supplementary attachments from capsule.
@@ -2963,6 +2972,7 @@ async def push_to_zotero(
                                     if att_key:
                                         attached_si.append(f.name)
                                 except Exception as exc:
+                                    logger.warning("supplementary attach failed", error=str(exc))
                                     si_errors.append({"file": f.name, "error": str(exc)})
                         entry["attached_supplementary"] = attached_si
                         if si_errors:
@@ -2970,6 +2980,7 @@ async def push_to_zotero(
 
                     created.append(entry)
                 except Exception as exc:
+                    logger.warning("push_to_zotero item failed", error=str(exc))
                     failed.append({"input": inp, "reason": str(exc)})
 
         logger.info(
@@ -3091,6 +3102,7 @@ async def push_notes_to_zotero(
                 )
                 created.append({"note_key": note_key, "parent_key": item_key})
             except Exception as exc:
+                logger.warning("push_notes_to_zotero note create failed", error=str(exc))
                 failed.append({"input": entry, "reason": str(exc)})
 
         logger.info(
@@ -3163,6 +3175,7 @@ async def ingest_url(
         try:
             paper = await extract_url(url, http_client=http_client)
         except Exception as exc:
+            logger.warning("url extraction failed", error=str(exc))
             return _json_error(f"url_extraction_failed: {exc}")
 
         result: dict[str, Any] = {
@@ -3194,6 +3207,7 @@ async def ingest_url(
                 key = await zotero.create_item(paper)
                 result["zotero_key"] = key
             except Exception as exc:
+                logger.warning("zotero create_item failed", error=str(exc))
                 result["zotero_error"] = str(exc)
 
             if attach_html and result.get("zotero_key"):
@@ -3217,6 +3231,7 @@ async def ingest_url(
                         result["html_tier"] = cap.tier
                         result["html_chars"] = cap.char_count
                 except Exception as exc:
+                    logger.warning("zotero html attach failed", error=str(exc))
                     result["html_attach_error"] = str(exc)
 
         return _json_ok(result)
@@ -3313,6 +3328,7 @@ async def build_kbs_from_zotero(
             job_id="mcp-inline",
         )
     except Exception as exc:
+        logger.warning("build_kbs_from_zotero build failed", error=str(exc))
         return {"error": str(exc)}
     if reg.err is not None:
         return {"error": reg.err}
@@ -3469,6 +3485,7 @@ async def add_local_papers_to_kb(
                     parsed = await state.pdf_parser.parse(fp)
                     full_text = parsed.text or None
                 except Exception as exc:
+                    logger.warning("local doc PDF parse failed", error=str(exc))
                     results.append(
                         {"file": raw_file, "status": "error", "reason": f"PDF parse failed: {exc}"}
                     )
@@ -3477,6 +3494,7 @@ async def add_local_papers_to_kb(
             try:
                 full_text = fp.read_text(encoding="utf-8", errors="replace") or None
             except Exception as exc:
+                logger.warning("local doc text read failed", error=str(exc))
                 results.append(
                     {"file": raw_file, "status": "error", "reason": f"Read failed: {exc}"}
                 )
@@ -3513,6 +3531,7 @@ async def add_local_papers_to_kb(
             total_chunks += n
             results.append({"file": raw_file, "title": title, "status": "ok", "chunks": n})
         except Exception as exc:
+            logger.warning("local doc add_papers failed", error=str(exc))
             results.append(
                 {"file": raw_file, "title": title, "status": "error", "reason": str(exc)}
             )
@@ -3651,6 +3670,7 @@ async def ingest_urls_to_kb(
                     }
                 )
             except Exception as exc:
+                logger.warning("url fetch failed", error=str(exc))
                 results.append(
                     {
                         "url": url,
@@ -3683,6 +3703,7 @@ async def ingest_urls_to_kb(
                         url=original_url,
                     )
                 except Exception as exc:
+                    logger.warning("arxiv paper content fetch failed", error=str(exc))
                     for r in results:
                         if r.get("doi") == doi:
                             r["status"] = "arxiv_fetch_failed"
@@ -3841,6 +3862,7 @@ async def build_capsules_for_kb(
             counts[status] = counts.get(status, 0) + 1
             per_paper.append({"paper_id": paper.id, **res})
         except Exception as exc:
+            logger.warning("capsule build failed for paper", error=str(exc))
             counts["errored"] += 1
             per_paper.append({"paper_id": paper.id, "status": "errored", "error": str(exc)})
     return {"total": len(rows), **counts, "per_paper": per_paper}
@@ -4388,6 +4410,7 @@ async def delete_knowledge_base(
                 await state.vector_store.delete_collection(kb.collection_name)
                 collection_dropped = True
             except Exception as exc:
+                logger.warning("delete_kb collection drop failed", error=str(exc))
                 collection_error = str(exc)
         deleted = await state.session_store.delete_kb_metadata(name)
         logger.info(
@@ -4871,7 +4894,8 @@ def _encode_cursor(start: int) -> str:
 def _decode_cursor(cursor: str) -> int:
     try:
         return int(_base64.b64decode(cursor.encode()).decode())
-    except Exception:
+    except Exception as exc:
+        logger.debug("cursor decode failed", error=str(exc))
         return 0
 
 
@@ -5385,6 +5409,7 @@ async def zotero_ingest_collection_to_kb(
             job_id="mcp-inline",
         )
     except Exception as exc:
+        logger.warning("zotero_ingest_collection_to_kb build failed", error=str(exc))
         return {"error": str(exc)}
     if reg.err is not None:
         return {"error": reg.err}
@@ -5470,6 +5495,7 @@ async def web_search(
             optimize_query=bool(optimize_query),
         )
     except Exception as exc:
+        logger.warning("web_search failed", error=str(exc))
         return _json.dumps(
             {
                 "papers": [],
@@ -6548,7 +6574,8 @@ async def claim_graph_export(
                 raw_jld = store._g.serialize(format="json-ld")
                 try:
                     jld_list = json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
-                except Exception:
+                except Exception as exc:
+                    logger.debug("claim_graph_export json-ld parse failed", error=str(exc))
                     jld_list = []
                 if format == "jsonld":
                     result = jld_list
@@ -6595,7 +6622,8 @@ async def claim_graph_export(
                 raw_jld = g.serialize(format="json-ld")
                 try:
                     jld_list = json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
-                except Exception:
+                except Exception as exc:
+                    logger.debug("claim_graph_export json-ld parse failed", error=str(exc))
                     jld_list = []
                 if format == "jsonld":
                     result = jld_list
