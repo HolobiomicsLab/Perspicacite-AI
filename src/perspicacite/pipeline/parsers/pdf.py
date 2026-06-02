@@ -6,11 +6,14 @@ unavailable.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
+
+if TYPE_CHECKING:
+    from perspicacite.pipeline.parsers.docling_pdf import DoclingFigure, DoclingTable
 
 logger = get_logger("perspicacite.pipeline.parsers.pdf")
 
@@ -48,6 +51,9 @@ class ParsedContent:
     title: str | None = None
     sections: dict[str, str] | None = None
     metadata: dict[str, Any] | None = None
+    # R2 (docling): empty on the fitz path; populated when docling is used.
+    tables: list["DoclingTable"] = field(default_factory=list)
+    figures: list["DoclingFigure"] = field(default_factory=list)
 
 
 class PDFParser:
