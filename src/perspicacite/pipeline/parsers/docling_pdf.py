@@ -9,6 +9,7 @@ discards them. No dependency on ASB.
 from __future__ import annotations
 
 import importlib.util
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
@@ -74,6 +75,21 @@ def _page_of(item) -> int:
     if prov and getattr(prov[0], "page_no", None) is not None:
         return int(prov[0].page_no)
     return 1
+
+
+_FIG_LABEL_RE = re.compile(
+    r"^\s*((?:supplementary\s+)?(?:fig(?:ure|\.)?|scheme)\s+[A-Za-z]?\d+[A-Za-z]?)",
+    re.IGNORECASE,
+)
+
+
+def figure_to_multimodal_record(fig: DoclingFigure) -> dict:
+    """Map a DoclingFigure to the existing multimodal record shape
+    {kind, label, caption, content} used by parsers/multimodal.py. `content`
+    is left empty: docling supplies the image, not a semantic description."""
+    m = _FIG_LABEL_RE.match(fig.caption or "")
+    label = m.group(1).strip() if m else ""
+    return {"kind": "figure", "label": label, "caption": fig.caption or "", "content": ""}
 
 
 class DoclingPDFParser:

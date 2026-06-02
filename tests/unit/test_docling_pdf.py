@@ -81,3 +81,26 @@ class TestDoclingConverterConfig(unittest.TestCase):
         opts = conv.format_to_options[InputFormat.PDF].pipeline_options
         assert opts.generate_picture_images is True
         assert opts.images_scale >= 2.0
+
+
+class TestFigureToMultimodalShape(unittest.TestCase):
+    def test_figure_maps_to_kind_caption_content(self):
+        from perspicacite.pipeline.parsers.docling_pdf import (
+            DoclingFigure, figure_to_multimodal_record,
+        )
+        f = DoclingFigure(page=1, caption="Figure 2. Workflow.",
+                          width_px=400, height_px=300, image_bytes=b"x")
+        rec = figure_to_multimodal_record(f)
+        assert rec["kind"] == "figure"
+        assert rec["caption"] == "Figure 2. Workflow."
+        assert rec["label"] == "Figure 2"
+        assert "content" in rec
+
+    def test_figure_without_label_caption(self):
+        from perspicacite.pipeline.parsers.docling_pdf import (
+            DoclingFigure, figure_to_multimodal_record,
+        )
+        f = DoclingFigure(page=1, caption="An unlabeled panel", width_px=400, height_px=300)
+        rec = figure_to_multimodal_record(f)
+        assert rec["kind"] == "figure"
+        assert rec["label"] == ""
