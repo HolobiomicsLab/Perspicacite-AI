@@ -151,6 +151,18 @@ adapters = [
     "indicium-adapters-metabolomics>=0.1.0",
 ]
 
+# docling — high-fidelity PDF -> structured document conversion (layout,
+# tables, sections) for the content pipeline. Heavier than the other
+# extras (pulls in torch-backed models + pandas). Install only when
+# docling-based parsing is needed.
+#
+# Install with:
+#   uv sync --extra docling
+docling = [
+    "docling>=2.5,<3",
+    "pandas>=2.0,<3",
+]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 
