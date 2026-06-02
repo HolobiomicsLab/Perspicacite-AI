@@ -18,6 +18,7 @@ from perspicacite.pipeline.chunking_dispatch import (
     chunk_document,
     infer_content_type,
 )
+from perspicacite.pipeline.parsers.pdf import ParsedContent
 
 logger = get_logger("perspicacite.local_docs")
 
@@ -97,17 +98,20 @@ def _extract_year_from_text(text: str | None) -> int | None:
     return None
 
 
-async def _read_text(path: Path, content_type: str, pdf_parser) -> str | None:
+async def _read_text(
+    path: Path, content_type: str, pdf_parser, config=None
+) -> ParsedContent | None:
     if content_type == "pdf":
         if pdf_parser is None:
             return None
-        parsed = await pdf_parser.parse(path)
-        return parsed.text or None
+        parsed = await pdf_parser.parse(path, config=config)
+        return parsed if (parsed and parsed.text) else None
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
+        raw = path.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
         logger.warning("local_docs_read_failed", path=str(path), error=str(exc))
         return None
+    return ParsedContent(text=raw) if raw else None
 
 
 async def _ingest_files(
@@ -136,7 +140,8 @@ async def _ingest_files(
         for idx, fp in enumerate(files):
             content_type, language = infer_content_type(fp)
             paper = _paper_for_file(fp)
-            text = await _read_text(fp, content_type, app_state.pdf_parser)
+            parsed = await _read_text(fp, content_type, app_state.pdf_parser, kb_cfg)
+            text = parsed.text if parsed else None
             # F-13: opportunistic year extraction from the document body so
             # KB-stats by_year and recency-weighted retrieval have signal
             # for URL- / file-ingested sources.
@@ -158,6 +163,15 @@ async def _ingest_files(
                 text, paper,
                 content_type=content_type, language=language, config=kb_cfg,
             )
+            if parsed is not None and parsed.tables:
+                from perspicacite.pipeline.chunking_dispatch import (
+                    table_records_to_chunks,
+                )
+                chunks.extend(
+                    table_records_to_chunks(
+                        parsed.tables, paper, start_index=len(chunks)
+                    )
+                )
             # ChunkMetadata is frozen — recreate with source_file_path set,
             # plus optional external_metadata annotations (Cycle C).
             ext_parent = (external_metadata or {}).get("parent_paper_id")
