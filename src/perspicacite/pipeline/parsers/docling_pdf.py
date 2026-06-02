@@ -59,12 +59,21 @@ def docling_importable() -> bool:
 def _make_docling_converter():
     # Picture images MUST be enabled or get_image() returns None (zero figures).
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.pipeline_options import (
+        AcceleratorDevice,
+        AcceleratorOptions,
+        PdfPipelineOptions,
+    )
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
     opts = PdfPipelineOptions()
     opts.generate_picture_images = True
     opts.images_scale = 2.0
+    # Force CPU. On Apple Silicon docling auto-selects the MPS (Metal) backend,
+    # which raises "Cannot convert a MPS Tensor to float64 ... MPS doesn't
+    # support float64" and fails conversion on every page. CPU is portable and
+    # matches the documented R2 device intent.
+    opts.accelerator_options = AcceleratorOptions(device=AcceleratorDevice.CPU)
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
     )
