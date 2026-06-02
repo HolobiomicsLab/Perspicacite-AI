@@ -28,6 +28,7 @@
 
 - **Multi-database search** — Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP via SciLEx
 - **Unified content pipeline** — PMC JATS XML, arXiv HTML, OA PDFs, publisher APIs, and institutional-access via browser-cookie replay; quality-priority routing
+- **PDF extraction** — fast PyMuPDF text on every ingest, plus optional [docling](docs/pdf-extraction-docling.md) layout extraction for structured tables/figures (advanced, off by default)
 - **6 RAG modes** — Basic, Advanced, Profound, Agentic, Literature Survey, Contradiction; per-stage LLM tiering (Haiku routing/screening, Sonnet synthesis)
 - **Knowledge base management** — BibTeX import, DOI bulk-add, local document ingest, Zotero-collection import; async ingestion with SSE progress streaming
 - **Citation-graph expansion** — forward + backward snowball over OpenAlex; automatic Semantic Scholar fallback for arXiv-seeded papers (see [docs/concepts/citation-graph.md](docs/concepts/citation-graph.md))

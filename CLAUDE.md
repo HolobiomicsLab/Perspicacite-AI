@@ -96,6 +96,10 @@ The `AgenticOrchestrator` ([src/perspicacite/rag/agentic/orchestrator.py](src/pe
 
 Publisher API keys are passed as kwargs; missing keys skip that source gracefully. Check `content_type` in the result: `"structured"` > `"full_text"` > `"abstract"` > `"none"`.
 
+### PDF extraction backends
+
+PDF **text** is always extracted with PyMuPDF (`fitz`) → `pdfplumber` fallback (`pipeline/parsers/pdf.py`) — fast, default, on every ingest. **Structured tables + figures** are an opt-in advanced layer via **docling**, off by default (`knowledge_base.docling_extract_tables_figures`, guarded by `docling_max_pages` / `docling_timeout_s`; needs `uv sync --extra docling`). When enabled on the local-file ingest path, docling adds `content_type="table"` chunks on top of the fitz text; if docling is absent / oversized / times out, the text is unaffected. docling is CPU-bound (~min/page) and the MPS/GPU path is unusable on Apple Silicon. Full details: [docs/pdf-extraction-docling.md](docs/pdf-extraction-docling.md).
+
 ### Retrieval
 
 `ChromaVectorStore` ([src/perspicacite/retrieval/chroma_store.py](src/perspicacite/retrieval/chroma_store.py)) wraps ChromaDB. KB collections are named via `chroma_collection_name_for_kb()` from `models/kb.py`. The hybrid retriever ([src/perspicacite/retrieval/hybrid.py](src/perspicacite/retrieval/hybrid.py)) combines ChromaDB cosine scores with BM25Okapi scores; weights default to 0.5/0.5 but can optionally be determined by the LLM at query time. `MultiKBRetriever` ([src/perspicacite/retrieval/multi_kb.py](src/perspicacite/retrieval/multi_kb.py)) fans a query across multiple KB collections, merges by score, deduplicates by `paper_id`, and tags results with `kb_name`; use `check_embedding_compat(kb_metas)` to validate that all queried KBs share the same embedding model before retrieval.
