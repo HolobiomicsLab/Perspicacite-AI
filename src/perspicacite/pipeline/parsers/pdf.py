@@ -18,6 +18,16 @@ if TYPE_CHECKING:
 logger = get_logger("perspicacite.pipeline.parsers.pdf")
 
 
+def _docling_importable() -> bool:
+    from perspicacite.pipeline.parsers.docling_pdf import docling_importable
+    return docling_importable()
+
+
+def _docling_extract_worker(path: str):
+    from perspicacite.pipeline.parsers.docling_pdf import DoclingPDFParser
+    return DoclingPDFParser().extract(path)
+
+
 def _clean_text(text: str, threshold: float = 0.05) -> str:
     """Collapse excess newlines when they dominate the text.
 
@@ -174,10 +184,60 @@ class PDFParser:
         return "\n\n".join(all_text), sections, page_count
 
     # ------------------------------------------------------------------
+    # Backend selection + guards (R2 docling)
+    # ------------------------------------------------------------------
+
+    def _page_count(self, source) -> int:
+        fitz = self._get_fitz()
+        if fitz is None:
+            return 0
+        try:
+            doc = (
+                fitz.open(str(source))
+                if isinstance(source, (str, Path))
+                else fitz.open(stream=source, filetype="pdf")
+            )
+            n = doc.page_count
+            doc.close()
+            return n
+        except Exception:
+            return 0
+
+    def _select_backend(self, source, page_count: int, config) -> str:
+        backend = getattr(config, "pdf_backend", "auto")
+        if backend == "fitz":
+            return "fitz"
+        if backend == "docling":
+            return "docling"
+        # auto:
+        if not _docling_importable():
+            return "fitz"
+        if page_count > int(getattr(config, "docling_max_pages", 40)):
+            logger.warning("docling_fallback", reason="oversized", pages=page_count)
+            return "fitz"
+        return "docling"
+
+    def _run_docling_with_timeout(self, source, timeout_s: int):
+        """Run docling in a worker process; return ParsedContent or None on
+        timeout/error (caller falls back to fitz)."""
+        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import TimeoutError as FTimeout
+        try:
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_docling_extract_worker, str(source))
+                return fut.result(timeout=timeout_s)
+        except FTimeout:
+            logger.warning("docling_fallback", reason="timeout", path=str(source))
+            return None
+        except Exception as exc:
+            logger.warning("docling_fallback", reason="error", error=str(exc))
+            return None
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    async def parse(self, source: str | Path | bytes) -> ParsedContent:
+    async def parse(self, source: str | Path | bytes, config=None) -> ParsedContent:
         """
         Parse PDF and extract text.
 
@@ -187,6 +247,16 @@ class PDFParser:
         Returns:
             Parsed content with text and metadata
         """
+        if config is not None:
+            pages = self._page_count(source)
+            if self._select_backend(source, pages, config) == "docling":
+                pc = self._run_docling_with_timeout(
+                    source, int(getattr(config, "docling_timeout_s", 120))
+                )
+                if pc is not None:
+                    return pc
+                # else fall through to the fitz/pdfplumber path below
+
         # Try PyMuPDF first (better column handling)
         result = self._extract_with_fitz(source)
 
