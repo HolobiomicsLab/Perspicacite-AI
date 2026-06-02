@@ -92,6 +92,23 @@ class KnowledgeBaseConfig(BaseModel):
     embedding_model: str = "text-embedding-3-small"
     chunk_size: int = Field(default=1000, ge=100, le=10000)
     chunk_overlap: int = Field(default=200, ge=0, le=1000)
+    pdf_backend: Literal["auto", "docling", "fitz"] = Field(
+        default="auto",
+        description=(
+            "PDF extraction backend. 'fitz' = text-only PyMuPDF (incumbent); "
+            "'docling' = layout model with structured tables + figures "
+            "(requires the [docling] extra); 'auto' = docling when importable "
+            "and within docling_max_pages, else fitz."
+        ),
+    )
+    docling_max_pages: int = Field(
+        default=40, ge=1,
+        description="In 'auto', skip docling for PDFs with more pages than this (use fitz).",
+    )
+    docling_timeout_s: int = Field(
+        default=120, ge=1,
+        description="Per-document wall-clock cap for docling; on timeout, fall back to fitz.",
+    )
     chunking_method: Literal["token", "semantic", "agentic"] = "token"
     default_top_k: int = Field(default=10, ge=1, le=100)
     similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)

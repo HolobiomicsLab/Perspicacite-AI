@@ -219,3 +219,15 @@ def test_anchor_config_near_threshold_bounds():
     AnchorConfig(near_threshold=1.0)
     with pytest.raises(ValidationError):
         AnchorConfig(near_threshold=1.5)
+
+
+def test_pdf_backend_defaults_and_validation():
+    from perspicacite.config.schema import KnowledgeBaseConfig
+    kb = KnowledgeBaseConfig()
+    assert kb.pdf_backend == "auto"
+    assert kb.docling_max_pages == 40
+    assert kb.docling_timeout_s == 120
+    import pytest
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        KnowledgeBaseConfig(pdf_backend="banana")
