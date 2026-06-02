@@ -184,7 +184,7 @@ class PDFParser:
         return "\n\n".join(all_text), sections, page_count
 
     # ------------------------------------------------------------------
-    # Backend selection + guards (R2 docling)
+    # docling extras pass: guards + worker runner (R2 docling)
     # ------------------------------------------------------------------
 
     def _page_count(self, source) -> int:
@@ -203,19 +203,15 @@ class PDFParser:
         except Exception:
             return 0
 
-    def _select_backend(self, source, page_count: int, config) -> str:
-        backend = getattr(config, "pdf_backend", "auto")
-        if backend == "fitz":
-            return "fitz"
-        if backend == "docling":
-            return "docling"
-        # auto:
+    def _should_run_docling_extras(self, page_count: int, config) -> bool:
+        """True when docling tables/figures extraction should run: the advanced
+        flag is on, the [docling] extra is importable, and the PDF is within the
+        page-count cap. The wall-clock timeout is the runtime safety net."""
+        if not getattr(config, "docling_extract_tables_figures", False):
+            return False
         if not _docling_importable():
-            return "fitz"
-        if page_count > int(getattr(config, "docling_max_pages", 40)):
-            logger.warning("docling_fallback", reason="oversized", pages=page_count)
-            return "fitz"
-        return "docling"
+            return False
+        return page_count <= int(getattr(config, "docling_max_pages", 40))
 
     def _run_docling_with_timeout(self, source, timeout_s: int):
         """Run docling in a worker process; return ParsedContent or None on
@@ -237,7 +233,7 @@ class PDFParser:
     # Public API
     # ------------------------------------------------------------------
 
-    async def parse(self, source: str | Path | bytes, config=None) -> ParsedContent:
+    async def parse(self, source: str | Path | bytes) -> ParsedContent:
         """
         Parse PDF and extract text.
 
@@ -247,16 +243,6 @@ class PDFParser:
         Returns:
             Parsed content with text and metadata
         """
-        if config is not None:
-            pages = self._page_count(source)
-            if self._select_backend(source, pages, config) == "docling":
-                pc = self._run_docling_with_timeout(
-                    source, int(getattr(config, "docling_timeout_s", 120))
-                )
-                if pc is not None:
-                    return pc
-                # else fall through to the fitz/pdfplumber path below
-
         # Try PyMuPDF first (better column handling)
         result = self._extract_with_fitz(source)
 
