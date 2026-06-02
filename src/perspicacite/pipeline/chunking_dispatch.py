@@ -58,6 +58,30 @@ _LANG_TO_LC: dict[str, Language] = {
 }
 
 
+def table_records_to_chunks(tables, paper, start_index: int) -> list[DocumentChunk]:
+    """Turn ``DoclingTable`` records into retrievable chunks tagged ``content_type='table'``.
+
+    No-op when ``tables`` is empty (the fitz path), preserving today's behaviour.
+    """
+    chunks: list[DocumentChunk] = []
+    for i, t in enumerate(tables):
+        body = (f"{t.caption}\n\n{t.markdown}" if t.caption else t.markdown).strip()
+        idx = start_index + i
+        meta = ChunkMetadata(
+            paper_id=getattr(paper, "paper_id", "unknown"),
+            chunk_index=idx,
+            content_type="table",
+            page=getattr(t, "page", None),
+            title=getattr(paper, "title", None),
+            doi=getattr(paper, "doi", None),
+            year=getattr(paper, "year", None),
+        )
+        chunks.append(
+            DocumentChunk(id=f"{meta.paper_id}:table:{idx}", text=body, metadata=meta)
+        )
+    return chunks
+
+
 def infer_content_type(path: Path) -> tuple[str, str | None]:
     """Map file extension to ``(content_type, language)``.
 
