@@ -267,7 +267,7 @@ async def create_kb_from_bibtex(
     Raises FileExistsError if a KB with the same sanitized name already exists.
     """
     from perspicacite.config.schema import Config
-    from perspicacite.llm import LiteLLMEmbeddingProvider
+    from perspicacite.llm.embeddings import create_embedding_provider
     from perspicacite.memory.session_store import SessionStore
     from perspicacite.retrieval.chroma_store import ChromaVectorStore
 
@@ -292,8 +292,8 @@ async def create_kb_from_bibtex(
             f"No importable entries in {bib_path} (need title + supported @entry types)."
         )
 
-    embedding_provider = LiteLLMEmbeddingProvider(
-        model=config.knowledge_base.embedding_model,
+    embedding_provider = create_embedding_provider(
+        config.knowledge_base.embedding_model,
     )
     chroma_dir.mkdir(parents=True, exist_ok=True)
     session_db.parent.mkdir(parents=True, exist_ok=True)
@@ -400,7 +400,7 @@ async def add_bibtex_to_existing_kb(
     Raises FileNotFoundError if the KB doesn't exist.
     """
     from perspicacite.config.schema import Config
-    from perspicacite.llm import LiteLLMEmbeddingProvider
+    from perspicacite.llm.embeddings import create_embedding_provider
     from perspicacite.memory.session_store import SessionStore
     from perspicacite.retrieval.chroma_store import ChromaVectorStore
 
@@ -446,8 +446,8 @@ async def add_bibtex_to_existing_kb(
         )
 
     # Connect to existing KB collection
-    embedding_provider = LiteLLMEmbeddingProvider(
-        model=config.knowledge_base.embedding_model,
+    embedding_provider = create_embedding_provider(
+        config.knowledge_base.embedding_model,
     )
     vector_store = ChromaVectorStore(
         persist_dir=str(chroma_dir),
