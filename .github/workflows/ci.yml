@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install ruff
         run: pip install ruff
       - name: Ruff (report-only, --exit-zero)
@@ -29,21 +29,68 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install package + dev deps
         run: pip install -e ".[dev]"
 
       - name: Smoke + config tests (fast, mocked)
+        # Deselect tool-inventory params that can't run in CI:
+        #   * search_literature/web_search/general_web_search/search_skill_kb
+        #     invoke real external search APIs (SemanticScholar/web) — not
+        #     stubbed by the smoke MagicMock state, so they hit the network
+        #     and time out.
+        #   * build_claim_graph/claim_graph_status/query_claim_graph/
+        #     get_claim_figures/get_claim_links/claim_graph_export need the
+        #     local-only indicium KG stack (indicium-adapters is not on PyPI).
         run: |
           pytest tests/integration/ -m "smoke or config" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[search_literature]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[general_web_search]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[search_skill_kb]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[web_search]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[build_claim_graph]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[claim_graph_status]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[query_claim_graph]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[get_claim_figures]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[get_claim_links]" \
+            --deselect "tests/integration/test_mcp_smoke.py::test_tool_inventory[claim_graph_export]" \
             -v --timeout=30 --timeout-method=signal --no-header
 
       - name: Unit tests (safe subset)
+        # The indicium knowledge-graph layer depends on the local sibling
+        # packages indicium / indicium-adapters (see [tool.uv.sources]) plus
+        # rdflib; indicium-adapters is not published on PyPI, so these modules
+        # cannot import under CI's plain `pip install -e ".[dev]"`. Excluded
+        # here until CI provisions the KG stack.
+        #
+        # The trailing --deselect block additionally drops individual tests
+        # that cannot pass in CI without the KG stack or network:
+        #   * test_anchor.py (3) + test_claim_link_query.py — exercise the
+        #     verified path of anchor_claims(), which needs `indicium`'s
+        #     verify_quote kernel (absent here → everything "unverified").
+        #   * test_web_search_telemetry_sink / test_domain_aggregator — make
+        #     real SemanticScholar calls (429 / timeout); not `live`-marked.
         run: |
           pytest tests/unit/ \
             --ignore=tests/unit/test_embeddings.py \
             --ignore=tests/unit/test_capsule_builder_orchestrator.py \
             --ignore=tests/unit/test_fetch_doi_lookups.py \
+            --ignore=tests/unit/test_anchor_builder.py \
+            --ignore=tests/unit/test_builder.py \
+            --ignore=tests/unit/test_claim_graph_store.py \
+            --ignore=tests/unit/test_claims_extraction.py \
+            --ignore=tests/unit/test_claims_validation.py \
+            --ignore=tests/unit/test_extraction_anchor.py \
+            --ignore=tests/unit/test_invalidation.py \
+            --ignore=tests/unit/test_jats_figure_extraction.py \
+            --ignore=tests/unit/test_mcp_claim_graph_query_export.py \
+            --ignore=tests/unit/test_mcp_export_astra.py \
+            --ignore=tests/unit/test_mcp_extract_claims.py \
+            --ignore=tests/unit/test_mcp_generate_report_indicia.py \
+            --ignore=tests/unit/test_queries.py \
+            --ignore=tests/unit/test_queries_traversal.py \
+            --ignore=tests/unit/test_reasoning_mode_evidence_graded.py \
+            --ignore=tests/unit/test_reasoning_mode_graph.py \
             --deselect tests/unit/test_capsule_reader_ingest.py::test_ingest_chunks_blocks_jsonl \
             --deselect tests/unit/test_capsule_reader_ingest.py::test_ingest_propagates_resource_ids \
             --deselect tests/unit/test_capsule_reader_ingest.py::test_ingest_finalize_false_skips_finish \
@@ -56,6 +103,12 @@ jobs:
             --deselect tests/unit/test_provenance_engine_wiring.py::test_mcp_generate_report_wires_provenance_and_message_id \
             --deselect tests/unit/test_zotero_ingest_worker.py::test_worker_dedups_by_doi_and_attaches_notes \
             --deselect tests/unit/test_zotero_ingest_worker.py::test_worker_skips_existing_doi \
+            --deselect tests/unit/test_anchor.py::test_positional_bug_regression_binds_to_content_match \
+            --deselect tests/unit/test_anchor.py::test_strict_drops_unverified_failopen_keeps \
+            --deselect tests/unit/test_anchor.py::test_audit_sidecar_written_with_divergent_flag \
+            --deselect tests/unit/test_claim_link_query.py::test_get_claim_links_mcp_tool_response_structure \
+            --deselect tests/unit/test_domain_aggregator.py::test_retry_counts_as_one_circuit_failure \
+            --deselect tests/unit/test_web_search_telemetry_sink.py::test_list_telemetry_sink_receives_events \
             --timeout=15 --timeout-method=signal \
             --no-header --tb=line \
             --cov=src/perspicacite --cov-report=xml --cov-report=term-missing \
