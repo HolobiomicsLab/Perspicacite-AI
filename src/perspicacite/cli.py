@@ -218,7 +218,7 @@ def create_kb(
         from perspicacite.web.state import AppState
 
         async def _create_empty() -> dict[str, Any]:
-            state = AppState()
+            state = AppState(config_path=ctx.obj.get("config_path"))
             await state.initialize()
             existing = await state.session_store.get_kb_metadata(name)
             if existing is not None:
@@ -388,7 +388,7 @@ def list_kb(ctx: click.Context, as_json: bool) -> None:
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         kbs = await state.session_store.list_kbs()
         if as_json:
@@ -474,7 +474,7 @@ def query(
     click.echo(f"   Provider: {provider}")
 
     # Run async query
-    asyncio.run(_run_query(config, query, kb, mode, provider, model))
+    asyncio.run(_run_query(config, ctx.obj.get("config_path"), query, kb, mode, provider, model))
 
 
 @cli.command("ingest-local")
@@ -608,6 +608,7 @@ async def _add_bibtex_to_existing_kb(
 
 async def _run_query(
     config: Any,
+    config_path: str | None,
     query: str,
     kb: str,
     mode: str,
@@ -618,7 +619,7 @@ async def _run_query(
     from perspicacite.models.rag import RAGMode, RAGRequest
     from perspicacite.web.state import AppState
 
-    state = AppState()
+    state = AppState(config_path=config_path)
     await state.initialize()
 
     # Verify the KB exists so we fail fast with a clear message instead
@@ -879,7 +880,7 @@ def build_capsule_cmd(ctx, paper_id: str, kb: str, force: bool) -> None:
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         kb_meta = await state.session_store.get_kb_metadata(kb)
         if kb_meta is None:
@@ -919,7 +920,7 @@ def build_capsules_cmd(ctx, kb_name: str, force: bool) -> None:
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         kb_meta = await state.session_store.get_kb_metadata(kb_name)
         if kb_meta is None:
@@ -976,7 +977,7 @@ def fetch_resources_cmd(
     )
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         kb_meta = await state.session_store.get_kb_metadata(kb_name)
         if kb_meta is None:
@@ -1225,7 +1226,7 @@ def search_to_kb_cmd(
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         flt = SearchFilter(
             min_year=min_year,
@@ -1335,7 +1336,7 @@ def delete_kb_cmd(
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         kb = await state.session_store.get_kb_metadata(name)
         if not kb:
@@ -1435,7 +1436,7 @@ def expand_kb_cmd(
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         flt = SearchFilter(
             min_year=min_year, max_year=max_year,
@@ -1584,7 +1585,7 @@ def export_kb_cmd(
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
         report = await export_kb(
             app_state=state,
@@ -1733,11 +1734,11 @@ def check_cookies_cmd(
         sys.exit(1)
 
 
-async def _build_app_state_for_cli(config: Any) -> Any:
+async def _build_app_state_for_cli(config_path: str | None = None) -> Any:
     """Test seam: thin wrapper so unit tests can patch this without
     constructing the full AppState."""
     from perspicacite.web.state import AppState
-    state = AppState()
+    state = AppState(config_path=config_path)
     await state.initialize()
     return state
 
@@ -1787,7 +1788,7 @@ def ingest_asb_run(
     import asyncio
 
     async def _run() -> dict:
-        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config_path"))
         try:
             return await ingest_asb_run_pipeline(
                 asb_run_dir=asb_run_dir,
@@ -1891,7 +1892,7 @@ def ingest_github_repo_cmd(
         content = None
 
     async def _run() -> IngestSummary:
-        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config_path"))
         try:
             return await _ingest_github_repo(
                 url=url,
@@ -1952,7 +1953,7 @@ def ingest_skill_bundle_cmd(
         source_arg = source
 
     async def _run() -> IngestSummary:
-        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config_path"))
         try:
             return await _ingest_skill_bundle(
                 source=source_arg,
@@ -2011,7 +2012,7 @@ def ingest_skill_bundles_cmd(
     import asyncio
 
     async def _run() -> list[IngestSummary]:
-        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config_path"))
         try:
             return await _ingest_skill_bundles_batch(
                 root=Path(source_dir),
