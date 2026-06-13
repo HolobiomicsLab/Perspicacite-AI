@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Dev hub & repo constellation
+
+Dev artifacts for this project live in the **`Perspicacite-ai_dev`** hub repo
+(`HolobiomicsLab/Perspicacite-ai_dev`, `~/git/Perspicacite-ai_dev`, private):
+specs/plans/handoffs, agent config (incl. the `perspicacite-mcp` skill), dev scripts, results,
+and git-ignored secrets. Read its **`MANIFEST.yaml`** for the full constellation — code / dev /
+kb (`Perspicacite-ai_kb` on CNRS GitLab-LFS: chroma_db + data) / manuscript — with remotes, local
+paths, sync methods, and cross-project relations (consumed by ASB, Scriptorium, Consilium; exports
+indicium). Run the hub's `bootstrap.sh` to redeploy on a new machine. Specs/plans are kept
+**uncommitted here** by policy.
+
 ## Project Purpose
 
 Perspicacité is a local-first, AI-powered scientific literature research assistant. It exposes a FastAPI web app, a REST API, and an MCP server (40+ tools) that can be consumed by external agents (e.g., Mimosa-AI). Users query academic databases, build personal knowledge bases (KBs) from BibTeX or DOIs, and answer research questions using one of six RAG modes.
