@@ -119,7 +119,7 @@ def test_config_reranker_model_default(tmp_path):
     cfg_path = tmp_path / "c.yml"
     cfg_path.write_text("server:\n  port: 5468\n")
     cfg = load_config(str(cfg_path))
-    assert cfg.rag_modes.reranker_model == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    assert cfg.rag_modes.reranker_model == "cross-encoder/ms-marco-MiniLM-L-12-v2"
 
 
 def test_config_map_reduce_max_papers_default(tmp_path):

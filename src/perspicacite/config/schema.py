@@ -751,7 +751,7 @@ class RAGModesConfig(BaseModel):
     """RAG mode configurations for benchmark comparison."""
 
     reranker_model: str = Field(
-        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        default="cross-encoder/ms-marco-MiniLM-L-12-v2",
         description="HuggingFace cross-encoder model used for reranking",
     )
     reranker_enabled: bool = Field(

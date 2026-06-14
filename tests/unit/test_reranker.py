@@ -10,4 +10,4 @@ def test_reranker_uses_explicit_model_name():
 
 def test_reranker_default_model_name():
     r = CrossEncoderReranker()
-    assert r.model_name == "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    assert r.model_name == "cross-encoder/ms-marco-MiniLM-L-12-v2"

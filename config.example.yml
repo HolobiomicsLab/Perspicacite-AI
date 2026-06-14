@@ -64,7 +64,10 @@ llm:
 # =============================================================================
 
 knowledge_base:
-  embedding_model: "text-embedding-3-small"
+  # Open, local default: reproduces the published SciFact retrieval stack and needs
+  # no API key (routed to sentence-transformers). Swap for any HF or hosted embedder
+  # (e.g. SPECTER2, BGE-M3, S-PubMedBERT, or text-embedding-3-small).
+  embedding_model: "all-MiniLM-L6-v2"
   chunk_size: 1000
   chunk_overlap: 200
   # Advanced: extract structured tables + figures with docling, IN ADDITION to
@@ -124,7 +127,9 @@ database:
 rag_modes:
   # Cross-encoder model used for result reranking across all RAG modes.
   # Any HuggingFace cross-encoder compatible with sentence-transformers works here.
-  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  # L-12 is the published default: paired with the local all-MiniLM-L6-v2 embedder a
+  # cross-encoder adds ~+10pp NDCG@10 on SciFact dev (docs/embedding_reranker_policy.md).
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-12-v2"
 
   basic:
     max_iterations: 1
