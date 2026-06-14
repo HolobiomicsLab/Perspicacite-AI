@@ -19,7 +19,7 @@
 # 2. Ensure the gateway is running:  `openclaw onboard --install-daemon`
 # 3. Verify:  `openclaw agent --message "say hi"`
 # 4. Use this file as your config:
-#       perspicacite -c config.openclaw.example.yml serve
+#       perspicacite -c configs/llm/openclaw.yml serve
 #
 # Same caveats as the other agent-CLI presets: no prompt caching, no
 # per-call temperature/max_tokens, output buffered (no streaming).

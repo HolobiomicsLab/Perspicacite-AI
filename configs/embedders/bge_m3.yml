@@ -20,7 +20,7 @@
 # Full benchmark: perspicacite-eval/docs/retrieval_benchmark_2026_05_26.md
 #
 # Launch:
-#   uv run perspicacite -c config_bge_m3.yml serve
+#   uv run perspicacite -c configs/embedders/bge_m3.yml serve
 
 version: "2.0.0"
 config_name: "bge-m3-port8004"
@@ -69,7 +69,7 @@ rag_modes:
   # bge-reranker-v2-m3: domain-aware pair for bge-m3 embeddings.
   # Key finding: bge-reranker HELPS weaker/domain embeddings (bge-m3, MiniLM, PubMedBERT)
   # but HURTS strong embeddings (OpenAI 3-large: −2.1 pp vs ms-marco).
-  # Do not swap to ms-marco in this config — use config_openai_large.yml for OpenAI.
+  # Do not swap to ms-marco in this config — use configs/embedders/openai_large.yml for OpenAI.
   reranker_model: "BAAI/bge-reranker-v2-m3"
 
   basic:

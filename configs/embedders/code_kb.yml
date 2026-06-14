@@ -1,33 +1,35 @@
-# Perspicacité config — OpenAI text-embedding-3-large — RECOMMENDED when cross-domain generalisation matters
+# Perspicacité config — CODE knowledge base (Mistral codestral-embed via OpenRouter)
 #
-# text-embedding-3-large is the recommended embedding when the KB spans multiple domains
-# or when the best possible generalisation across query types is needed.
+# Use this for a KB of source code / technical docs. codestral-embed is a
+# code-specialised embedding (1536-dim) that captures code semantics far better
+# than general-text embedders.
 #
-# Benchmark (SciFact biomedical, 188 dev claims):
-#   NDCG@10 = 0.872  R@5 = 0.951  MRR = 0.855  (vector + ms-marco-MiniLM-L-12-v2)
+# Provider: OpenRouter (OpenAI-compatible /embeddings endpoint). Reached through
+# the existing LiteLLMEmbeddingProvider via the "openrouter/" model prefix and an
+# OPENROUTER_API_KEY in .env — the same key used for LLM routing. Verified working
+# 2026-05-28 (dim=1536).
 #
-# Cross-domain benchmark (NFCorpus nutrition, 323 queries):
-#   NDCG@10 = 0.327  vs BGE-M3 = 0.249  vs MiniLM = 0.242  ← OpenAI wins by +7.8 pp
+# RERANKER DISABLED (reranker_enabled: false). Strong instruction-tuned embedders
+# already deliver a near-perfect top-20; a general cross-encoder reorders that list
+# and DEMOTES correct hits. Measured on Qwen3-8B (SciFact dev): ms-marco CE −1.4pp,
+# bge-reranker-v2-m3 −1.0pp; the same effect was previously seen on OpenAI 3-large
+# (bge-reranker −2.1pp). Rule: weak local embedder → rerank ON; strong external
+# embedder → rerank OFF. See docs/embedding_reranker_policy.md.
 #
-# Why ms-marco reranker (NOT bge-reranker) for OpenAI?
-#   Critical finding: bge-reranker-v2-m3 HURTS OpenAI 3-large by −2.1 pp NDCG.
-#   OpenAI's 3072-dim embeddings already deliver uniformly high-quality top-20;
-#   bge-reranker's aggressive reranking introduces noise. ms-marco is conservative.
+# similarity_threshold: 0.0 — API embeddings score lower than MiniLM; the default
+# 0.7 would filter out nearly everything.
 #
-# Costs: ~$0.13 / 1M tokens for embedding (new docs only; queries are cheap).
-# HyDE: do NOT enable — confirmed −6.2 pp NDCG vs plain vector on SciFact.
-#
-# Full benchmark: perspicacite-eval/docs/retrieval_benchmark_2026_05_26.md
+# Costs: codestral-embed billed per OpenRouter pricing (new docs only; queries cheap).
 #
 # Launch:
-#   OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c config_openai_large.yml serve
+#   OPENROUTER_API_KEY=$OPENROUTER_API_KEY uv run perspicacite -c configs/embedders/code_kb.yml serve
 
 version: "2.0.0"
-config_name: "openai-large-port8002"
+config_name: "code-kb-codestral-port8003"
 
 server:
   host: "0.0.0.0"
-  port: 8002
+  port: 8003
   reload: false
 
 llm:
@@ -64,32 +66,39 @@ llm:
     chat_history_turns: 10
 
 knowledge_base:
-  embedding_model: "text-embedding-3-large"
+  embedding_model: "openrouter/mistralai/codestral-embed-2505"   # 1536-dim, code-specialised
   chunk_size: 1000
   chunk_overlap: 200
   chunking_method: "token"
   default_top_k: 10
-  similarity_threshold: 0.0
+  similarity_threshold: 0.0          # API embeddings score lower; don't over-filter
   use_two_pass: true
+  code_language_aware: true          # language-aware chunking for source files
 
 database:
   path: "~/.local/share/perspicacite/memory.db"
   chroma_path: "./chroma_db"
 
 rag_modes:
-  # ms-marco-MiniLM-L-12-v2: the correct reranker for OpenAI 3-large.
-  # bge-reranker-v2-m3 was tested and HURTS OpenAI (−2.1 pp NDCG, −3.6 pp R@5).
-  # ms-marco is conservative — preserves OpenAI's already-excellent embedding order.
-  # Rule: strong embedding → conservative reranker. Weak embedding → aggressive reranker.
-  reranker_model: "cross-encoder/ms-marco-MiniLM-L-12-v2"
+  # Reranking DISABLED for this strong code embedder. A general cross-encoder
+  # demotes correct hits from an already-near-perfect embedding top-20.
+  # See docs/embedding_reranker_policy.md §3 for the measured evidence.
+  reranker_enabled: false
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-12-v2"   # ignored while disabled
 
+  # Hybrid (vector + BM25) DISABLED for this strong embedder. BM25's value
+  # shrinks as the embedder strengthens: on Qwen3-8B (SciFact dev) a light
+  # BM25 blend was only +0.6pp, while the balanced/LLM-chosen weights that
+  # help MiniLM (~+3pp) HURT here (−1.4pp at 0.5, −3.7pp at 0.75 BM25). Advanced
+  # mode lets the LLM pick the weight, which can land in the harmful zone — so
+  # pure vector is the safe choice. See docs/embedding_reranker_policy.md §4.
   basic:
     max_iterations: 1
-    use_hybrid: true
+    use_hybrid: false
 
   advanced:
     max_iterations: 2
-    use_hybrid: true
+    use_hybrid: false
     use_wrrf: true
 
 scilex:
@@ -142,7 +151,7 @@ google_scholar:
 mcp:
   enabled: true
   host: "0.0.0.0"
-  port: 8002
+  port: 8003
   transport: "streamable-http"
 
 auth:

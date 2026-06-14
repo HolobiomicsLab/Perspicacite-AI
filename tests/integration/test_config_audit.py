@@ -1,6 +1,6 @@
 """Config loading audit — Wave 1.4 of framework-hardening roadmap.
 
-Verifies every config.*.example.yml at repo root parses cleanly,
+Verifies every shipped preset (config.example.yml + configs/) parses cleanly,
 stage-resolution fall-through behaves correctly, backward compat
 is preserved, and the new agent_cli LLMProviderConfig fields parse.
 
@@ -78,15 +78,16 @@ def _wrap_config(llm: LLMConfig) -> object:
 # ---------------------------------------------------------------------------
 
 _YAML_PRESETS = sorted(
-    glob.glob(str(REPO_ROOT / "config.*.example.yml"))
-    + glob.glob(str(REPO_ROOT / "config.example.yml"))
+    glob.glob(str(REPO_ROOT / "config.example.yml"))
+    + glob.glob(str(REPO_ROOT / "configs" / "llm" / "*.yml"))
+    + glob.glob(str(REPO_ROOT / "configs" / "embedders" / "*.yml"))
 )
 
 
 @pytest.mark.config
 @pytest.mark.parametrize("yaml_path", _YAML_PRESETS, ids=lambda p: Path(p).name)
 def test_yaml_preset_parses(yaml_path: str) -> None:
-    """Every config.*.example.yml parses cleanly into Config."""
+    """Every shipped preset (config.example.yml + configs/llm + configs/embedders) parses cleanly into Config."""
     with open(yaml_path) as fh:
         data = yaml.safe_load(fh)
     assert isinstance(data, dict), f"{yaml_path} did not parse to a dict"

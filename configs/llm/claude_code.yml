@@ -9,7 +9,7 @@
 # 2. Sign in (one-time):  `claude login`
 # 3. Verify the CLI works:  `echo "say hi" | claude -p --model haiku`
 # 4. Use this file as your config:
-#       perspicacite -c config.claude_code.example.yml serve
+#       perspicacite -c configs/llm/claude_code.yml serve
 #
 # **Caveat — shared rate limits.** Perspicacité shares your
 # interactive Claude Code rate window. A heavy ingest can freeze

@@ -9,7 +9,7 @@
 #   3. Add to your shell profile (~/.zshrc or ~/.bashrc):
 #        export OPENROUTER_API_KEY="sk-or-v1-..."
 #   4. Copy this file:
-#        cp config.example.openrouter-free.yml config.yml
+#        cp configs/llm/openrouter-free.yml config.yml
 #   5. Start the server:
 #        source ~/.zshrc && uv run perspicacite -c config.yml serve
 #

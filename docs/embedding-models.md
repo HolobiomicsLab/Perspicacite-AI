@@ -12,8 +12,8 @@ Full benchmark data: [perspicacite-eval/docs/retrieval_benchmark_2026_05_26.md](
 | Config file | Embedding | Dims | Reranker | NDCG@10 (SciFact) | Use when |
 |---|---|---|---|---|---|
 | `config.yml` | all-MiniLM-L6-v2 | 384 | ms-marco-MiniLM-L-12-v2 | **0.851** | Dev, resource-constrained, fast setup |
-| `config_bge_m3.yml` | BAAI/bge-m3 | 1024 | bge-reranker-v2-m3 | **0.879** | Production biomedical (recommended) |
-| `config_openai_large.yml` | text-embedding-3-large | 3072 | ms-marco-MiniLM-L-12-v2 | **0.872** | Cross-domain, best generalisation |
+| `configs/embedders/bge_m3.yml` | BAAI/bge-m3 | 1024 | bge-reranker-v2-m3 | **0.879** | Production biomedical (recommended) |
+| `configs/embedders/openai_large.yml` | text-embedding-3-large | 3072 | ms-marco-MiniLM-L-12-v2 | **0.872** | Cross-domain, best generalisation |
 
 ---
 

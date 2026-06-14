@@ -1,25 +1,24 @@
-# Perspicacité config — microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext on port 8006
-# Base BiomedBERT trained on PubMed abstracts + full text (768-dim, BERT backbone).
-# NOT fine-tuned for retrieval — uses mean pooling from base model.
-# Trained on full-text PubMed unlike S-PubMedBert-MS-MARCO (abstracts only).
+# Perspicacité config — pritamdeka/S-PubMedBert-MS-MARCO on port 8005
+# PubMedBERT fine-tuned on MS-MARCO for retrieval (768-dim, BERT backbone).
+# Domain-specific for biomedical text (PubMed pre-training).
 # See perspicacite-eval docs/ for results.
 #
 # Key overrides vs config.yml:
-#   server.port:                       8006
-#   knowledge_base.embedding_model:    microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext (768-dim)
+#   server.port:                       8005
+#   knowledge_base.embedding_model:    pritamdeka/S-PubMedBert-MS-MARCO (768-dim)
 #   knowledge_base.similarity_threshold: 0.0
 #
 # No API key required (fully local via sentence-transformers).
 #
 # Launch:
-#   uv run perspicacite -c config_biomedbert.yml serve
+#   uv run perspicacite -c configs/embedders/pubmedbert.yml serve
 
 version: "2.0.0"
-config_name: "biomedbert-port8006"
+config_name: "pubmedbert-port8005"
 
 server:
   host: "0.0.0.0"
-  port: 8006
+  port: 8005
   reload: false
 
 llm:
@@ -42,7 +41,7 @@ llm:
     chat_history_turns: 10
 
 knowledge_base:
-  embedding_model: "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext"
+  embedding_model: "pritamdeka/S-PubMedBert-MS-MARCO"
   chunk_size: 1000
   chunk_overlap: 200
   chunking_method: "token"
@@ -72,7 +71,7 @@ scilex:
 mcp:
   enabled: true
   host: "0.0.0.0"
-  port: 8006
+  port: 8005
   transport: "streamable-http"
 
 auth:

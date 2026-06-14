@@ -82,7 +82,7 @@ llm:
 
 ## Tier 2 — OpenAI: best accuracy, cloud cost
 
-**Config file:** `config_openai_large.yml`
+**Config file:** `configs/embedders/openai_large.yml`
 
 ### Model
 `text-embedding-3-large` — 3 072-dim, OpenAI API, ~$0.13 per million tokens.
@@ -102,7 +102,7 @@ Gain over MiniLM baseline: **+12 pp NDCG@10 (no rerank), +2 pp with CE reranker*
 export OPENAI_API_KEY="sk-..."
 
 # Using the dedicated config (port 8002 by default)
-uv run perspicacite -c config_openai_large.yml serve
+uv run perspicacite -c configs/embedders/openai_large.yml serve
 ```
 
 Key settings:
@@ -125,7 +125,7 @@ You can run both servers simultaneously (they share `chroma_db/` but use differe
 uv run perspicacite -c config.yml serve
 
 # Terminal 2 — OpenAI on :8002
-OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c config_openai_large.yml serve
+OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c configs/embedders/openai_large.yml serve
 ```
 
 Each server uses its own KB (`scifact_abstracts` for MiniLM, `scifact_openai_large`
@@ -136,7 +136,7 @@ for OpenAI) and embeds queries with the matching model. See
 
 ## Tier 3a — Biomedical local: best life-science accuracy
 
-**Config file:** `config_pubmedbert.yml`
+**Config file:** `configs/embedders/pubmedbert.yml`
 
 ### Model
 `pritamdeka/S-PubMedBert-MS-MARCO` — 768-dim, PubMedBERT fine-tuned for retrieval on
@@ -157,14 +157,14 @@ domain-adapted retrieval model with a powerful cross-encoder reranker.
 ### Launch
 
 ```bash
-uv run perspicacite -c config_pubmedbert.yml serve
+uv run perspicacite -c configs/embedders/pubmedbert.yml serve
 # Model auto-downloads from HuggingFace on first run (~440 MB)
 ```
 
 For offline environments (after first download):
 ```bash
 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
-    uv run perspicacite -c config_pubmedbert.yml serve
+    uv run perspicacite -c configs/embedders/pubmedbert.yml serve
 ```
 
 Key settings:
@@ -187,7 +187,7 @@ rag_modes:
 
 ## Tier 3b — General local SOTA
 
-**Config file:** `config_bge_m3.yml`
+**Config file:** `configs/embedders/bge_m3.yml`
 
 ### Model
 `BAAI/bge-m3` — 1 024-dim, multilingual MTEB SOTA retrieval model. ~2.3 GB.
@@ -208,7 +208,7 @@ knowledge_base:
 GPU launch:
 ```bash
 # If you have a CUDA GPU, sentence-transformers will use it automatically
-uv run perspicacite -c config_bge_m3.yml serve
+uv run perspicacite -c configs/embedders/bge_m3.yml serve
 ```
 
 ---
@@ -227,11 +227,11 @@ uv run perspicacite -c config.yml serve &
 
 # Port 8001 — SPECTER2 (scientific citation context)
 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
-    uv run perspicacite -c config_specter2.yml serve &
+    uv run perspicacite -c configs/embedders/specter2.yml serve &
 
 # Port 8002 — OpenAI 3-large (highest accuracy, paid)
 OPENAI_API_KEY=$OPENAI_API_KEY \
-    uv run perspicacite -c config_openai_large.yml serve &
+    uv run perspicacite -c configs/embedders/openai_large.yml serve &
 ```
 
 ### Ingest the same corpus into each KB
@@ -338,7 +338,7 @@ llm:
       timeout: 300    # 14B can be slow for long answers
 ```
 
-See `config_qwen3_14b.yml` for a complete example.
+See `configs/embedders/qwen3_14b.yml` for a complete example.
 
 **Thinking mode (Qwen3):** Qwen3 supports `/think` and `/no_think` tokens. The server
 inserts these based on mode complexity. Set `QWEN3_NO_THINK=1` env var to always
@@ -364,10 +364,10 @@ RAM: ~300 MB. Works on any machine with internet for LLM calls.
 ```bash
 # Port 8005 — PubMedBERT + bge-reranker + local Qwen3
 # First run: downloads ~2.6 GB of models
-uv run perspicacite -c config_pubmedbert.yml serve
+uv run perspicacite -c configs/embedders/pubmedbert.yml serve
 
 # With local LLM (Ollama):
-# Edit config_pubmedbert.yml: llm.default_provider = "ollama", default_model = "qwen3:14b"
+# Edit configs/embedders/pubmedbert.yml: llm.default_provider = "ollama", default_model = "qwen3:14b"
 ```
 
 RAM: ~3 GB (PubMedBERT + bge-reranker + Qwen3 8B) or ~11 GB (Qwen3 14B).
@@ -383,8 +383,8 @@ share the same server.
 ```bash
 # OpenAI 3-large + bge-reranker + Claude Opus
 OPENAI_API_KEY=$OPENAI_API_KEY ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-    uv run perspicacite -c config_openai_large.yml serve
-# Edit config_openai_large.yml: 
+    uv run perspicacite -c configs/embedders/openai_large.yml serve
+# Edit configs/embedders/openai_large.yml: 
 #   llm.default_provider = "anthropic"
 #   llm.default_model = "claude-opus-4-5"
 #   rag_modes.reranker_model = "BAAI/bge-reranker-v2-m3"

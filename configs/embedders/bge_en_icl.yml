@@ -21,7 +21,7 @@
 # Reranker: bge-reranker-v2-m3 pairs well with all BGE embeddings.
 #
 # Launch:
-#   uv run perspicacite -c config_bge_en_icl.yml serve
+#   uv run perspicacite -c configs/embedders/bge_en_icl.yml serve
 
 version: "2.0.0"
 config_name: "bge-en-icl-port8005"

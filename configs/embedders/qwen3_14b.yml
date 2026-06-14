@@ -8,7 +8,7 @@
 #   /opt/homebrew/opt/ollama/bin/ollama serve   (or brew services start ollama)
 #
 # Launch:
-#   OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c config_qwen3_14b.yml serve
+#   OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c configs/embedders/qwen3_14b.yml serve
 #
 # Thinking mode: Qwen3 supports /think ... /no_think tokens.
 # Set QWEN3_NO_THINK=1 to prepend /no_think to all prompts (faster, less depth).

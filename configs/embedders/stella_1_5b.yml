@@ -19,7 +19,7 @@
 # in the auto-detected namespace list; prefix stripped before loading.
 #
 # Launch:
-#   uv run perspicacite -c config_stella_1_5b.yml serve
+#   uv run perspicacite -c configs/embedders/stella_1_5b.yml serve
 
 version: "2.0.0"
 config_name: "stella-1.5b-port8006"

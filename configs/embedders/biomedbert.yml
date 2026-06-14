@@ -1,25 +1,25 @@
-# Perspicacité config — NeuML/pubmedbert-base-embeddings on port 8007
-# PubMedBERT fine-tuned specifically for bi-encoder retrieval on PubMed
-# title-abstract pairs (768-dim). Contrast with S-PubMedBert-MS-MARCO
-# (port 8005) which uses MS-MARCO (general domain) fine-tuning.
+# Perspicacité config — microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext on port 8006
+# Base BiomedBERT trained on PubMed abstracts + full text (768-dim, BERT backbone).
+# NOT fine-tuned for retrieval — uses mean pooling from base model.
+# Trained on full-text PubMed unlike S-PubMedBert-MS-MARCO (abstracts only).
 # See perspicacite-eval docs/ for results.
 #
 # Key overrides vs config.yml:
-#   server.port:                       8007
-#   knowledge_base.embedding_model:    NeuML/pubmedbert-base-embeddings (768-dim)
+#   server.port:                       8006
+#   knowledge_base.embedding_model:    microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext (768-dim)
 #   knowledge_base.similarity_threshold: 0.0
 #
 # No API key required (fully local via sentence-transformers).
 #
 # Launch:
-#   uv run perspicacite -c config_neuml_pubmedbert.yml serve
+#   uv run perspicacite -c configs/embedders/biomedbert.yml serve
 
 version: "2.0.0"
-config_name: "neuml-pubmedbert-port8007"
+config_name: "biomedbert-port8006"
 
 server:
   host: "0.0.0.0"
-  port: 8007
+  port: 8006
   reload: false
 
 llm:
@@ -42,7 +42,7 @@ llm:
     chat_history_turns: 10
 
 knowledge_base:
-  embedding_model: "NeuML/pubmedbert-base-embeddings"
+  embedding_model: "microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext"
   chunk_size: 1000
   chunk_overlap: 200
   chunking_method: "token"
@@ -72,7 +72,7 @@ scilex:
 mcp:
   enabled: true
   host: "0.0.0.0"
-  port: 8007
+  port: 8006
   transport: "streamable-http"
 
 auth:

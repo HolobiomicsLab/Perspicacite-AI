@@ -1,24 +1,25 @@
-# Perspicacité config — pritamdeka/S-PubMedBert-MS-MARCO on port 8005
-# PubMedBERT fine-tuned on MS-MARCO for retrieval (768-dim, BERT backbone).
-# Domain-specific for biomedical text (PubMed pre-training).
+# Perspicacité config — NeuML/pubmedbert-base-embeddings on port 8007
+# PubMedBERT fine-tuned specifically for bi-encoder retrieval on PubMed
+# title-abstract pairs (768-dim). Contrast with S-PubMedBert-MS-MARCO
+# (port 8005) which uses MS-MARCO (general domain) fine-tuning.
 # See perspicacite-eval docs/ for results.
 #
 # Key overrides vs config.yml:
-#   server.port:                       8005
-#   knowledge_base.embedding_model:    pritamdeka/S-PubMedBert-MS-MARCO (768-dim)
+#   server.port:                       8007
+#   knowledge_base.embedding_model:    NeuML/pubmedbert-base-embeddings (768-dim)
 #   knowledge_base.similarity_threshold: 0.0
 #
 # No API key required (fully local via sentence-transformers).
 #
 # Launch:
-#   uv run perspicacite -c config_pubmedbert.yml serve
+#   uv run perspicacite -c configs/embedders/neuml_pubmedbert.yml serve
 
 version: "2.0.0"
-config_name: "pubmedbert-port8005"
+config_name: "neuml-pubmedbert-port8007"
 
 server:
   host: "0.0.0.0"
-  port: 8005
+  port: 8007
   reload: false
 
 llm:
@@ -41,7 +42,7 @@ llm:
     chat_history_turns: 10
 
 knowledge_base:
-  embedding_model: "pritamdeka/S-PubMedBert-MS-MARCO"
+  embedding_model: "NeuML/pubmedbert-base-embeddings"
   chunk_size: 1000
   chunk_overlap: 200
   chunking_method: "token"
@@ -71,7 +72,7 @@ scilex:
 mcp:
   enabled: true
   host: "0.0.0.0"
-  port: 8005
+  port: 8007
   transport: "streamable-http"
 
 auth:

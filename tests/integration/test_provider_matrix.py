@@ -172,7 +172,7 @@ def _make_config_for(provider: str, model: str, **kwargs: Any) -> LLMConfig:
             timeout=180,
             max_retries=1,
         ),
-        # Codex preset — mirrors config.codex.example.yml. Verified live
+        # Codex preset — mirrors configs/llm/codex.yml. Verified live
         # in commit 7f1e7d7 (~16 s round-trip on this machine).
         "agent_cli": LLMProviderConfig(
             executable="codex",

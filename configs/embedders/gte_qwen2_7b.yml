@@ -18,7 +18,7 @@
 # Note: requires `st:` prefix since Alibaba-NLP/ is not in auto-detected namespaces.
 #
 # Launch:
-#   uv run perspicacite -c config_gte_qwen2_7b.yml serve
+#   uv run perspicacite -c configs/embedders/gte_qwen2_7b.yml serve
 
 version: "2.0.0"
 config_name: "gte-qwen2-7b-port8007"

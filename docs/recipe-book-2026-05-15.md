@@ -10,7 +10,7 @@ documents *intent* — "what should I run when I want to ...?"
 > **Prereqs:** `pip install -e .`, `perspicacite serve` is reachable
 > at `http://localhost:8000` for the recipes that need it, and a
 > `.env` with at least one `*_API_KEY` is in place. See
-> `config/config.example.yml` for the canonical config layout.
+> `config.example.yml` for the canonical config layout.
 
 ---
 

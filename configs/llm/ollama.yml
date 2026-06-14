@@ -13,7 +13,7 @@
 # 3. Start the Ollama server (auto-starts on macOS once installed):
 #       ollama serve
 # 4. Use this file as your config:
-#       perspicacite -c config.ollama.example.yml serve
+#       perspicacite -c configs/llm/ollama.yml serve
 #
 # **Quality vs hardware tradeoffs**
 # - 70B models need ~40 GB RAM. Worth it for synthesis quality on

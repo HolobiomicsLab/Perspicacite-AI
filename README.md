@@ -275,9 +275,10 @@ mcp:
 
 Full schema: [docs/reference/config.md](docs/reference/config.md).
 
-Alternative config presets: `config.ollama.example.yml` (local Ollama),
-`config.claude_code.example.yml` (Claude Code CLI), `config.codex.example.yml`,
-`config.hermes.example.yml`, `config.openclaw.example.yml`.
+Ready-made presets live in [`configs/`](configs/README.md): LLM-provider presets under
+`configs/llm/` (Ollama, Claude Code, Codex, Hermes, OpenClaw, OpenRouter-free) and
+embedding/retrieval presets under `configs/embedders/` (bge-m3, openai-large, specter2, …).
+Point at one with `-c`, e.g. `uv run perspicacite -c configs/embedders/bge_m3.yml serve`.
 
 ---
 

@@ -9,7 +9,7 @@
 #                                              0.7 default filters everything → 0 results)
 # Launch:
 #   TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
-#       uv run perspicacite -c config_specter2.yml serve
+#       uv run perspicacite -c configs/embedders/specter2.yml serve
 #
 # TRANSFORMERS_OFFLINE/HF_DATASETS_OFFLINE prevent the model from trying
 # to re-fetch on every startup (we got hit by HF 429s in the previous

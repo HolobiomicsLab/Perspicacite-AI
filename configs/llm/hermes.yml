@@ -19,13 +19,13 @@
 # 2. Configure:  `hermes setup`
 # 3. Verify:  `hermes` (interactive) or your version's one-shot flag
 # 4. Use this file as your config:
-#       perspicacite -c config.hermes.example.yml serve
+#       perspicacite -c configs/llm/hermes.yml serve
 #
 # **Note:** If Hermes doesn't ship a one-shot completion mode in
 # your version, the alternative is to run Hermes models directly
 # via Ollama (the Hermes family is published on Ollama as e.g.
 # `hermes-3:70b`) — that's a fully supported path today via
-# config.ollama.example.yml.
+# configs/llm/ollama.yml.
 
 llm:
   default_provider: "agent_cli"
