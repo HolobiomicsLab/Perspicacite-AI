@@ -1,0 +1,19 @@
+# Pre-commit hooks for Perspicacité.
+#
+# Install once with:  uv run pre-commit install
+# Run on everything:  uv run pre-commit run --all-files
+#
+# ruff (lint) is pinned to the SAME version the CI lint gate enforces
+# (.github/workflows/ci.yml) so local and CI never disagree. ruff-format
+# runs only on the files in your commit — it does not reformat the whole
+# tree, which keeps the diff small (see the note in pyproject.toml's
+# [tool.ruff.lint] ignore block).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff
+        name: ruff (lint, autofix)
+        args: [--fix]
+      - id: ruff-format
+        name: ruff (format touched files)

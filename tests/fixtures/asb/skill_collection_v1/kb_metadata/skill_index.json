@@ -1,0 +1,11 @@
+{
+  "collection": "metabolomics-v1",
+  "skills": [
+    {
+      "id": "https://w3id.org/holobiomicslab/asb-skill/feature-detection-lcms",
+      "name": "feature-detection-lcms",
+      "description": "Use when analyzing LC-MS data for peak detection."
+    }
+  ],
+  "generated_at": "2026-05-24T21:47:12Z"
+}

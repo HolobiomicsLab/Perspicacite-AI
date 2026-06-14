@@ -1,0 +1,17 @@
+{
+  "collection_iri": "https://w3id.org/holobiomicslab/asb-skill/collection/metabolomics/v1",
+  "edam_topics": [
+    "http://edamontology.org/topic_3172",
+    "http://edamontology.org/topic_0091"
+  ],
+  "skills": [
+    {
+      "slug": "feature-detection-lcms",
+      "edam_operation": "http://edamontology.org/operation_3215",
+      "edam_topics": [
+        "http://edamontology.org/topic_3172"
+      ]
+    }
+  ],
+  "generated_at": "2026-05-24T21:47:12Z"
+}
