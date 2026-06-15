@@ -7,6 +7,36 @@ from perspicacite.logging import get_logger
 
 logger = get_logger("perspicacite.llm.embeddings")
 
+# OpenAI text-embedding-* models hard-cap each input at 8192 tokens; a single
+# oversized chunk (e.g. a long PMC section ingested via the heading-aware DOI
+# path) otherwise 400s the WHOLE batch and drops the entire paper to 0 chunks.
+# Truncate each input to a safe budget before sending so one big section can
+# never poison its batch.  cl100k_base is the tokenizer for text-embedding-3-*.
+_EMBED_MAX_TOKENS = 8000  # margin under the 8192 hard cap
+_CHARS_PER_TOKEN_FALLBACK = 3  # conservative when tiktoken is unavailable
+_ENC_CACHE: dict[str, Any] = {}
+
+
+def _truncate_for_embedding(text: str, max_tokens: int = _EMBED_MAX_TOKENS) -> str:
+    """Return ``text`` truncated to at most ``max_tokens`` embedding tokens."""
+    if not text:
+        return text
+    try:
+        import tiktoken
+
+        enc = _ENC_CACHE.get("cl100k_base")
+        if enc is None:
+            enc = tiktoken.get_encoding("cl100k_base")
+            _ENC_CACHE["cl100k_base"] = enc
+        toks = enc.encode(text)
+        if len(toks) <= max_tokens:
+            return text
+        return enc.decode(toks[:max_tokens])
+    except Exception:
+        # tiktoken missing/failed → conservative char-based cap.
+        cap = max_tokens * _CHARS_PER_TOKEN_FALLBACK
+        return text if len(text) <= cap else text[:cap]
+
 
 class EmbeddingProvider(Protocol):
     """Protocol for embedding providers."""
@@ -119,8 +149,9 @@ class LiteLLMEmbeddingProvider:
         if not texts:
             return []
 
-        # Filter out empty texts
-        valid_texts = [t for t in texts if t and t.strip()]
+        # Filter out empty texts; truncate each to the model's token cap so a
+        # single oversized chunk can never 400 (and thus drop) its whole batch.
+        valid_texts = [_truncate_for_embedding(t) for t in texts if t and t.strip()]
         if not valid_texts:
             return [[0.0] * self.dimension for _ in texts]
 
@@ -134,12 +165,34 @@ class LiteLLMEmbeddingProvider:
             for i in range(0, len(valid_texts), self.batch_size):
                 batch = valid_texts[i : i + self.batch_size]
 
-                response = await litellm.aembedding(
-                    model=self.model,
-                    input=batch,
-                )
-
-                batch_embeddings = [item["embedding"] for item in response["data"]]
+                try:
+                    response = await litellm.aembedding(
+                        model=self.model,
+                        input=batch,
+                    )
+                    batch_embeddings = [item["embedding"] for item in response["data"]]
+                except Exception as batch_err:
+                    # One poisoned input must not drop the whole paper: fall back
+                    # to embedding the batch item-by-item, zero-filling only the
+                    # individual texts that still fail.
+                    logger.warning(
+                        "embedding_batch_fallback",
+                        model=self.model,
+                        batch_size=len(batch),
+                        error=str(batch_err),
+                    )
+                    batch_embeddings = []
+                    for one in batch:
+                        try:
+                            r1 = await litellm.aembedding(model=self.model, input=[one])
+                            batch_embeddings.append(r1["data"][0]["embedding"])
+                        except Exception as item_err:
+                            logger.error(
+                                "embedding_item_skipped",
+                                model=self.model,
+                                error=str(item_err),
+                            )
+                            batch_embeddings.append([0.0] * self.dimension)
                 all_embeddings.extend(batch_embeddings)
 
             logger.debug(
