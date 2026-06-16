@@ -1503,6 +1503,77 @@ class AddLocalPathsRequest(BaseModel):
 _local_tasks: set[asyncio.Task] = set()
 
 
+class GithubIngestRequest(BaseModel):
+    url: str
+    include: list[str] | None = None
+    exclude: list[str] | None = None
+    focus: str | None = None       # relevance signal for "key code" selection
+    max_files: int | None = None   # cap ingested files on large repos (needs focus)
+
+
+async def _github_ingest_worker(*, name, url, include, exclude, focus, max_files,
+                                job_id, registry):
+    """Background worker: run the (long) GitHub-repo ingest and report via the
+    job registry.
+
+    Mega-repos (e.g. mzmine, 833MB) take far longer than any sane synchronous
+    HTTP/MCP timeout — a blocking call times out client-side while the server
+    keeps ingesting, so the caller wrongly concludes the ingest failed. The
+    async path POSTs /github/async, gets a job_id immediately, and polls
+    /api/jobs/<id>, so true completion is observable regardless of duration.
+    """
+    try:
+        from perspicacite.pipeline.github.bundle import ContentSpec
+        from perspicacite.pipeline.github_kb import ingest_github_repo as _pipeline
+
+        content = None
+        if include or exclude:
+            defaults = ContentSpec()
+            content = ContentSpec(
+                include=list(include) if include else list(defaults.include),
+                exclude=list(exclude) if exclude else list(defaults.exclude),
+            )
+        summary = await _pipeline(
+            url=url, kb_name=name, config=app_state.config,
+            vector_store=app_state.vector_store,
+            embedding_service=app_state.embedding_provider,
+            session_store=app_state.session_store, content=content,
+            focus=focus, max_files=max_files,
+        )
+        await registry.finish(job_id, {
+            "kb_name": summary.kb_name, "url": url,
+            "files_added": summary.files_added,
+            "chunks_added": summary.chunks_added,
+        })
+    except Exception as e:  # noqa: BLE001 — report failure via the job, not a 500
+        logger.error(f"github_ingest_async_failed url={url} error={e}")
+        await registry.fail(job_id, str(e))
+
+
+@router.post("/api/kb/{name}/github/async")
+async def add_github_repo_async(name: str, payload: GithubIngestRequest) -> dict:
+    """Start an async GitHub-repo ingest. Returns {job_id, sse_url} immediately.
+
+    Poll ``GET /api/jobs/<job_id>`` until ``status='done'`` (``result`` has
+    ``files_added`` / ``chunks_added``) or ``status='error'``. The target KB is
+    created by the pipeline if missing. Use this instead of the synchronous MCP
+    ``ingest_github_repo`` tool for large repos that exceed the client timeout.
+    """
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="jobs not configured")
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    job_id = await app_state.job_registry.create(kind="github_ingest", total=0)
+    task = asyncio.create_task(_github_ingest_worker(
+        name=name, url=payload.url, include=payload.include,
+        exclude=payload.exclude, focus=payload.focus, max_files=payload.max_files,
+        job_id=job_id, registry=app_state.job_registry,
+    ))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
 @router.post("/api/kb/{name}/local-files")
 async def add_local_files(
     name: str,

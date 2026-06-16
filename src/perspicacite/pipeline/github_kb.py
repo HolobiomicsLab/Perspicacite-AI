@@ -30,7 +30,7 @@ Design references:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -154,6 +154,8 @@ async def ingest_github_repo(
     session_store: Any,
     fetcher: GitHubFetcher | None = None,
     content: ContentSpec | None = None,
+    focus: str | None = None,
+    max_files: int | None = None,
 ) -> IngestSummary:
     """Fetch a GitHub repo, walk + chunk it, write Papers into ``kb_name``.
 
@@ -213,6 +215,18 @@ async def ingest_github_repo(
         commit_sha=sha,
         content=content,
     )
+
+    # Relevance-gated "key code" selection: for large repos (mzmine has
+    # thousands of source files), keep only the code files most relevant to the
+    # tool's methodology — ranked against ``focus`` (e.g. the tool README + the
+    # benchmark's research questions). Docs/markdown are always kept. Opt-in:
+    # callers that pass no focus (MCP tool, skill bundles) ingest everything.
+    if focus and max_files and len(papers) > max_files:
+        kept = _select_relevant_papers(papers, focus=focus, max_files=max_files)
+        logger.info(
+            f"github_relevance_gate repo={ref.org}/{ref.repo} "
+            f"files={len(papers)} kept={len(kept)} max_files={max_files}")
+        papers = kept
 
     chunks_added = await _add_papers_to_kb(
         kb_name=kb_name,
@@ -453,15 +467,128 @@ async def _add_papers_to_kb(
     if not papers:
         return 0
 
-    dkb = DynamicKnowledgeBase(vector_store, embedding_service)
-    dkb.collection_name = collection_name
-    dkb._initialized = True
-    added_chunks = await dkb.add_papers(papers, include_full_text=True)
+    # Symbol-aware code chunking. The chunk producer reduces .py to docstrings
+    # (a deliberate low-noise choice) but dumps every OTHER code file whole, so
+    # Java/C++/R repos (e.g. mzmine, 833MB) flood the KB with license headers,
+    # imports, getters and UI boilerplate. Route those through chunk_code so
+    # each chunk is one function/class (tree-sitter for compiled langs, regex
+    # for R), like the local-docs path already does. Python stays on the
+    # producer's docstring path; markdown/text/notebooks stay on the token path.
+    added_chunks = await _ingest_code_papers_symbolwise(
+        papers=papers, collection_name=collection_name, config=config,
+        vector_store=vector_store, embedding_service=embedding_service,
+    )
 
     kb_meta.paper_count = (kb_meta.paper_count or 0) + len(papers)
     kb_meta.chunk_count = (kb_meta.chunk_count or 0) + added_chunks
     await session_store.save_kb_metadata(kb_meta)
     return added_chunks
+
+
+# Extension -> chunk_code language for the symbol-aware path. Python is
+# intentionally excluded (the chunk producer already gives it docstring-only,
+# low-noise treatment). Only languages chunk_code actually handles are listed.
+_CODE_EXT_TO_LANG: dict[str, str] = {
+    ".java": "java", ".kt": "kotlin",
+    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".c": "cpp",
+    ".h": "cpp", ".hpp": "cpp",
+    ".js": "javascript", ".jsx": "javascript",
+    ".ts": "typescript", ".tsx": "typescript",
+    ".go": "go", ".rs": "rust", ".rb": "ruby",
+    ".swift": "swift", ".cs": "csharp",
+    ".r": "r", ".rmd": "r",
+}
+
+
+def _select_relevant_papers(papers: list, *, focus: str, max_files: int) -> list:
+    """Keep docs/README always + the top-``max_files`` code files most relevant
+    to ``focus`` (lexical term-overlap over path/title/abstract/head-of-source).
+
+    Lexical (not embedding) ranking keeps this cheap on mega-repos — no extra
+    embedding pass over thousands of files just to decide what to ingest."""
+    import re as _re
+
+    terms = list(dict.fromkeys(_re.findall(r"[a-zA-Z_][a-zA-Z0-9_]{2,}", focus.lower())))
+    # Drop ubiquitous English/programming stopwords that match everything.
+    _stop = {"the", "and", "for", "with", "this", "that", "from", "data", "using",
+             "code", "file", "test", "import", "return", "self", "def", "class",
+             "function", "method", "value", "result", "output", "input"}
+    terms = [t for t in terms if t not in _stop][:60]
+    if not terms:
+        return papers
+
+    def _is_doc(p) -> bool:
+        md = p.metadata if isinstance(getattr(p, "metadata", None), dict) else {}
+        rel = str(md.get("rel_path", "")).lower()
+        return md.get("content_kind") == "github_markdown" or "readme" in rel
+
+    def _score(p) -> int:
+        md = p.metadata if isinstance(getattr(p, "metadata", None), dict) else {}
+        hay = " ".join([
+            str(md.get("rel_path", "")), p.title or "", p.abstract or "",
+            (p.full_text or "")[:4000],
+        ]).lower()
+        return sum(hay.count(t) for t in terms)
+
+    docs = [p for p in papers if _is_doc(p)]
+    code = [p for p in papers if not _is_doc(p)]
+    code_ranked = sorted(code, key=_score, reverse=True)
+    matched = [p for p in code_ranked if _score(p) > 0][:max_files]
+    # If nothing matched the focus terms, fall back to the top files by rank so
+    # we never ingest docs-only (a thin KB is worse than a broad one).
+    chosen_code = matched if matched else code_ranked[:max_files]
+    return docs + chosen_code
+
+
+async def _ingest_code_papers_symbolwise(
+    *, papers: list, collection_name: str, config: Config,
+    vector_store: Any, embedding_service: Any,
+) -> int:
+    """Chunk recognized code files per-symbol; everything else via the default
+    token chunker. Returns total chunks added."""
+    from pathlib import Path as _Path
+
+    from perspicacite.pipeline.chunking_dispatch import chunk_document
+
+    code_chunks: list = []
+    rest: list = []
+    for p in papers:
+        md = p.metadata if isinstance(getattr(p, "metadata", None), dict) else {}
+        rel = md.get("rel_path") or ""
+        lang = _CODE_EXT_TO_LANG.get(_Path(rel).suffix.lower())
+        text = getattr(p, "full_text", None)
+        if not (lang and text):
+            rest.append(p)
+            continue
+        try:
+            # chunk_document → chunk_code (tree-sitter for compiled langs, regex
+            # for R), falling back to LangChain language-aware splitting when no
+            # symbol backend applies — never a whole-file token dump.
+            chs = await chunk_document(text, p, content_type="code",
+                                       language=lang, config=config.knowledge_base)
+        except Exception as exc:  # never let one file break ingest
+            logger.warning(f"github_code_chunk_failed rel={rel} lang={lang} error={exc}")
+            chs = None
+        if chs:
+            code_chunks.extend(chs)
+        else:
+            rest.append(p)  # last-resort → token path
+
+    added = 0
+    if code_chunks:
+        texts = [c.text for c in code_chunks]
+        embeds = await embedding_service.embed(texts)
+        for c, e in zip(code_chunks, embeds):
+            c.embedding = e
+        await vector_store.add_documents(collection=collection_name, chunks=code_chunks)
+        added += len(code_chunks)
+
+    if rest:
+        dkb = DynamicKnowledgeBase(vector_store, embedding_service)
+        dkb.collection_name = collection_name
+        dkb._initialized = True
+        added += await dkb.add_papers(rest, include_full_text=True)
+    return added
 
 
 # ---------------------------------------------------------------------------
