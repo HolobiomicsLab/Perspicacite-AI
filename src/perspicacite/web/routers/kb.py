@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -372,6 +373,7 @@ async def _dois_ingest_worker(
             if result.full_text:
                 paper.full_text = result.full_text
                 dl["success"] += 1
+                await _augment_with_pmc_supplementary(paper, app_state)
                 status = "embedded"
             else:
                 dl["metadata_only"] += 1
@@ -445,6 +447,122 @@ def _get_pdf_fallback_kwargs(pdf_config) -> dict:
         "rsc_api_key": pdf_config.rsc_api_key,
         "springer_api_key": pdf_config.springer_api_key,
     }
+
+
+# Suffixes/MIME prefixes whose bytes can be ingested as text without a parser.
+_SI_TEXT_SUFFIXES = {".csv", ".tsv", ".txt", ".md", ".json", ".xml", ".rst", ".html", ".htm"}
+_SI_SKIP_MIME = ("image/", "video/", "audio/")
+
+
+async def _si_bytes_to_text(data: bytes, url: str, mime: str, pdf_parser, max_chars: int) -> str | None:
+    """Extract text from one downloaded SI file. Returns None when unextractable."""
+    import tempfile
+
+    suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+    is_pdf = "pdf" in mime or suffix == ".pdf"
+    if is_pdf:
+        if pdf_parser is None:
+            return None
+        tmp = Path(tempfile.mkdtemp(prefix="asb_si_")) / ("si" + (suffix or ".pdf"))
+        try:
+            tmp.write_bytes(data)
+            parsed = await pdf_parser.parse(tmp)
+            text = (parsed.text or "") if parsed else ""
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"si_pdf_parse_failed url={url} error={e}")
+            text = ""
+        finally:
+            try:
+                tmp.unlink()
+                tmp.parent.rmdir()
+            except Exception:  # noqa: BLE001
+                pass
+        return (text[:max_chars] or None) if text else None
+    if suffix in (".xlsx", ".xls"):
+        try:
+            import io
+
+            import openpyxl  # noqa: PLC0415
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            rows: list[str] = []
+            for ws in wb.worksheets:
+                rows.append(f"## sheet: {ws.title}")
+                for row in ws.iter_rows(values_only=True):
+                    cells = ["" if c is None else str(c) for c in row]
+                    if any(cells):
+                        rows.append("\t".join(cells))
+            text = "\n".join(rows)
+            return text[:max_chars] or None
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"si_xlsx_parse_failed url={url} error={e}")
+            return None
+    if mime.startswith("text/") or suffix in _SI_TEXT_SUFFIXES:
+        text = data.decode("utf-8", errors="replace")
+        return text[:max_chars] or None
+    return None  # unknown binary (zip/media/etc.) — skip
+
+
+async def _augment_with_pmc_supplementary(paper, app_state) -> dict:
+    """Best-effort: append PMC-OA supplementary text to ``paper.full_text``.
+
+    No-op for non-PMC papers (``get_supplementary_from_pmc`` returns None) and
+    for papers without full text. Fully fail-soft — never raises into the
+    ingest path. Returns a small stats dict for logging.
+    """
+    stats = {"si_files": 0, "si_chars": 0, "si_skipped": 0}
+    doi = (getattr(paper, "doi", None) or getattr(paper, "id", None) or "").strip()
+    if not doi or not getattr(paper, "full_text", None):
+        return stats
+    cfg = getattr(app_state.config, "pdf_download", None) if app_state.config else None
+    if cfg is not None and not getattr(cfg, "ingest_pmc_supplementary", True):
+        return stats
+    max_files = getattr(cfg, "supplementary_max_files", 12) if cfg else 12
+    max_chars = getattr(cfg, "supplementary_max_chars_per_file", 200_000) if cfg else 200_000
+    max_bytes = getattr(cfg, "supplementary_max_bytes_per_file", 25 * 1024 * 1024) if cfg else 25 * 1024 * 1024
+    if max_files <= 0:
+        return stats
+    try:
+        from perspicacite.pipeline.download.pmc import get_supplementary_from_pmc
+        from perspicacite.pipeline.download.supplementary import fetch_supplementary_file
+        items = await get_supplementary_from_pmc(doi)
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"pmc_si_discover_failed doi={doi} error={e}")
+        return stats
+    if not items:
+        return stats
+    blocks: list[str] = []
+    for it in items[:max_files]:
+        url = it.get("url") or it.get("href")
+        mime = (it.get("mime_type") or "").lower()
+        label = it.get("label") or it.get("id") or "supplementary"
+        if not url or any(mime.startswith(p) for p in _SI_SKIP_MIME):
+            stats["si_skipped"] += 1
+            continue
+        try:
+            data = await fetch_supplementary_file(url, max_bytes=max_bytes)
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"si_fetch_raised url={url} error={e}")
+            data = None
+        if not data:
+            stats["si_skipped"] += 1
+            continue
+        text = await _si_bytes_to_text(data, url, mime, app_state.pdf_parser, max_chars)
+        if not text:
+            stats["si_skipped"] += 1
+            continue
+        caption = (it.get("caption") or "").strip()
+        head = f"\n\n## Supplementary information: {label}\n"
+        if caption:
+            head += f"\n{caption}\n"
+        blocks.append(head + "\n" + text)
+        stats["si_files"] += 1
+        stats["si_chars"] += len(text)
+    if blocks:
+        paper.full_text = (paper.full_text or "") + "\n\n# Supplementary Information (PMC-OA)\n" + "".join(blocks)
+        logger.info(
+            f"pmc_si_appended doi={doi} files={stats['si_files']} "
+            f"chars={stats['si_chars']} skipped={stats['si_skipped']}")
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +826,8 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
                 download_stats["failed"] += 1
 
         paper.full_text = full_text
+        if full_text:
+            await _augment_with_pmc_supplementary(paper, app_state)
         papers_to_add.append(paper)
 
     if not papers_to_add:
@@ -1253,6 +1373,7 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
         if result.full_text:
             paper.full_text = result.full_text
             dl["success"] += 1
+            await _augment_with_pmc_supplementary(paper, app_state)
         else:
             dl["metadata_only"] += 1
             attempts = list(getattr(result, "attempts", []) or [])

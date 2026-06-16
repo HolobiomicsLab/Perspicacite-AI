@@ -1138,6 +1138,32 @@ class PDFDownloadConfig(BaseModel):
         ),
     )
 
+    # PMC-OA supplementary-information ingestion. When a DOI resolves to a
+    # PubMed Central OA paper that declares <supplementary-material> in its
+    # JATS XML, those SI files (methods PDFs, parameter tables, protocols) are
+    # fetched and their extracted text is appended to the paper's full_text at
+    # ingest time, so SI grounds the KB alongside the article body. No-op for
+    # non-PMC papers. Fail-soft — SI errors never break paper ingestion.
+    ingest_pmc_supplementary: bool = Field(
+        default=True,
+        description=(
+            "Append PMC-OA supplementary-information text to a paper's full "
+            "text at DOI ingest time (PMC-OA papers only; best-effort)."
+        ),
+    )
+    supplementary_max_files: int = Field(
+        default=12, ge=0,
+        description="Max SI files to fetch per paper (0 disables SI ingest).",
+    )
+    supplementary_max_chars_per_file: int = Field(
+        default=200_000, ge=0,
+        description="Truncate each SI file's extracted text to this many chars.",
+    )
+    supplementary_max_bytes_per_file: int = Field(
+        default=25 * 1024 * 1024,
+        description="Skip an SI file whose download exceeds this many bytes.",
+    )
+
 
 class GitHubConfig(BaseModel):
     """GitHub fetcher knobs (2026-05-15 spec).
