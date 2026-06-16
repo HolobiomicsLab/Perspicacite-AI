@@ -1574,6 +1574,75 @@ async def add_github_repo_async(name: str, payload: GithubIngestRequest) -> dict
     return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
 
 
+@router.post("/api/kb/{name}/supplementary")
+async def add_pmc_supplementary(name: str, doi: str = Query(...)) -> dict:
+    """Fetch a paper's PMC-OA supplementary info and ingest it into an EXISTING
+    KB as labeled documents — WITHOUT re-ingesting the paper.
+
+    Retrofit for KBs built before PMC-SI ingestion became default: enriches the
+    grounding KB in place (paper chunks untouched). No-op when the paper has no
+    PMC SI, so callers can gate expensive downstream work (e.g. LLM
+    re-validation) on ``si_files > 0``. Idempotent: SI docs are keyed by a
+    stable ``pmc-si:<doi>:<label>`` id and skipped if already present.
+    """
+    if not app_state.session_store:
+        return {"error": "System not initialized"}
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if not kb:
+        return {"error": f"Knowledge base '{name}' not found"}
+    from perspicacite.models.papers import Paper, PaperSource
+    from perspicacite.pipeline.download.pmc import get_supplementary_from_pmc
+    from perspicacite.pipeline.download.supplementary import fetch_supplementary_file
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+
+    cfg = getattr(app_state.config, "pdf_download", None) if app_state.config else None
+    max_files = getattr(cfg, "supplementary_max_files", 12) if cfg else 12
+    max_chars = getattr(cfg, "supplementary_max_chars_per_file", 200_000) if cfg else 200_000
+    max_bytes = getattr(cfg, "supplementary_max_bytes_per_file", 25 * 1024 * 1024) if cfg else 25 * 1024 * 1024
+    try:
+        items = await get_supplementary_from_pmc(doi)
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"pmc_si_lookup_failed doi={doi} error={e}")
+        return {"si_files": 0, "si_chunks": 0, "error": str(e)}
+    if not items:
+        return {"si_files": 0, "si_chunks": 0}
+
+    papers: list = []
+    for it in items[:max_files]:
+        url = it.get("url") or it.get("href")
+        mime = (it.get("mime_type") or "").lower()
+        label = it.get("label") or it.get("id") or "supplementary"
+        if not url or any(mime.startswith(p) for p in _SI_SKIP_MIME):
+            continue
+        pid = f"pmc-si:{doi}:{label}"
+        if await app_state.vector_store.paper_exists(kb.collection_name, pid):
+            continue  # idempotent
+        try:
+            data = await fetch_supplementary_file(url, max_bytes=max_bytes)
+        except Exception:  # noqa: BLE001
+            data = None
+        if not data:
+            continue
+        text = await _si_bytes_to_text(data, url, mime, app_state.pdf_parser, max_chars)
+        if not text:
+            continue
+        papers.append(Paper(
+            id=pid, title=f"Supplementary information: {label}", doi=None,
+            abstract=(it.get("caption") or None), full_text=text,
+            source=PaperSource.USER_UPLOAD,
+        ))
+    if not papers:
+        return {"si_files": 0, "si_chunks": 0}
+    dkb = DynamicKnowledgeBase(app_state.vector_store, app_state.embedding_provider)
+    dkb.collection_name = kb.collection_name
+    dkb._initialized = True
+    added = await dkb.add_papers(papers, include_full_text=True)
+    kb.chunk_count += added
+    await app_state.session_store.save_kb_metadata(kb)
+    logger.info(f"pmc_si_added_to_kb kb={name} doi={doi} si_files={len(papers)} chunks={added}")
+    return {"si_files": len(papers), "si_chunks": added, "kb": name}
+
+
 @router.post("/api/kb/{name}/local-files")
 async def add_local_files(
     name: str,
