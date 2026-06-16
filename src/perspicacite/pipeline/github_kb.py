@@ -485,10 +485,11 @@ async def _add_papers_to_kb(
     return added_chunks
 
 
-# Extension -> chunk_code language for the symbol-aware path. Python is
-# intentionally excluded (the chunk producer already gives it docstring-only,
-# low-noise treatment). Only languages chunk_code actually handles are listed.
+# Extension -> chunk_code language for the symbol-aware path. Includes Python
+# (AST symbol chunks with bodies + docstrings) for parity with the local-docs
+# ingest path. Only languages chunk_code actually handles are listed.
 _CODE_EXT_TO_LANG: dict[str, str] = {
+    ".py": "python", ".pyx": "python",
     ".java": "java", ".kt": "kotlin",
     ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".c": "cpp",
     ".h": "cpp", ".hpp": "cpp",

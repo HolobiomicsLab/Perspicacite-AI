@@ -20,7 +20,7 @@ Content-kind taxonomy (set on ``Paper.metadata.content_kind``):
 Kind                 Source
 =================== =========================================================
 ``github_markdown`` ``.md`` files — README, docs prose.
-``github_python``   ``.py`` files — module + class + function docstrings.
+``github_code``     ``.py``/code files — raw source; symbol-chunked at ingest.
 ``github_notebook`` ``.ipynb`` files — concatenated cell sources.
 ``github_text``     Fallback for anything else that survived include globs
                     (``.txt``, ``.toml``, ``.yaml``, ``.json``...). Lazy
@@ -47,7 +47,6 @@ attached to ``Paper.metadata`` under ``mined_dois`` / ``mined_arxiv`` /
 
 from __future__ import annotations
 
-import ast
 import json
 import logging
 from dataclasses import dataclass
@@ -188,8 +187,8 @@ def _dispatch(
         return _paper_from_markdown(ctx)
     if suffix == ".ipynb":
         return _paper_from_notebook(ctx)
-    if suffix == ".py":
-        return _paper_from_python(ctx)
+    if suffix in (".py", ".pyx"):
+        return _paper_from_code(ctx)
     # Anything else that survived include globs (e.g. .yaml, .json) falls
     # back to "read it as text". This keeps the producer total, never
     # silently dropping a file the operator opted in to.
@@ -282,56 +281,28 @@ def _paper_from_notebook(ctx: _BuildContext) -> Paper:
     )
 
 
-def _paper_from_python(ctx: _BuildContext) -> Paper:
-    """Python source handler.
+def _paper_from_code(ctx: _BuildContext) -> Paper:
+    """Code source handler — keeps the RAW source as the Paper body.
 
-    Uses :mod:`ast` to extract:
+    The KB indexer (``_ingest_code_papers_symbolwise`` → ``chunk_code``)
+    symbol-chunks the source so each chunk is one function/class — AST for
+    Python, tree-sitter for compiled langs, regex for R. This unifies Python
+    with the other languages and with the local-docs ingest path.
 
-    1.  Module-level docstring.
-    2.  Top-level function/class docstrings.
-    3.  Class-method docstrings.
-
-    Function/class **bodies** are intentionally excluded — embedding
-    raw source produces noisy retrieval results. The docstring-only
-    surface is what v1 indexes; full-source indexing is a followup.
+    (Earlier this handler kept Python *docstrings only*, on the theory that
+    embedding raw source is noisy. That holds for whole-file token chunking,
+    not for symbol-aligned chunks: one coherent function/class per chunk indexes
+    cleanly and surfaces the implementation, not just the docstring.)
     """
     text = ctx.path.read_text(encoding="utf-8", errors="replace")
-    # ast.parse raises SyntaxError on bad python; the dispatcher catches
-    # it and skips the file rather than aborting the whole bundle.
-    tree = ast.parse(text, filename=str(ctx.path))
-
-    docs: list[str] = []
-    module_doc = ast.get_docstring(tree)
-    if module_doc:
-        docs.append(f"# module: {ctx.path.stem}\n\n{module_doc}")
-
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            d = ast.get_docstring(node)
-            if d:
-                docs.append(f"# function: {node.name}\n\n{d}")
-        elif isinstance(node, ast.ClassDef):
-            class_doc = ast.get_docstring(node)
-            if class_doc:
-                docs.append(f"# class: {node.name}\n\n{class_doc}")
-            for inner in node.body:
-                if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    d = ast.get_docstring(inner)
-                    if d:
-                        docs.append(
-                            f"# function: {node.name}.{inner.name}\n\n{d}"
-                        )
-
-    body = "\n\n".join(docs)
     title = ctx.path.stem
-    abstract = _abstract_from_text(body) if body else None
-
+    abstract = _abstract_from_text(text) if text else None
     return _build_paper(
         ctx=ctx,
         title=title,
         abstract=abstract,
-        full_text=body,
-        content_kind="github_python",
+        full_text=text,
+        content_kind="github_code",
     )
 
 
