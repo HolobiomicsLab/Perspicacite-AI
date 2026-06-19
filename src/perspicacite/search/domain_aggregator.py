@@ -51,6 +51,21 @@ class ProviderHealthTracker:
         return False
 
 
+def _within_year_bounds(paper: Any, year_min: int | None, year_max: int | None) -> bool:
+    """True if ``paper.year`` lies within [year_min, year_max].
+
+    Papers with an unknown year are kept (missing publication metadata is common and
+    dropping them would silently shrink recall). Used to enforce the year window on the
+    merged results, since the window is not forwarded to the providers (see ``search``).
+    """
+    year = getattr(paper, "year", None)
+    if year is None:
+        return True
+    if year_min is not None and year < year_min:
+        return False
+    return not (year_max is not None and year > year_max)
+
+
 class DomainAwareAggregator:
     """Routes queries to domain-appropriate providers and merges results."""
 
@@ -202,8 +217,14 @@ class DomainAwareAggregator:
                     p,
                     query=query,
                     max_results=self._max_per,
-                    year_min=year_min,
-                    year_max=year_max,
+                    # Year bounds are enforced post-merge on each paper's ``year`` rather
+                    # than forwarded here: a year window makes SciLEx fan out into one
+                    # query per year (26y x N APIs), blowing the per-provider timeout
+                    # budget and returning [] — so an in-range request paradoxically
+                    # yielded zero hits. Fetching on the fast (no-year) path and filtering
+                    # the merged results is provider-independent and correct.
+                    year_min=None,
+                    year_max=None,
                     extra_kwargs=extra,
                 )
             )
@@ -243,6 +264,8 @@ class DomainAwareAggregator:
                     seen_title_hashes[title_hash] = paper
                 merged.append(paper)
 
+        if year_min is not None or year_max is not None:
+            merged = [p for p in merged if _within_year_bounds(p, year_min, year_max)]
         return merged[:max_results]
 
 
