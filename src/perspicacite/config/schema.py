@@ -752,6 +752,10 @@ class RAGModeSettings(BaseModel):
     # deep_research: allow live web / academic-API searches in research cycles.
     # Set to false for KB-only evaluation environments to prevent rate-limit errors.
     use_websearch: bool = True
+    # Opt-in: write each agentic answer + an APA reference list to a .docx.
+    # Off by default; requires the optional [docx] extra (`uv sync --extra docx`).
+    export_apa_docx: bool = False
+    export_apa_docx_dir: str = "output"
 
 
 class RAGModesConfig(BaseModel):

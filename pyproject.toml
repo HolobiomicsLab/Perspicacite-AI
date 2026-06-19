@@ -163,6 +163,12 @@ docling = [
     "pandas>=2.0,<3",
 ]
 
+# Optional: APA .docx export of agentic answers
+# (config.rag_modes.agentic.export_apa_docx). Off by default.
+docx = [
+    "python-docx>=1.1.0",
+]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 

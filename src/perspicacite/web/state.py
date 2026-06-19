@@ -185,6 +185,8 @@ class AppState:
             max_iterations=5,
             use_two_pass=getattr(config.knowledge_base, "use_two_pass", True),
             map_reduce_max_papers=getattr(config.rag_modes.agentic, "map_reduce_max_papers", 8),
+            export_apa_docx=getattr(config.rag_modes.agentic, "export_apa_docx", False),
+            export_apa_docx_dir=getattr(config.rag_modes.agentic, "export_apa_docx_dir", "output"),
             app_state=self,
         )
         logger.info("Agentic orchestrator initialized")
