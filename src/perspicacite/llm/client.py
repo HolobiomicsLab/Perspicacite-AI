@@ -517,6 +517,19 @@ class AsyncLLMClient:
         # For Minimax, the actual API call uses minimax/{model} format directly
         return f"{provider}/{model}"
 
+    def _provider_extra_params(self, provider: str) -> dict[str, Any]:
+        """Provider-specific kwargs merged into the LiteLLM completion call.
+
+        For Ollama, forward ``num_ctx`` so the local model's context window is
+        large enough for the assembled prompt. Ollama silently defaults
+        ``num_ctx`` to 2048, which truncates long RAG synthesis prompts and
+        makes the model return empty output; LiteLLM passes this through to
+        Ollama's ``options.num_ctx``. Empty for every other provider.
+        """
+        if provider == "ollama":
+            return {"num_ctx": int(self.config.ollama_num_ctx)}
+        return {}
+
     @retry(
         # F1 (audit 2026-05-15): never retry on deterministic-fail errors
         # — auth errors won't suddenly become valid; budget breaches won't
@@ -677,6 +690,9 @@ class AsyncLLMClient:
                 "max_tokens": max_tokens,
                 "timeout": _effective_timeout,
             }
+            # Ollama: forward num_ctx so the local context window fits the prompt
+            # (Ollama silently defaults to 2048 → truncated/empty output).
+            completion_kwargs.update(self._provider_extra_params(provider))
 
             # TODO: Minimax implementation needs fixes
             # There are response parsing issues with the Anthropic-compatible API
