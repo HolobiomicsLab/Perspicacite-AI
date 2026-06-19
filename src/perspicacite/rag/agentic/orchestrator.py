@@ -441,10 +441,15 @@ class AgenticOrchestrator:
         kb_metas: list | None = None,
         config: Any = None,
         app_state: Any = None,
+        export_apa_docx: bool = False,
+        export_apa_docx_dir: str = "output",
     ):
         self.llm = llm_client
         self.config = config
         self.app_state = app_state
+        # Opt-in APA .docx export of agentic answers (default off).
+        self.export_apa_docx = export_apa_docx
+        self.export_apa_docx_dir = export_apa_docx_dir or "output"
         self.tools = tool_registry
         self.embeddings = embedding_provider
         self.vector_store = vector_store
@@ -2233,6 +2238,27 @@ Provide a synthesized summary that combines the key insights from all sources.""
             sections.append(f'  [{status}] "{facet.query}" — {n} source(s): {title_list}')
         return "\n".join(sections)
 
+    def _maybe_export_apa_docx(self, answer: str, papers: list) -> None:
+        """Opt-in: write the answer + an APA reference list to a .docx.
+
+        No-op unless ``export_apa_docx`` is enabled. Never raises into the
+        answer path — export failures (including the optional [docx] extra
+        being absent) are logged and swallowed.
+        """
+        if not getattr(self, "export_apa_docx", False):
+            return
+        try:
+            import hashlib
+
+            from perspicacite.rag.export.apa_docx_exporter import export_apa_docx
+
+            out_dir = getattr(self, "export_apa_docx_dir", "output") or "output"
+            doc_id = hashlib.sha1((answer or "").encode("utf-8")).hexdigest()[:8]
+            path = export_apa_docx(answer, papers, f"{out_dir}/manuscript_{doc_id}.docx")
+            logger.info("agentic_manuscript_exported", path=str(path))
+        except Exception:
+            logger.warning("agentic_manuscript_export_failed", exc_info=True)
+
     async def _generate_answer(
         self,
         query: str,
@@ -2427,6 +2453,7 @@ Generate your answer:"""
                 answer = answer.rstrip() + "\n\n" + references_section
                 logger.info("agentic_references_section_added", answer_chars=len(answer))
 
+        self._maybe_export_apa_docx(answer, papers)
         return answer, citation_map
 
     _CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
@@ -2626,6 +2653,7 @@ Generate your answer:"""
         if references_section:
             answer = answer.rstrip() + "\n\n" + references_section
 
+        self._maybe_export_apa_docx(answer, papers)
         return answer, citation_map
 
     def _build_numbered_paper_list(
