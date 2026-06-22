@@ -17,7 +17,7 @@ export function PageHeader({
         href="/"
         title="Back to chat"
         aria-label="Back to chat"
-        className="absolute right-3 top-2 z-10 p-1 text-[var(--text-muted)] opacity-60 transition hover:text-[var(--cnrs-blue)] hover:opacity-100"
+        className="absolute right-3 top-2 z-10 p-1 text-[var(--text-muted)] opacity-60 transition hover:text-[var(--text-body)] hover:opacity-100"
       >
         <svg
           viewBox="0 0 24 24"
@@ -40,7 +40,7 @@ export function PageHeader({
               {eyebrow}
             </p>
           )}
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--cnrs-blue)]">
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--text-body)]">
             {title}
           </h1>
           {subtitle && (

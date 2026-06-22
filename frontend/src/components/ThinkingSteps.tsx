@@ -30,12 +30,14 @@ export function ThinkingSteps({
   sources,
   defaultOpen = true,
   running = false,
+  errored = false,
   modeId,
 }: {
   steps: ThinkingStep[];
   sources?: ChatSource[];
   defaultOpen?: boolean;
   running?: boolean;
+  errored?: boolean;
   modeId?: RAGMode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -97,14 +99,22 @@ export function ThinkingSteps({
           {showPhases
             ? phases.map((phase, i) => {
                 const phaseSteps = buckets.byPhase[phase.id] ?? [];
+                // A completed, non-errored run means the whole pipeline
+                // finished — mark every phase done, even ones the backend
+                // never emitted a matching step for (Basic mode emits steps
+                // only for retrieval, so later phases would otherwise stay
+                // stranded as "planned"). While running, or if the run
+                // errored partway, fall back to progressive status.
                 const status: PhaseStatus =
-                  i < activePhaseIdx
+                  !running && !errored
                     ? "done"
-                    : i === activePhaseIdx
-                      ? running
-                        ? "running"
-                        : "done"
-                      : "planned";
+                    : i < activePhaseIdx
+                      ? "done"
+                      : i === activePhaseIdx
+                        ? running
+                          ? "running"
+                          : "done"
+                        : "planned";
                 const phaseSources = i === sourcesPhaseIdx ? sources ?? [] : [];
                 return (
                   <li
@@ -447,7 +457,7 @@ function Row({
           "relative z-10 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px]",
           running
             ? "bg-[var(--cnrs-yellow)] text-[var(--cnrs-blue)] ring-2 ring-[var(--cnrs-yellow)]/40"
-            : "bg-[var(--surface)] text-[var(--cnrs-blue)] ring-1 ring-[var(--border)]",
+            : "bg-[var(--surface)] text-[var(--text-body)] ring-1 ring-[var(--border)]",
         ].join(" ")}
         style={
           running
@@ -539,7 +549,7 @@ function MiniSourceCard({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex shrink-0 items-center border-l border-[var(--border)] px-2 text-[10px] text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)]"
+          className="flex shrink-0 items-center border-l border-[var(--border)] px-2 text-[10px] text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)]"
           aria-label="Open abstract in side panel"
           title="Open abstract in side panel"
         >

@@ -187,7 +187,7 @@ export function StatusBar({
             className={[
               "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
               modeAccent?.bg ?? "bg-[var(--cnrs-grey-light)]",
-              modeAccent?.text ?? "text-[var(--cnrs-blue)]",
+              modeAccent?.text ?? "text-[var(--text-body)]",
             ].join(" ")}
             title={`${mode.label} mode · ${mode.blurb}`}
           >
@@ -214,7 +214,7 @@ export function StatusBar({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-full border border-[var(--accent-fg)] px-2.5 py-0.5 text-[10px] font-semibold text-[var(--accent-fg)] transition hover:bg-[var(--accent-fg)] hover:text-[var(--cnrs-blue)]"
+            className="rounded-full border border-[var(--accent-fg)] px-2.5 py-0.5 text-[10px] font-semibold text-[var(--accent-fg)] transition hover:bg-[var(--accent-fg)] hover:text-[var(--text-body)]"
             aria-label="Stop generation"
             title="Stop generation (Esc)"
           >

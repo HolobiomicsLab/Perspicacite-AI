@@ -121,14 +121,14 @@ export default function KBDetailPage({
           <>
             <Link
               href={`/kb/${encodeURIComponent(name)}/expand`}
-              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:border-[var(--cnrs-blue)] hover:bg-[var(--cnrs-grey-light)]"
+              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:border-[var(--cnrs-blue)] hover:bg-[var(--surface-hover)]"
             >
               Expand by similarity
             </Link>
             <BuildCapsulesButton name={name} />
             <a
               href={kb.exportUrl(name)}
-              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-grey-light)]"
+              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]"
             >
               Export
             </a>
@@ -205,8 +205,8 @@ function Tabs({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
             className={[
               "relative -mb-px px-4 py-2.5 text-sm font-medium transition",
               active
-                ? "text-[var(--cnrs-blue)]"
-                : "text-[var(--text-muted)] hover:text-[var(--cnrs-blue)]",
+                ? "text-[var(--text-body)]"
+                : "text-[var(--text-muted)] hover:text-[var(--text-body)]",
             ].join(" ")}
           >
             {t.label}
@@ -236,7 +236,7 @@ function StatTile({
       <p className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
         {label}
       </p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight text-[var(--cnrs-blue)]">
+      <p className="mt-1 text-2xl font-semibold tracking-tight text-[var(--text-body)]">
         {value}
       </p>
     </div>
@@ -314,7 +314,7 @@ function PapersPanel({
               key={p.paper_id}
               className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-soft)]"
             >
-              <td className="px-4 py-2.5 align-top text-[var(--cnrs-blue)]">
+              <td className="px-4 py-2.5 align-top text-[var(--text-body)]">
                 {p.title ?? (
                   <span className="italic text-[var(--text-muted)]">
                     (untitled)
@@ -507,7 +507,7 @@ function AddPapersCard({
         <p className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-muted)]">
           Ingest
         </p>
-        <h2 className="mt-0.5 text-lg font-semibold text-[var(--cnrs-blue)]">
+        <h2 className="mt-0.5 text-lg font-semibold text-[var(--text-body)]">
           Add papers
         </h2>
       </div>
@@ -515,7 +515,7 @@ function AddPapersCard({
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* DOIs */}
         <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium text-[var(--cnrs-blue)]">
+          <label className="text-sm font-medium text-[var(--text-body)]">
             DOIs <span className="text-[var(--text-muted)]">(one per line)</span>
           </label>
           <textarea
@@ -541,7 +541,7 @@ function AddPapersCard({
 
         {/* BibTeX */}
         <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium text-[var(--cnrs-blue)]">
+          <label className="text-sm font-medium text-[var(--text-body)]">
             BibTeX file
           </label>
           <input
@@ -613,7 +613,7 @@ function LocalFilesDropZone({
 
   return (
     <div className="md:col-span-2 mt-2 flex flex-col gap-2">
-      <label className="text-sm font-medium text-[var(--cnrs-blue)]">
+      <label className="text-sm font-medium text-[var(--text-body)]">
         Local files <span className="text-[var(--text-muted)]">(PDF / docx)</span>
       </label>
       <div
@@ -637,7 +637,7 @@ function LocalFilesDropZone({
       >
         <p className="text-sm text-[var(--text-body)]">
           Drop files here, or{" "}
-          <label className="cursor-pointer font-medium text-[var(--cnrs-blue)] underline-offset-2 hover:underline">
+          <label className="cursor-pointer font-medium text-[var(--text-body)] underline-offset-2 hover:underline">
             click to choose
             <input
               type="file"
@@ -684,7 +684,7 @@ function BuildCapsulesButton({ name }: { name: string }) {
         onClick={run}
         disabled={status.kind === "working"}
         title="Build per-paper capsules (figures, structured text, provenance)"
-        className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:border-[var(--cnrs-blue)] hover:bg-[var(--cnrs-grey-light)] disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:border-[var(--cnrs-blue)] hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-60"
       >
         Build capsules
       </button>
@@ -703,7 +703,7 @@ function ClaimGraphExportButton({ name }: { name: string }) {
 
   return (
     <details className="relative">
-      <summary className="cursor-pointer list-none rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-grey-light)]">
+      <summary className="cursor-pointer list-none rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]">
         Claim graph ▾
       </summary>
       <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] shadow-lg">
@@ -711,7 +711,7 @@ function ClaimGraphExportButton({ name }: { name: string }) {
           <a
             key={f.value}
             href={kb.claimGraphUrl(name, f.value)}
-            className="flex flex-col gap-0.5 px-3 py-2 text-sm hover:bg-[var(--cnrs-grey-light)]"
+            className="flex flex-col gap-0.5 px-3 py-2 text-sm hover:bg-[var(--surface-hover)]"
             title={f.desc}
           >
             <span className="font-medium text-[var(--text-body)]">{f.label}</span>

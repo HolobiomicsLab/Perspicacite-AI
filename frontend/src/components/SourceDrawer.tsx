@@ -104,7 +104,7 @@ export function SourceDrawer({
               <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 Source
               </p>
-              <h3 className="mt-0.5 text-sm font-semibold leading-snug text-[var(--cnrs-blue)]">
+              <h3 className="mt-0.5 text-sm font-semibold leading-snug text-[var(--text-body)]">
                 {source.title ?? source.doi ?? "Unknown"}
               </h3>
               <p className="mt-1 text-[11px] text-[var(--text-muted)]">
@@ -152,7 +152,7 @@ export function SourceDrawer({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-[var(--radius-sm)] p-1 text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)]"
+              className="rounded-[var(--radius-sm)] p-1 text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)]"
               aria-label="Close"
             >
               ✕
@@ -252,7 +252,7 @@ export function SourceDrawer({
               href={externalHref}
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--cnrs-blue)] hover:border-[var(--cnrs-blue)]"
+              className="inline-flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--text-body)] hover:border-[var(--cnrs-blue)]"
             >
               External ↗
             </a>
@@ -300,7 +300,7 @@ function TabButton({
         "rounded-full px-2.5 py-1 text-[11px] font-medium transition",
         on
           ? "bg-[var(--cnrs-blue)] text-white"
-          : "border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--cnrs-blue)]",
+          : "border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--text-body)]",
         disabled && "cursor-not-allowed opacity-40",
       ].join(" ")}
     >
@@ -330,9 +330,9 @@ function InfoTab({
     rows.push(["Authors", <span key="a">{source.authors.join(", ")}</span>]);
   if (typeof source.citation_count === "number")
     rows.push(["Citations", <span key="c">{source.citation_count.toLocaleString()}</span>]);
-  if (source.url) rows.push(["URL", <a key="u" href={source.url} target="_blank" rel="noreferrer noopener" className="text-[var(--cnrs-blue)] underline">link</a>]);
-  if (source.pdf_url) rows.push(["PDF", <a key="p" href={source.pdf_url} target="_blank" rel="noreferrer noopener" className="text-[var(--cnrs-blue)] underline">PDF</a>]);
-  if (source.oa_url) rows.push(["Open Access", <a key="oa" href={source.oa_url} target="_blank" rel="noreferrer noopener" className="text-[var(--cnrs-blue)] underline">OA copy</a>]);
+  if (source.url) rows.push(["URL", <a key="u" href={source.url} target="_blank" rel="noreferrer noopener" className="text-[var(--text-body)] underline">link</a>]);
+  if (source.pdf_url) rows.push(["PDF", <a key="p" href={source.pdf_url} target="_blank" rel="noreferrer noopener" className="text-[var(--text-body)] underline">PDF</a>]);
+  if (source.oa_url) rows.push(["Open Access", <a key="oa" href={source.oa_url} target="_blank" rel="noreferrer noopener" className="text-[var(--text-body)] underline">OA copy</a>]);
 
   if (rows.length === 0) {
     return <p className="text-[var(--text-muted)]">No metadata available.</p>;

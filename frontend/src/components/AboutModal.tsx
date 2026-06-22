@@ -12,7 +12,7 @@ export function AboutButton() {
         onClick={() => setOpen(true)}
         title="About Perspicacité"
         aria-label="About"
-        className="grid h-9 w-9 place-items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent text-[var(--text-body)] transition hover:bg-[var(--cnrs-grey-light)]"
+        className="grid h-9 w-9 place-items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <circle cx="12" cy="12" r="10" />
@@ -62,7 +62,7 @@ function AboutModal({ onClose }: { onClose: () => void }) {
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-3 top-3 z-10 grid h-7 w-7 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)]"
+          className="absolute right-3 top-3 z-10 grid h-7 w-7 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)]"
         >
           ×
         </button>
@@ -71,7 +71,7 @@ function AboutModal({ onClose }: { onClose: () => void }) {
           <p className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-muted)]">
             About
           </p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--cnrs-blue)]">
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--text-body)]">
             Perspicacité
           </h2>
           <p className="mt-2 text-sm leading-relaxed text-[var(--text-body)]">
@@ -114,7 +114,7 @@ function AboutModal({ onClose }: { onClose: () => void }) {
               href="https://github.com/holobiomicslab/Perspicacite-AI"
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-3 py-1.5 text-xs font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-grey-light)]"
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-3 py-1.5 text-xs font-medium text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                 <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.07 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.6.23 2.78.11 3.07.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.41.36.78 1.06.78 2.13v3.16c0 .31.21.66.8.55C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z" />
@@ -125,7 +125,7 @@ function AboutModal({ onClose }: { onClose: () => void }) {
               href="https://github.com/holobiomicslab/Perspicacite-AI/issues/new"
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-3 py-1.5 text-xs font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-grey-light)]"
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-3 py-1.5 text-xs font-medium text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]"
             >
               Report an issue
             </a>

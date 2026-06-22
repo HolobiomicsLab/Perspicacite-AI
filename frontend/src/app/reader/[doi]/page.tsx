@@ -113,7 +113,7 @@ export default function PaperReaderPage({
                 href={`https://doi.org/${paper.doi}`}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] hover:bg-[var(--cnrs-grey-light)]"
+                className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] hover:bg-[var(--surface-hover)]"
               >
                 Open DOI
               </a>
@@ -152,7 +152,7 @@ export default function PaperReaderPage({
                   tab === t.id
                     ? "bg-[var(--cnrs-yellow)] font-medium text-[var(--cnrs-blue)]"
                     : t.available
-                      ? "text-[var(--text-body)] hover:bg-[var(--cnrs-grey-light)]"
+                      ? "text-[var(--text-body)] hover:bg-[var(--surface-hover)]"
                       : "cursor-not-allowed text-[var(--text-muted)] opacity-50",
                 ].join(" ")}
               >
@@ -176,7 +176,7 @@ export default function PaperReaderPage({
                         "block truncate rounded px-2 py-1 transition",
                         activeSection === s.id
                           ? "bg-[var(--cnrs-yellow)]/40 text-[var(--cnrs-blue)]"
-                          : "text-[var(--text-body)] hover:bg-[var(--cnrs-grey-light)]",
+                          : "text-[var(--text-body)] hover:bg-[var(--surface-hover)]",
                       ].join(" ")}
                     >
                       {s.label}
@@ -262,7 +262,7 @@ export default function PaperReaderPage({
                       {r.doi ? (
                         <Link
                           href={`/reader/${encodeURIComponent(r.doi)}`}
-                          className="font-medium text-[var(--cnrs-blue)] hover:underline"
+                          className="font-medium text-[var(--text-body)] hover:underline"
                         >
                           {r.title ?? r.doi}
                         </Link>

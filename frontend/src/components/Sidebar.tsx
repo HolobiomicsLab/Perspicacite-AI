@@ -88,7 +88,7 @@ export function Sidebar() {
           href="/"
           aria-label="Perspicacité home"
           title="Home"
-          className="mb-3 flex items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-1 transition hover:bg-[var(--cnrs-grey-light)]"
+          className="mb-3 flex items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-1 transition hover:bg-[var(--surface-hover)]"
         >
           <span
             className="grid h-7 w-7 place-items-center rounded-full"
@@ -121,7 +121,7 @@ export function Sidebar() {
               new KeyboardEvent("keydown", { key: "k", metaKey: true }),
             )
           }
-          className="mt-2 flex w-full items-center justify-between rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-1.5 text-[11px] text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--cnrs-blue)]"
+          className="mt-2 flex w-full items-center justify-between rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-1.5 text-[11px] text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--text-body)]"
           title="Open command palette"
         >
           <span>Quick switcher…</span>
@@ -168,7 +168,7 @@ export function Sidebar() {
                           "flex items-center gap-2 truncate rounded-[var(--radius-sm)] px-2 py-1.5 text-[13px] transition",
                           active
                             ? "bg-[var(--cnrs-yellow)] text-[var(--cnrs-blue)] font-medium"
-                            : "text-[var(--text-body)] hover:bg-[var(--cnrs-grey-light)]",
+                            : "text-[var(--text-body)] hover:bg-[var(--surface-hover)]",
                         ].join(" ")}
                       >
                         <span className="truncate">
@@ -186,7 +186,7 @@ export function Sidebar() {
         {items.length > HISTORY_VISIBLE_LIMIT && !filter && (
           <Link
             href="/conversations"
-            className="mt-2 block px-2 py-1.5 text-[11px] font-medium text-[var(--cnrs-blue)] hover:underline"
+            className="mt-2 block px-2 py-1.5 text-[11px] font-medium text-[var(--text-body)] hover:underline"
           >
             See all {items.length} conversations →
           </Link>
@@ -205,7 +205,7 @@ export function Sidebar() {
                 "flex items-center gap-3 rounded-[var(--radius-sm)] px-2 py-1.5 text-[13px] transition",
                 active
                   ? "bg-[var(--cnrs-yellow)] text-[var(--cnrs-blue)] font-medium"
-                  : "text-[var(--text-body)] hover:bg-[var(--cnrs-grey-light)]",
+                  : "text-[var(--text-body)] hover:bg-[var(--surface-hover)]",
               ].join(" ")}
               aria-current={active ? "page" : undefined}
             >
@@ -213,7 +213,7 @@ export function Sidebar() {
                 aria-hidden
                 className={
                   active
-                    ? "text-[var(--cnrs-blue)]"
+                    ? "text-[var(--text-body)]"
                     : "text-[var(--text-muted)]"
                 }
               >
@@ -260,7 +260,7 @@ export function Sidebar() {
           href="https://github.com/HolobiomicsLab/Perspicacite-AI"
           target="_blank"
           rel="noreferrer noopener"
-          className="mt-2 inline-flex items-center gap-1 text-[10px] leading-tight text-[var(--text-muted)] hover:text-[var(--cnrs-blue)]"
+          className="mt-2 inline-flex items-center gap-1 text-[10px] leading-tight text-[var(--text-muted)] hover:text-[var(--text-body)]"
           title="Perspicacité on GitHub"
         >
           <svg

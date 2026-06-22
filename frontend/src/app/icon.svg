@@ -1,0 +1,9 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Perspicacité favicon: the CNRS-yellow "sun" on the app's deep navy.
+       Mirrors the hero/sidebar logo (solid #ffeb6e disc) plus the
+       .cnrs-sun corona (soft concentric halo rings). -->
+  <rect width="32" height="32" rx="7" fill="#0a2238"/>
+  <circle cx="16" cy="16" r="10.5" fill="#ffeb6e" opacity="0.16"/>
+  <circle cx="16" cy="16" r="8.5" fill="#ffeb6e" opacity="0.32"/>
+  <circle cx="16" cy="16" r="6.5" fill="#ffeb6e"/>
+</svg>
