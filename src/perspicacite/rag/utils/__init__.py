@@ -243,13 +243,15 @@ CITATIONS — MANDATORY FORMAT:
 - Visible link text: `[<N>, <Surname> et al., <Journal>, <Year>]` — where <N> is the 1-based paper number from the Documents block (look for the `[Paper N]` header), <Surname> is the FIRST AUTHOR's last name (taken from the metadata after `—`), <Journal> is the journal name (after `|`), and <Year> is the year (in parentheses). Substitute REAL VALUES — never write the placeholder words `<N>`, `Surname`, `Journal`, `Year`, or `FirstAuthor` literally.
 - When there is only one author, drop "et al." and use the surname alone.
 - If the journal is unknown, omit that field and keep the rest.
-- The link `title` attribute MUST hold the full citation: `<All authors>. <Year>. <Title>. <Journal>.`
+- The link `title` attribute holds a SHORT one-line hover citation — `<Title>. <Year>. <Journal>.` — i.e. the paper's title, year, and journal ONLY. Do NOT list the authors inside the `title` attribute; the application shows the full author list in its own reference list. Keeping the `title` to title/year/journal avoids long, error-prone author strings.
 - The link URL is the paper's DOI (`https://doi.org/<doi>`) when present; otherwise leave it as `#`.
 
 Example (note real surname/journal/year substituted in):
-`[2, Tautenhahn et al., BMC Bioinformatics, 2008](https://doi.org/10.1186/1471-2105-9-504 "Ralf Tautenhahn, Christoph Böttcher, Steffen Neumann. 2008. Highly sensitive feature detection for high resolution LC/MS. BMC Bioinformatics.")`
+`[2, Tautenhahn et al., BMC Bioinformatics, 2008](https://doi.org/10.1186/1471-2105-9-504 "Highly sensitive feature detection for high resolution LC/MS. 2008. BMC Bioinformatics.")`
 
 NEVER emit bare `[Paper N]` markers, `(Author, Year)` plain text without a link, or `[N]` numeric-only citations.
+
+DO NOT write a "References", "Bibliography", or "Sources" heading or list at the end of your answer. The application appends the authoritative, grounded reference list automatically — adding your own duplicates it and risks fabricated entries. Use ONLY the inline citations described above; never restate the sources as a list.
 
 FORMAT REQUIREMENTS:
 1. Start with a brief overview/introduction (2-3 sentences)
@@ -266,6 +268,23 @@ IMPORTANT: Do not put entire paragraphs in bold. Only individual important words
 Your response should be easy to read with clear visual structure."""
         + UNTRUSTED_CONTENT_CLAUSE
     )
+
+
+# A short unit (1-24 non-newline chars) repeated 8+ times in a row is almost
+# never legitimate prose — it is a small-model degeneration (e.g. a citation
+# author list looping into "H. H. H. …" hundreds of times). Collapse such runs.
+_RUNAWAY_REPEAT_RE = re.compile(r"([^\n]{1,24}?)\1{7,}")
+
+
+def collapse_runaway_repeats(text: str, keep: int = 3) -> str:
+    """Collapse pathological consecutive repetitions a small model occasionally
+    emits (e.g. an author list degenerating into 'H. H. H. …' hundreds of
+    times). A unit of 1-24 non-newline chars repeated 8+ times in a row is
+    replaced by ``keep`` copies followed by '…'. A no-op on normal text.
+    """
+    if not text:
+        return text
+    return _RUNAWAY_REPEAT_RE.sub(lambda m: m.group(1) * keep + "…", text)
 
 
 def format_references_academic(papers: list[dict]) -> str:

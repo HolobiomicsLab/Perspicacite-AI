@@ -675,9 +675,15 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
             # Persist the assistant reply too.
             if conversation_id and app_state.session_store:
                 try:
+                    from perspicacite.rag.utils import collapse_runaway_repeats
+
                     await app_state.session_store.add_message(
                         conversation_id,
-                        Message(id=assistant_message_id, role="assistant", content=reply),
+                        Message(
+                            id=assistant_message_id,
+                            role="assistant",
+                            content=collapse_runaway_repeats(reply),
+                        ),
                     )
                 except Exception as e:
                     logger.warning(f"Failed to save chat-only assistant message: {e}")
@@ -730,10 +736,16 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
     # Save assistant message to conversation
     if conversation_id and app_state.session_store and assistant_content:
         try:
+            from perspicacite.rag.utils import collapse_runaway_repeats
+
             msg_id = assistant_message_id_outer or str(uuid.uuid4())
             await app_state.session_store.add_message(
                 conversation_id,
-                Message(id=msg_id, role="assistant", content=assistant_content),
+                Message(
+                    id=msg_id,
+                    role="assistant",
+                    content=collapse_runaway_repeats(assistant_content),
+                ),
             )
             logger.info(f"Saved conversation messages to {conversation_id}")
         except Exception as e:
