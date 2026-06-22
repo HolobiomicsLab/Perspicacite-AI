@@ -1,5 +1,6 @@
 "use client";
 
+import { Component, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -110,6 +111,24 @@ const components: Components = {
   hr: () => <hr className="my-5 border-[var(--border)]" />,
 };
 
+// react-markdown's render is pure JS (no eval), so a SyntaxError thrown from
+// inside it means a dependency chunk failed to parse — a Turbopack dev-mode
+// hiccup (e.g. the page left open across a backend restart), not bad content.
+// This boundary keeps that from crashing the whole chat view: it falls back to
+// the raw answer text. A reload re-fetches the chunk and restores formatting.
+class MarkdownBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
 export function Markdown({
   children,
   className = "",
@@ -119,13 +138,21 @@ export function Markdown({
 }) {
   return (
     <div className={`max-w-none ${className}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
-        components={components}
+      <MarkdownBoundary
+        fallback={
+          <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-[var(--text-body)]">
+            {children}
+          </div>
+        }
       >
-        {children}
-      </ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeSanitize]}
+          components={components}
+        >
+          {children}
+        </ReactMarkdown>
+      </MarkdownBoundary>
     </div>
   );
 }

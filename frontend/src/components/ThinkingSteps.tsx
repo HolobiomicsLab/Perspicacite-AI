@@ -30,12 +30,14 @@ export function ThinkingSteps({
   sources,
   defaultOpen = true,
   running = false,
+  errored = false,
   modeId,
 }: {
   steps: ThinkingStep[];
   sources?: ChatSource[];
   defaultOpen?: boolean;
   running?: boolean;
+  errored?: boolean;
   modeId?: RAGMode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -97,14 +99,22 @@ export function ThinkingSteps({
           {showPhases
             ? phases.map((phase, i) => {
                 const phaseSteps = buckets.byPhase[phase.id] ?? [];
+                // A completed, non-errored run means the whole pipeline
+                // finished — mark every phase done, even ones the backend
+                // never emitted a matching step for (Basic mode emits steps
+                // only for retrieval, so later phases would otherwise stay
+                // stranded as "planned"). While running, or if the run
+                // errored partway, fall back to progressive status.
                 const status: PhaseStatus =
-                  i < activePhaseIdx
+                  !running && !errored
                     ? "done"
-                    : i === activePhaseIdx
-                      ? running
-                        ? "running"
-                        : "done"
-                      : "planned";
+                    : i < activePhaseIdx
+                      ? "done"
+                      : i === activePhaseIdx
+                        ? running
+                          ? "running"
+                          : "done"
+                        : "planned";
                 const phaseSources = i === sourcesPhaseIdx ? sources ?? [] : [];
                 return (
                   <li

@@ -961,6 +961,7 @@ function AssistantMessage({
           sources={displayedSources}
           defaultOpen={true}
           running={!!(turn.streaming && streaming)}
+          errored={!!turn.error}
           modeId={turn.mode}
         />
       )}
