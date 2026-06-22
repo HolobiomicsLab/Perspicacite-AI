@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -2586,6 +2587,153 @@ async def add_dois_to_kb(
     except Exception as e:
         logger.error("mcp_add_dois_to_kb_error", kb_name=kb_name, error=str(e))
         return _json_error(f"Failed to add DOIs: {e}")
+
+
+# =============================================================================
+# ASB grounding helpers: _asb_kb_slug / ensure_kb / ground_paper
+# =============================================================================
+
+
+def _asb_kb_slug(doi: str) -> str:
+    """Derive the canonical KB slug for a given DOI.
+
+    Produces names that match the ASB binder's convention so KB names
+    are consistent across the ASB pipeline and Perspicacité.
+
+    Example:
+        "10.1021/acs.jnatprod.7b00737" → "asb-paper-10-1021-acs-jnatprod-7b00737"
+    """
+    return ("asb-paper-" + re.sub(r"[^a-zA-Z0-9]+", "-", doi).strip("-")).lower()
+
+
+@mcp.tool()
+async def ensure_kb(doi: str, mode: str = "paper") -> str:
+    """Idempotently create and ingest a per-paper KB for ASB grounding.
+
+    Derives the KB slug via _asb_kb_slug (matches the ASB binder convention)
+    and checks whether a KB already exists with chunks. If it does, returns
+    immediately without re-ingesting. Otherwise creates the KB and ingests
+    the paper via add_dois_to_kb.
+
+    Args:
+        doi: DOI of the source paper (e.g. "10.1021/acs.jnatprod.7b00737")
+        mode: Reserved for future per-mode ingest strategies (currently unused).
+
+    Returns:
+        JSON with:
+          - kb_slug (str): the derived KB name
+          - status (str): "exists" (already populated) or "created" (just ingested)
+          - chunks (int): number of chunks in the KB after the call
+          - added_with_full_text (int): full-text papers added (only on "created")
+          - added_metadata_only (int): metadata-only papers added (only on "created")
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    slug = _asb_kb_slug(doi)
+
+    try:
+        # Idempotency check: KB exists AND has content?
+        existing = await state.session_store.get_kb_metadata(slug)
+        chunk_count = getattr(existing, "chunk_count", 0) if existing else 0
+        if existing and chunk_count and chunk_count > 0:
+            return _json_ok({"kb_slug": slug, "status": "exists", "chunks": chunk_count})
+
+        # Create (ignore 'already exists' error — could be a zero-chunk KB)
+        create_result = json.loads(await create_knowledge_base(name=slug, description=f"ASB grounding KB for {doi}"))
+        if not create_result.get("success") and "already exists" not in create_result.get("error", ""):
+            return _json_error(
+                f"ensure_kb: create_knowledge_base failed: {create_result.get('error', 'unknown')}"
+            )
+
+        # Ingest the paper
+        add_result = json.loads(await add_dois_to_kb(kb_name=slug, dois=[doi]))
+        if not add_result.get("success"):
+            return _json_error(
+                f"ensure_kb: add_dois_to_kb failed: {add_result.get('error', 'unknown')}"
+            )
+
+        return _json_ok(
+            {
+                "kb_slug": slug,
+                "status": "created",
+                "chunks": add_result.get("added_chunks", 0),
+                "added_with_full_text": add_result.get("added_with_full_text", 0),
+                "added_metadata_only": add_result.get("added_metadata_only", 0),
+            }
+        )
+
+    except Exception as e:
+        logger.error("mcp_ensure_kb_error", doi=doi, slug=slug, error=str(e))
+        return _json_error(f"ensure_kb failed: {e}")
+
+
+@mcp.tool()
+async def ground_paper(doi: str, question: str, tier: str = "paper") -> str:
+    """Ground a research question against a specific paper's KB (ASB grounding).
+
+    Idempotently ensures the paper has a dedicated KB (via ensure_kb), then
+    runs a RAG query against that KB to answer the question.
+
+    Args:
+        doi: DOI of the source paper (e.g. "10.1021/acs.jnatprod.7b00737")
+        question: Research question to answer using the paper's content
+        tier: "paper" (default) or "si". When "si", adds a context hint to
+            prefer evidence from the supplementary information / supplementary
+            tables and figures of the source paper.
+
+    Returns:
+        JSON with:
+          - kb_slug (str): the KB name used
+          - answer (str): synthesized answer from the paper's content
+          - sources (list): cited chunks/papers from the KB
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    slug = _asb_kb_slug(doi)
+
+    try:
+        # Step 1: ensure the KB exists and has content
+        ensure_result = json.loads(await ensure_kb(doi=doi, mode=tier))
+        if not ensure_result.get("success"):
+            return _json_error(ensure_result.get("error", "ensure_kb failed"))
+
+        # Step 2: context hint for SI tier — prepend to query (generate_report has no context param)
+        context: str | None = None
+        if tier == "si":
+            context = (
+                "Prefer evidence from the supplementary information / supplementary "
+                "tables and figures of the source paper."
+            )
+        effective_query = f"{context}\n\n{question}" if context else question
+
+        # Step 3: run RAG query against the per-paper KB
+        report_result = json.loads(
+            await generate_report(
+                query=effective_query,
+                kb_names=[slug],
+                mode="basic",
+            )
+        )
+        if not report_result.get("success"):
+            return _json_error(
+                f"ground_paper: generate_report failed: {report_result.get('error', 'unknown')}"
+            )
+
+        return _json_ok(
+            {
+                "kb_slug": slug,
+                "answer": report_result.get("report", ""),
+                "sources": report_result.get("sources", []),
+            }
+        )
+
+    except Exception as e:
+        logger.error("mcp_ground_paper_error", doi=doi, slug=slug, error=str(e))
+        return _json_error(f"ground_paper failed: {e}")
 
 
 # =============================================================================
@@ -6716,6 +6864,8 @@ _TOOL_NAMES: list[str] = [
     "get_usage_guide",
     "extract_claims_from_passages",
     "export_astra",
+    "ensure_kb",
+    "ground_paper",
 ]
 
 
