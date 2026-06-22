@@ -148,7 +148,7 @@ export default function ConversationsPage() {
             type="button"
             onClick={handleClearAll}
             disabled={items.length === 0 && !listLoading}
-            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
           >
             Clear all
           </button>
@@ -242,7 +242,7 @@ function ConvRow({
           "flex w-full flex-col gap-1.5 rounded-[var(--radius-md)] px-3 py-2.5 text-left transition",
           active
             ? "bg-[var(--cnrs-yellow)] text-[var(--cnrs-blue)]"
-            : "text-[var(--text-body)] hover:bg-[var(--cnrs-grey-light)]",
+            : "text-[var(--text-body)] hover:bg-[var(--surface-hover)]",
         ].join(" ")}
       >
         <span className="line-clamp-2 text-sm font-medium leading-snug">
@@ -266,7 +266,7 @@ function ConvRow({
               className={[
                 "rounded-full px-1.5 py-0.5 font-mono",
                 active
-                  ? "bg-[var(--cnrs-blue)]/10 text-[var(--cnrs-blue)]"
+                  ? "bg-[var(--cnrs-blue)]/10 text-[var(--text-body)]"
                   : "bg-[var(--cnrs-grey-light)] text-[var(--text-muted)]",
               ].join(" ")}
             >
@@ -275,7 +275,7 @@ function ConvRow({
           )}
           <span
             className={
-              active ? "text-[var(--cnrs-blue)]/70" : "text-[var(--text-muted)]"
+              active ? "text-[var(--text-body)]/70" : "text-[var(--text-muted)]"
             }
           >
             {relativeTime(conv.updated_at ?? conv.created_at)}
@@ -307,7 +307,7 @@ function EmptyState() {
         style={{ background: "var(--cnrs-yellow)" }}
         aria-hidden
       />
-      <h2 className="text-xl font-semibold text-[var(--cnrs-blue)]">
+      <h2 className="text-xl font-semibold text-[var(--text-body)]">
         Select a conversation
       </h2>
       <p className="max-w-md text-sm text-[var(--text-muted)]">
@@ -354,11 +354,11 @@ function DetailPane({
         <button
           type="button"
           onClick={onBack}
-          className="rounded-[var(--radius-sm)] px-2 py-1 text-xs text-[var(--cnrs-blue)] hover:bg-[var(--cnrs-grey-light)] md:hidden"
+          className="rounded-[var(--radius-sm)] px-2 py-1 text-xs text-[var(--text-body)] hover:bg-[var(--surface-hover)] md:hidden"
         >
           ← Back
         </button>
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--cnrs-blue)]">
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--text-body)]">
           {detail?.title?.trim() || (loading ? "Loading…" : "Untitled")}
         </h2>
         {detail?.kb_name && (
@@ -368,7 +368,7 @@ function DetailPane({
         )}
         <a
           href={convApi.exportUrl(id)}
-          className="rounded-[var(--radius-sm)] border border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-grey-light)]"
+          className="rounded-[var(--radius-sm)] border border-[var(--border)] px-2.5 py-1 text-xs font-medium text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]"
         >
           Export JSON
         </a>

@@ -31,7 +31,7 @@ export default function SurveyIndexPage() {
         />
 
         <div className="flex flex-col items-center gap-2">
-          <h2 className="text-xl font-semibold text-[var(--cnrs-blue)]">
+          <h2 className="text-xl font-semibold text-[var(--text-body)]">
             No survey session loaded
           </h2>
           <p className="max-w-md text-sm text-[var(--text-muted)]">

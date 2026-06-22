@@ -22,7 +22,7 @@ export function CandidateList({ candidates }: { candidates: ExpandCandidate[] })
             {c.score.toFixed(3)}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium leading-snug text-[var(--cnrs-blue)]">
+            <p className="text-sm font-medium leading-snug text-[var(--text-body)]">
               {c.title ?? c.doi ?? "(untitled)"}
             </p>
             {c.doi && (

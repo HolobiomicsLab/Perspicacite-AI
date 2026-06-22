@@ -65,7 +65,7 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={reset}
-              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] hover:bg-[var(--cnrs-grey-light)]"
+              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] hover:bg-[var(--surface-hover)]"
             >
               Reset
             </button>
@@ -139,6 +139,7 @@ export default function SettingsPage() {
                 onChange={(v) => update("defaultKbName", v || null)}
               >
                 <option value="">— No KB (web only) —</option>
+                <option value="auto">Auto — best match</option>
                 {kbs.map((k) => (
                   <option key={k.name} value={k.name}>
                     {k.name}
@@ -353,7 +354,7 @@ function Card({
         <p className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-muted)]">
           {eyebrow}
         </p>
-        <h2 className="mt-0.5 text-lg font-semibold text-[var(--cnrs-blue)]">
+        <h2 className="mt-0.5 text-lg font-semibold text-[var(--text-body)]">
           {title}
         </h2>
         {subtitle && (
@@ -385,7 +386,7 @@ function Field({
   return (
     <label className="flex flex-col gap-1.5">
       <span className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-medium text-[var(--cnrs-blue)]">
+        <span className="text-sm font-medium text-[var(--text-body)]">
           {label}
         </span>
       </span>

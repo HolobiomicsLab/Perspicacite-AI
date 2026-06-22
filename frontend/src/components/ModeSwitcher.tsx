@@ -31,7 +31,7 @@ export function ModeSwitcher({
               "group relative overflow-hidden rounded-[var(--radius-md)] border px-3 py-2.5 text-left transition",
               selected
                 ? `${a.bg} ${a.border} ${a.text} shadow-[var(--shadow-card)]`
-                : "border-[var(--border)] bg-[var(--surface)] text-[var(--text-body)] hover:border-[var(--cnrs-blue)]/40 hover:bg-[var(--cnrs-grey-light)]",
+                : "border-[var(--border)] bg-[var(--surface)] text-[var(--text-body)] hover:border-[var(--cnrs-blue)]/40 hover:bg-[var(--surface-hover)]",
               disabled && "cursor-not-allowed opacity-60",
             ].join(" ")}
           >

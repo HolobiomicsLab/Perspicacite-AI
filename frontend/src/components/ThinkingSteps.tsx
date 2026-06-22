@@ -447,7 +447,7 @@ function Row({
           "relative z-10 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px]",
           running
             ? "bg-[var(--cnrs-yellow)] text-[var(--cnrs-blue)] ring-2 ring-[var(--cnrs-yellow)]/40"
-            : "bg-[var(--surface)] text-[var(--cnrs-blue)] ring-1 ring-[var(--border)]",
+            : "bg-[var(--surface)] text-[var(--text-body)] ring-1 ring-[var(--border)]",
         ].join(" ")}
         style={
           running
@@ -539,7 +539,7 @@ function MiniSourceCard({
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex shrink-0 items-center border-l border-[var(--border)] px-2 text-[10px] text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)]"
+          className="flex shrink-0 items-center border-l border-[var(--border)] px-2 text-[10px] text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)]"
           aria-label="Open abstract in side panel"
           title="Open abstract in side panel"
         >

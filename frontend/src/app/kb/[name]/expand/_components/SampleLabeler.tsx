@@ -28,7 +28,7 @@ export function SampleLabeler({
             className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-card)]"
           >
             <div className="flex items-start justify-between gap-3">
-              <h3 className="text-[15px] font-semibold leading-snug text-[var(--cnrs-blue)]">
+              <h3 className="text-[15px] font-semibold leading-snug text-[var(--text-body)]">
                 {s.title ?? s.doi ?? "(untitled)"}
               </h3>
               <span className="shrink-0 rounded-full bg-[var(--cnrs-grey-light)] px-2 py-0.5 font-mono text-[11px] text-[var(--cnrs-blue)]">
@@ -49,7 +49,7 @@ export function SampleLabeler({
                   "rounded-[var(--radius-md)] px-3 py-1.5 text-sm font-medium transition",
                   label === true
                     ? "bg-[var(--cnrs-blue)] text-white"
-                    : "border border-[var(--border)] text-[var(--cnrs-blue)] hover:bg-[var(--cnrs-grey-light)]",
+                    : "border border-[var(--border)] text-[var(--text-body)] hover:bg-[var(--surface-hover)]",
                 ].join(" ")}
               >
                 Relevant

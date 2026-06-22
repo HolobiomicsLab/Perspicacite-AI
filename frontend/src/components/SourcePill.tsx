@@ -77,7 +77,7 @@ export function SourcePill({
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="line-clamp-2 min-w-0 flex-1 text-left text-[12.5px] font-medium leading-snug text-[var(--cnrs-blue)] hover:underline"
+            className="line-clamp-2 min-w-0 flex-1 text-left text-[12.5px] font-medium leading-snug text-[var(--text-body)] hover:underline"
             title={label}
           >
             {label}
@@ -87,7 +87,7 @@ export function SourcePill({
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="shrink-0 rounded-[var(--radius-sm)] border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--cnrs-blue)]"
+            className="shrink-0 rounded-[var(--radius-sm)] border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--text-body)]"
             title="Open abstract in side panel"
             aria-label="Open abstract in side panel"
           >
@@ -154,7 +154,7 @@ export function SourcePill({
             <button
               type="button"
               onClick={() => setOpen(true)}
-              className="font-medium text-[var(--cnrs-blue)] underline decoration-[var(--cnrs-yellow)] decoration-2 underline-offset-2 hover:decoration-[var(--cnrs-blue)]"
+              className="font-medium text-[var(--text-body)] underline decoration-[var(--cnrs-yellow)] decoration-2 underline-offset-2 hover:decoration-[var(--cnrs-blue)]"
               title="Open full abstract in side panel"
             >
               read more →
@@ -166,7 +166,7 @@ export function SourcePill({
             <button
               type="button"
               onClick={() => setOpen(true)}
-              className="font-medium text-[var(--cnrs-blue)] underline decoration-[var(--cnrs-yellow)] decoration-2 underline-offset-2 hover:decoration-[var(--cnrs-blue)]"
+              className="font-medium text-[var(--text-body)] underline decoration-[var(--cnrs-yellow)] decoration-2 underline-offset-2 hover:decoration-[var(--cnrs-blue)]"
             >
               Open detail panel →
             </button>

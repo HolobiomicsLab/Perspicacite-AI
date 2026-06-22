@@ -20,7 +20,7 @@ import type { RAGMode } from "@/lib/modes";
 import { MODES, accentClasses } from "@/lib/modes";
 import { DATABASES, DEFAULT_DATABASES, type DatabaseId } from "@/lib/databases";
 import { DatabaseGlyph } from "./DatabaseGlyph";
-import { conversations as convApi, type ConvMessage } from "@/lib/api";
+import { conversations as convApi, kb as kbApi, type ConvMessage, type KBSummary } from "@/lib/api";
 import { loadPreferences } from "@/lib/preferences";
 
 type Turn = {
@@ -85,6 +85,7 @@ export function ChatPanel({
   // Hybrid retrieval weight: 0 = pure BM25, 0.5 = default, 1 = pure vector
   const [hybridWeight, setHybridWeight] = useState<number>(0.5);
   const [kbName, setKbName] = useState<string | null>(null);
+  const [kbList, setKbList] = useState<KBSummary[]>([]);
 
   // Honour user preferences on first mount (default mode, max papers,
   // default DBs, default KB). Composer toggles still override per-request.
@@ -94,6 +95,11 @@ export function ChatPanel({
     setDatabases(p.defaultDatabases);
     setMaxPapers(p.maxPapers);
     setKbName(p.defaultKbName);
+  }, []);
+
+  // Load the user's knowledge bases for the composer KB picker.
+  useEffect(() => {
+    kbApi.list().then(setKbList).catch(() => setKbList([]));
   }, []);
   const conversationIdRef = useRef<string | undefined>(initialConversationId);
   const abortRef = useRef<AbortController | null>(null);
@@ -529,7 +535,7 @@ export function ChatPanel({
                 <button
                   type="button"
                   onClick={() => setHybridWeight(0.5)}
-                  className="ml-1 rounded px-1 text-[10px] text-[var(--cnrs-blue)] hover:underline"
+                  className="ml-1 rounded px-1 text-[10px] text-[var(--text-body)] hover:underline"
                   title="Reset to 50/50"
                 >
                   reset
@@ -548,6 +554,12 @@ export function ChatPanel({
               onChange={setMode}
               disabled={streaming}
             />
+            <KbPicker
+              value={kbName}
+              kbs={kbList}
+              onChange={setKbName}
+              disabled={streaming}
+            />
             <DbFaviconRow
               selected={databases}
               onToggle={() => setShowDbPicker((s) => !s)}
@@ -564,7 +576,7 @@ export function ChatPanel({
                 <button
                   type="button"
                   onClick={cancel}
-                  className="rounded-[var(--radius-md)] border border-[var(--accent-fg)] px-3 py-1.5 text-xs font-medium text-[var(--accent-fg)] transition hover:bg-[var(--accent-fg)] hover:text-[var(--cnrs-blue)]"
+                  className="rounded-[var(--radius-md)] border border-[var(--accent-fg)] px-3 py-1.5 text-xs font-medium text-[var(--accent-fg)] transition hover:bg-[var(--accent-fg)] hover:text-[var(--text-body)]"
                   title="Stop generation (Esc)"
                 >
                   ◼ Stop
@@ -594,7 +606,7 @@ export function ChatPanel({
                 onClick={() => setShowDbPicker(false)}
                 title="Close database panel"
                 aria-label="Close database panel"
-                className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded text-[var(--text-muted)] opacity-60 transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)] hover:opacity-100"
+                className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded text-[var(--text-muted)] opacity-60 transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)] hover:opacity-100"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -712,7 +724,7 @@ function TopNPill({
         onClick={() => onChange(clamp(value - 1))}
         disabled={disabled || value <= 1}
         aria-label="Decrease top-N papers"
-        className="grid w-6 place-items-center text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)] disabled:cursor-not-allowed disabled:opacity-40"
+        className="grid w-6 place-items-center text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)] disabled:cursor-not-allowed disabled:opacity-40"
       >
         −
       </button>
@@ -724,11 +736,70 @@ function TopNPill({
         onClick={() => onChange(clamp(value + 1))}
         disabled={disabled || value >= 25}
         aria-label="Increase top-N papers"
-        className="grid w-6 place-items-center text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)] disabled:cursor-not-allowed disabled:opacity-40"
+        className="grid w-6 place-items-center text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)] disabled:cursor-not-allowed disabled:opacity-40"
       >
         +
       </button>
     </div>
+  );
+}
+
+// Compact corpus selector for the composer toolbar. Initialised from
+// Settings → "Default knowledge base" but overridable per conversation
+// (like the mode / databases / Top-N toggles beside it). Values:
+//   ""     → no KB (web / databases only)
+//   "auto" → backend routes to the best-matching corpus by similarity
+//   <name> → that knowledge base
+function KbPicker({
+  value,
+  kbs,
+  onChange,
+  disabled,
+}: {
+  value: string | null;
+  kbs: KBSummary[];
+  onChange: (v: string | null) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      title="Corpus to search · 'No KB' = web/databases only · 'Auto' = best-matching corpus by similarity. Overrides the Settings default for this conversation."
+      className="ml-1 inline-flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--border)] pl-2 leading-none transition focus-within:border-[var(--cnrs-blue)] hover:border-[var(--cnrs-blue)]"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="12"
+        height="12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+        className="shrink-0 text-[var(--text-muted)]"
+      >
+        <ellipse cx="12" cy="5" rx="8" ry="3" />
+        <path d="M4 5v6c0 1.6 3.6 3 8 3s8-1.4 8-3V5" />
+        <path d="M4 11v6c0 1.6 3.6 3 8 3s8-1.4 8-3v-6" />
+      </svg>
+      <select
+        value={value ?? ""}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+        aria-label="Knowledge base to search"
+        className="max-w-[11rem] cursor-pointer truncate bg-transparent py-1.5 pr-2 text-[11px] font-medium text-[var(--text-body)] outline-none disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value="">No KB · web only</option>
+        <option value="auto">Auto · best match</option>
+        {kbs.length > 0 && <option disabled>──────────</option>}
+        {kbs.map((k) => (
+          <option key={k.name} value={k.name}>
+            {k.name}
+            {typeof k.paper_count === "number" ? ` (${k.paper_count})` : ""}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -759,7 +830,7 @@ function CompactModePicker({
               "rounded-full px-2.5 py-1 text-[11px] font-medium transition",
               selected
                 ? `${accent.bg} ${accent.text} shadow-sm`
-                : "border border-[var(--border)] bg-transparent text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--cnrs-blue)]",
+                : "border border-[var(--border)] bg-transparent text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--text-body)]",
               disabled && "cursor-not-allowed opacity-60",
             ].join(" ")}
           >
@@ -925,7 +996,7 @@ function AssistantMessage({
           <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
             Sources · {displayedSources.length}
             {allSources.length > displayedSources.length && (
-              <span className="ml-1 text-[var(--cnrs-blue)]">
+              <span className="ml-1 text-[var(--text-body)]">
                 / {allSources.length}
               </span>
             )}

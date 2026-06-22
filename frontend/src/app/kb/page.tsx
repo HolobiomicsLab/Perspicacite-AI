@@ -131,7 +131,7 @@ function KBCard({ kb: k, isActive }: { kb: KBSummary; isActive: boolean }) {
           aria-hidden
         />
       </div>
-      <h3 className="mt-2 break-words text-xl font-semibold tracking-tight text-[var(--cnrs-blue)] group-hover:underline">
+      <h3 className="mt-2 break-words text-xl font-semibold tracking-tight text-[var(--text-body)] group-hover:underline">
         {k.name}
       </h3>
 
@@ -150,7 +150,7 @@ function KBCard({ kb: k, isActive }: { kb: KBSummary; isActive: boolean }) {
           <dt className="font-mono uppercase tracking-wider text-[var(--text-muted)]">
             Papers
           </dt>
-          <dd className="mt-0.5 text-base font-semibold text-[var(--cnrs-blue)]">
+          <dd className="mt-0.5 text-base font-semibold text-[var(--text-body)]">
             {k.paper_count ?? 0}
           </dd>
         </div>
@@ -158,7 +158,7 @@ function KBCard({ kb: k, isActive }: { kb: KBSummary; isActive: boolean }) {
           <dt className="font-mono uppercase tracking-wider text-[var(--text-muted)]">
             Chunks
           </dt>
-          <dd className="mt-0.5 text-base font-semibold text-[var(--cnrs-blue)]">
+          <dd className="mt-0.5 text-base font-semibold text-[var(--text-body)]">
             {k.chunk_count ?? 0}
           </dd>
         </div>
@@ -194,7 +194,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
         style={{ background: "var(--cnrs-yellow)" }}
         aria-hidden
       />
-      <h2 className="text-xl font-semibold text-[var(--cnrs-blue)]">
+      <h2 className="text-xl font-semibold text-[var(--text-body)]">
         No knowledge bases yet
       </h2>
       <p className="max-w-md text-sm text-[var(--text-muted)]">
@@ -263,14 +263,14 @@ function NewKBDrawer({
             <p className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-muted)]">
               Create
             </p>
-            <h2 className="mt-0.5 text-lg font-semibold text-[var(--cnrs-blue)]">
+            <h2 className="mt-0.5 text-lg font-semibold text-[var(--text-body)]">
               New knowledge base
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[var(--radius-sm)] px-2 py-1 text-sm text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)]"
+            className="rounded-[var(--radius-sm)] px-2 py-1 text-sm text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)]"
             aria-label="Close"
           >
             ✕
@@ -279,7 +279,7 @@ function NewKBDrawer({
 
         <form onSubmit={submit} className="flex flex-1 flex-col gap-4 p-6">
           <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-[var(--cnrs-blue)]">
+            <span className="font-medium text-[var(--text-body)]">
               Name <span className="text-red-600">*</span>
             </span>
             <input
@@ -295,7 +295,7 @@ function NewKBDrawer({
           </label>
 
           <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-[var(--cnrs-blue)]">
+            <span className="font-medium text-[var(--text-body)]">
               Description
             </span>
             <textarea
@@ -320,7 +320,7 @@ function NewKBDrawer({
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-grey-light)]"
+              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]"
             >
               Cancel
             </button>

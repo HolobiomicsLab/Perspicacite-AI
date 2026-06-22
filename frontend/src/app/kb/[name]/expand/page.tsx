@@ -145,7 +145,7 @@ export default function ExpandSimilarPage({
         actions={
           <Link
             href={`/kb/${encodeURIComponent(name)}`}
-            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
           >
             ← Back to KB
           </Link>
@@ -277,7 +277,7 @@ function ConfigurePhase({
       <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-card)]">
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-[var(--cnrs-blue)]">
+            <span className="text-sm font-medium text-[var(--text-body)]">
               Snowball direction
             </span>
             <select
@@ -300,7 +300,7 @@ function ConfigurePhase({
           </label>
 
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-[var(--cnrs-blue)]">
+            <span className="text-sm font-medium text-[var(--text-body)]">
               Max candidates per seed
             </span>
             <input
@@ -323,7 +323,7 @@ function ConfigurePhase({
           </label>
 
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-[var(--cnrs-blue)]">
+            <span className="text-sm font-medium text-[var(--text-body)]">
               Similarity scorer
             </span>
             <select
@@ -409,7 +409,7 @@ function CalibratePhase({
           <button
             type="button"
             onClick={onBack}
-            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
           >
             ← Adjust settings
           </button>
@@ -421,7 +421,7 @@ function CalibratePhase({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-body)]">
           Score distribution
         </h2>
         <p className="text-xs text-[var(--text-muted)]">
@@ -433,7 +433,7 @@ function CalibratePhase({
       <ScoreHistogram buckets={report.histogram} />
 
       <div>
-        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-body)]">
           Calibrate the cutoff
         </h2>
         <p className="mb-3 text-sm text-[var(--text-muted)]">
@@ -451,7 +451,7 @@ function CalibratePhase({
         <button
           type="button"
           onClick={onBack}
-          className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+          className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
         >
           ← Back
         </button>
@@ -495,11 +495,11 @@ function ReviewPhase({
         <div className="flex items-center justify-between gap-3">
           <label
             htmlFor="cutoff-slider"
-            className="text-sm font-medium text-[var(--cnrs-blue)]"
+            className="text-sm font-medium text-[var(--text-body)]"
           >
             Cutoff
           </label>
-          <span className="font-mono text-sm text-[var(--cnrs-blue)]">
+          <span className="font-mono text-sm text-[var(--text-body)]">
             {cutoff.toFixed(3)}
           </span>
         </div>
@@ -515,7 +515,7 @@ function ReviewPhase({
         />
         <p className="mt-2 text-sm text-[var(--text-muted)]">
           Keeping{" "}
-          <span className="font-semibold text-[var(--cnrs-blue)]">
+          <span className="font-semibold text-[var(--text-body)]">
             {kept.length}
           </span>{" "}
           of {total} candidate{total === 1 ? "" : "s"}.
@@ -523,7 +523,7 @@ function ReviewPhase({
       </div>
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-[var(--text-body)]">
           Will be ingested
         </h2>
         <CandidateList candidates={kept} />
@@ -535,7 +535,7 @@ function ReviewPhase({
             type="button"
             onClick={onBack}
             disabled={committing}
-            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             ← Re-label samples
           </button>
@@ -583,7 +583,7 @@ function ResultPhase({
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-card)]">
-        <h2 className="text-lg font-semibold text-[var(--cnrs-blue)]">
+        <h2 className="text-lg font-semibold text-[var(--text-body)]">
           Expansion complete
         </h2>
         <div className="mt-4 grid grid-cols-3 gap-3">
@@ -609,7 +609,7 @@ function ResultPhase({
         <button
           type="button"
           onClick={onRestart}
-          className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+          className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
         >
           Expand again
         </button>
@@ -624,7 +624,7 @@ function ResultTile({ label, value }: { label: string; value: number }) {
       <p className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
         {label}
       </p>
-      <p className="mt-1 text-2xl font-semibold text-[var(--cnrs-blue)]">
+      <p className="mt-1 text-2xl font-semibold text-[var(--text-body)]">
         {value}
       </p>
     </div>

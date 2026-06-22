@@ -38,7 +38,7 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={cycle}
-      className="flex w-full items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-3 py-2 text-xs font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-grey-light)]"
+      className="flex w-full items-center gap-2 rounded-[var(--radius-md)] border border-[var(--border)] bg-transparent px-3 py-2 text-xs font-medium text-[var(--text-body)] transition hover:bg-[var(--surface-hover)]"
       aria-label={`Theme: ${label}. Click to cycle.`}
     >
       <span aria-hidden>{icon}</span>
