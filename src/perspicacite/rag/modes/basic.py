@@ -879,7 +879,6 @@ class BasicRAGMode(BaseRAGMode):
         ]
 
         # Stream the LLM response
-        full_response = ""
         try:
             async for chunk in llm.stream(
                 messages=messages,
@@ -889,7 +888,6 @@ class BasicRAGMode(BaseRAGMode):
                 temperature=0.3,
                 stage="basic.answer",
             ):
-                full_response += chunk
                 yield StreamEvent.content(chunk)
         except Exception as e:
             logger.error("basic_streaming_error", error=str(e))
@@ -903,28 +901,12 @@ class BasicRAGMode(BaseRAGMode):
                 preamble=scope.scope_note,
             )
             yield StreamEvent.content(answer)
-            full_response = answer
 
-        # Defense-in-depth copyright filter on the full streamed
-        # response. For action="log" we just emit a warning log; for
-        # quote/strip/rewrite we emit a "revision" event after the
-        # answer with the corrected text — clients may render it or
-        # ignore. Does not retract the already-streamed content.
-        try:
-            revised = await _apply_copyright_filter(
-                answer=full_response, paper_results=paper_results, llm=llm,
-                config=self.config,
-            )
-            if revised != full_response:
-                yield StreamEvent(
-                    event="revision",
-                    data=json.dumps({
-                        "kind": "copyright_filter",
-                        "revised_content": revised,
-                    }),
-                )
-        except Exception as exc:
-            logger.warning("copyright_filter_stream_failed", error=str(exc))
+        # The synchronous copyright-detection pass is intentionally NOT run on
+        # the streaming (GUI) path. The body has already streamed to the client
+        # and the client ignores the "revision" event, so it only added a
+        # visible mid-stream stall before the references with no user-facing
+        # effect. The non-streaming execute() path still runs it for compliance.
 
         # Append references section after streaming completes
         if sources:

@@ -907,7 +907,12 @@ function AssistantMessage({
   // once the turn is final.
   const displayed = useTypewriter(
     turn.text,
-    turn.streaming && streaming ? 12 : 99999,
+    // While streaming, type at a deliberate pace. Once the stream ends, finish
+    // the buffered tail (e.g. the references block, which arrives in one chunk)
+    // at a fast but FINITE rate so it eases in smoothly instead of snapping in
+    // all at once. Historical loads stay instant — useTypewriter starts caught
+    // up, so no animation runs.
+    turn.streaming && streaming ? 12 : 48,
   );
 
   // Progressively reveal steps + sources while streaming, so a burst
