@@ -299,6 +299,13 @@ _TOOL_ARGS: dict[str, dict[str, Any]] = {
         "query": "CRISPR off-target effects",
     },
     "get_usage_guide": {},
+    "ensure_kb": {
+        "doi": "10.1234/fake-smoke-doi",
+    },
+    "ground_paper": {
+        "doi": "10.1234/fake-smoke-doi",
+        "question": "What is the reported yield?",
+    },
 }
 
 # ---------------------------------------------------------------------------
