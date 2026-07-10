@@ -81,3 +81,43 @@ async def test_resume_skips_already_processed(tmp_path):
     assert fetched_dois == ["10.3/c"]
     # The checkpoint should have been deleted on clean completion.
     assert not (ck_dir / "kb1__ingest_dois.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_embedding_failure_unmarks_dois_so_a_resume_retries_them(tmp_path):
+    """DOIs are marked "added" on retrieval, before the batch is embedded.
+
+    If the embedder dies, the batch never lands. remaining_ids() never re-offers an
+    "added" id, so leaving the mark would make a resume skip those DOIs for ever.
+    """
+    from perspicacite.llm.embeddings import EmbeddingFailedError
+
+    ck_dir = tmp_path / "ck"
+    ck_dir.mkdir()
+    checkpoint_path = ck_dir / "kb1__ingest_dois.json"
+
+    async def fake_retrieve(doi, **kw):
+        return SimpleNamespace(success=True, full_text="x", abstract=None, metadata={})
+
+    app_state = _app_state(tmp_path)
+    with patch(
+        "perspicacite.pipeline.download.retrieve_paper_content", new=fake_retrieve
+    ), patch(
+        "perspicacite.pipeline.download.cookies.build_authenticated_client"
+    ) as mock_client_ctx, patch(
+        "perspicacite.rag.dynamic_kb.DynamicKnowledgeBase"
+    ) as mock_dkb:
+        mock_client_ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_client_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_dkb.return_value.add_papers = AsyncMock(
+            side_effect=EmbeddingFailedError("quota exhausted")
+        )
+
+        with pytest.raises(EmbeddingFailedError):
+            await ingest_dois_into_kb(app_state, "kb1", ["10.1/a", "10.2/b"])
+
+    # The checkpoint survives the abort, but must not claim the DOIs were added.
+    assert checkpoint_path.exists()
+    store = CheckpointStore(path=checkpoint_path, kb_name="kb1", operation="ingest_dois")
+    state = store.load_or_create(planned_ids=["10.1/a", "10.2/b"])
+    assert sorted(state.remaining_ids()) == ["10.1/a", "10.2/b"]

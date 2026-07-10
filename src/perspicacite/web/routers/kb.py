@@ -19,6 +19,7 @@ from perspicacite.integrations.local_docs import (
     ingest_local_documents,
     validate_local_path,
 )
+from perspicacite.llm.embeddings import is_zero_vector
 from perspicacite.models.kb import (
     ChunkConfig,
     KnowledgeBase,
@@ -749,6 +750,32 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     }
 
 
+EMBEDDING_PROBE_LIMIT = 128
+
+
+def _probe_embedding_health(coll, total_chunks: int) -> dict:
+    """Sample stored vectors and count the degenerate (zero-norm) ones.
+
+    A zero vector sits at cosine distance 1.0 from every other vector, so a KB
+    full of them answers every query with the same passages at the same score.
+    Sampling a bounded prefix surfaces that; fetching every vector would not be
+    affordable on a large collection.
+    """
+    empty = {"probed_chunks": 0, "zero_vector_chunks": 0, "degraded": False}
+    if not total_chunks:
+        return empty
+    probe = coll.get(limit=min(total_chunks, EMBEDDING_PROBE_LIMIT), include=["embeddings"])
+    vectors = probe.get("embeddings")
+    if vectors is None or len(vectors) == 0:
+        return empty
+    zero_count = sum(1 for vector in vectors if is_zero_vector(list(vector)))
+    return {
+        "probed_chunks": len(vectors),
+        "zero_vector_chunks": zero_count,
+        "degraded": zero_count > 0,
+    }
+
+
 @router.get("/api/kb/{name}/stats")
 async def get_kb_stats(name: str):
     """Aggregate statistics for a KB, computed from ChromaDB metadata + the SQLite KB record."""
@@ -758,6 +785,7 @@ async def get_kb_stats(name: str):
     if not kb:
         return {"error": f"Knowledge base '{name}' not found"}
     scan_cap = 20000
+    embedding_health = {"probed_chunks": 0, "zero_vector_chunks": 0, "degraded": False}
     try:
         coll = app_state.vector_store.client.get_collection(name=kb.collection_name)
         total_chunks = coll.count()
@@ -765,6 +793,7 @@ async def get_kb_stats(name: str):
             limit=min(total_chunks, scan_cap) if total_chunks else 0, include=["metadatas"]
         )
         metas = got.get("metadatas") or []
+        embedding_health = _probe_embedding_health(coll, total_chunks)
     except Exception as e:
         logger.warning(f"kb stats: collection scan failed for {name}: {e}")
         metas, total_chunks = [], 0
@@ -801,6 +830,7 @@ async def get_kb_stats(name: str):
         "created_at": kb.created_at.isoformat() if kb.created_at else None,
         "scanned_chunks": len(metas),
         "scan_capped": total_chunks > scan_cap if total_chunks else False,
+        "embedding_health": embedding_health,
     }
 
 
