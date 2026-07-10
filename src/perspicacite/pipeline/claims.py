@@ -140,18 +140,21 @@ def _coerce_claim(c: dict, qualifiers: frozenset[str] = _QUALIFIERS) -> dict | N
     return claim
 
 
-_ASB = "https://asb.holobiomics.org/ns/asb#"
-
-
 def claims_to_graph(claims: list[dict]):
     """Serialize claim dicts to an rdflib Graph using the asb: vocabulary that
     indicium's SHACL targets (a asb:Claim with asb:context/subject/...)."""
     import rdflib
 
+    # Imported lazily beside rdflib: this module is core pipeline and must stay
+    # importable without the optional indicium stack. Taking the base from
+    # indicium keeps the graph in the namespace its SHACL shapes target; a
+    # hardcoded copy goes stale on a base move and then validates vacuously.
+    from indicium import ASB_BASE, INDICIUM_BASE
+
     g = rdflib.Graph()
-    asb = rdflib.Namespace(_ASB)
+    asb = rdflib.Namespace(ASB_BASE)
     SSSOM = rdflib.Namespace("https://w3id.org/sssom/")
-    INDICIUM = rdflib.Namespace("https://w3id.org/indicium/")
+    INDICIUM = rdflib.Namespace(INDICIUM_BASE)
     DCT = rdflib.Namespace("http://purl.org/dc/terms/")
     for i, c in enumerate(claims):
         cid = c.get("id") or f"pos:{i}"

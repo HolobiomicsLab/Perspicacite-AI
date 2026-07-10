@@ -309,8 +309,10 @@ def test_validate_claims_adapter_without_shacl_shapes_no_error():
 def test_validate_claims_enrichment_and_shacl_combined():
     """validate_claims() with an adapter that has both enrich_claim and shacl_shapes
     must call shacl_shapes() once (wiring integration check)."""
-    import rdflib
     from unittest.mock import MagicMock, patch
+
+    import rdflib
+
     from perspicacite.pipeline.claims import validate_claims
 
     mock_graph = rdflib.Graph()
@@ -346,6 +348,7 @@ async def test_extract_claims_mcp_tool_passes_adapter_not_manual_enrich():
     """
     import json
     from unittest.mock import AsyncMock, MagicMock, patch
+
     from perspicacite.pipeline.claims import extract_claims
 
     adapter = _MockAdapter()
@@ -383,8 +386,9 @@ async def test_extract_claims_mcp_tool_passes_adapter_not_manual_enrich():
 def test_claims_to_graph_serializes_ontology_terms():
     """ontology_terms in a claim dict must appear as asb:{slot}_ontology_term triples."""
     import rdflib
+    from indicium import ASB_BASE as _ASB
+
     from perspicacite.pipeline.claims import claims_to_graph
-    _ASB = "https://asb.holobiomics.org/ns/asb#"
     asb = rdflib.Namespace(_ASB)
     claim = {
         "context": "in vivo", "subject": "glucose", "qualifier": "quantifies",
@@ -403,8 +407,9 @@ def test_claims_to_graph_serializes_ontology_terms():
 def test_claims_to_graph_no_ontology_terms_no_error():
     """Claims without ontology_terms must not raise and produce no extra triples."""
     import rdflib
+    from indicium import ASB_BASE as _ASB
+
     from perspicacite.pipeline.claims import claims_to_graph
-    _ASB = "https://asb.holobiomics.org/ns/asb#"
     asb = rdflib.Namespace(_ASB)
     claim = {
         "context": "in vivo", "subject": "glucose", "qualifier": "quantifies",
@@ -419,8 +424,9 @@ def test_claims_to_graph_no_ontology_terms_no_error():
 def test_claims_to_graph_skips_none_ontology_terms():
     """None values in ontology_terms must be skipped — not serialized as literal 'None'."""
     import rdflib
+    from indicium import ASB_BASE as _ASB
+
     from perspicacite.pipeline.claims import claims_to_graph
-    _ASB = "https://asb.holobiomics.org/ns/asb#"
     asb = rdflib.Namespace(_ASB)
     claim = {
         "context": "in vivo", "subject": "glucose", "qualifier": "quantifies",
@@ -533,10 +539,11 @@ def test_compose_adapters_all_unknown_gives_none():
 @pytest.mark.unit
 def test_claims_to_graph_emits_anchor_status_and_quote_exact():
     import rdflib
+    from indicium import ASB_BASE
 
     from perspicacite.pipeline.claims import claims_to_graph
 
-    asb = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")
+    asb = rdflib.Namespace(ASB_BASE)
     claims = [{
         "id": "c1", "context": "in vitro", "subject": "A",
         "qualifier": "inhibits", "relation": "inhibits", "object": "B",
@@ -551,10 +558,11 @@ def test_claims_to_graph_emits_anchor_status_and_quote_exact():
 @pytest.mark.unit
 def test_claims_to_graph_unverified_emits_status_but_not_quote():
     import rdflib
+    from indicium import ASB_BASE
 
     from perspicacite.pipeline.claims import claims_to_graph
 
-    asb = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")
+    asb = rdflib.Namespace(ASB_BASE)
     claims = [{
         "id": "c2", "context": "in vitro", "subject": "A",
         "qualifier": "inhibits", "relation": "inhibits", "object": "B",

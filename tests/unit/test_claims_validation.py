@@ -1,8 +1,10 @@
 import pytest
 import rdflib
+
 from perspicacite.pipeline.claims import claims_to_graph, validate_claims
 
-ASB = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")
+indicium = pytest.importorskip("indicium")
+ASB = rdflib.Namespace(indicium.ASB_BASE)
 
 
 @pytest.mark.unit
@@ -58,12 +60,13 @@ def test_claim_missing_slots_is_rejected():
 
 @pytest.mark.unit
 def test_claims_to_graph_emits_sssom_mapping():
-    import rdflib
     import indicium
+    import rdflib
+
     from perspicacite.pipeline.claims import claims_to_graph
 
     SSSOM = rdflib.Namespace("https://w3id.org/sssom/")
-    asb = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")
+    asb = ASB
 
     pytest.importorskip("indicium")
 

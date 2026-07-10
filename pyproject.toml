@@ -135,7 +135,7 @@ graph = [
     "pyoxigraph>=0.4",
 ]
 
-# The indicium stack — indicium, indicium-adapters,
+# The indicium stack — indicium-standard, indicium-adapters,
 # indicium-adapters-metabolomics — backs validate_claims(), build_claim_graph()
 # and export_astra(). Those packages are private and absent from PyPI, so they
 # are deliberately NOT declared here, in any extra, and NOT wired up through
@@ -147,7 +147,9 @@ graph = [
 # `uv-resolve` CI job fail if they come back.
 #
 # The PyPI name `indicium` belongs to an unrelated project (a key-value store,
-# latest 0.1.0a3), so a bare `indicium` requirement installs the wrong package.
+# latest 0.1.0a3) that also ships a top-level `indicium` module, so a bare
+# `indicium` requirement installs the wrong package and clobbers the import.
+# The standard publishes as `indicium-standard`; the import name is unchanged.
 #
 # Maintainers holding the private sibling checkouts install them into the
 # synced venv, without editing this file:

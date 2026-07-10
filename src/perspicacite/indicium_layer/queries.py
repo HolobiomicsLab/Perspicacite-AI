@@ -10,9 +10,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from indicium import ASB_BASE
+
 # ---------- Namespaces (single source of truth across the package) ----------
 
-ASB_NS = "https://asb.holobiomics.org/ns/asb#"
+# Read from indicium rather than restated, so the graphs this package builds are
+# always targeted by the SHACL shapes that validate them. A hardcoded copy went
+# stale when indicium 2.0.0 moved the base: the shapes then matched nothing and
+# every claim graph reported conforms=True without a single constraint checked.
+# Importing indicium at module scope is safe here — this package is the indicium
+# adapter layer, and its builder already requires it.
+ASB_NS = ASB_BASE
 CITO_NS = "http://purl.org/spar/cito/"
 PROV_NS = "http://www.w3.org/ns/prov#"
 FABIO_NS = "http://purl.org/spar/fabio/"
