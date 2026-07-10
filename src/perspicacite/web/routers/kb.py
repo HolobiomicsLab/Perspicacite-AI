@@ -879,7 +879,7 @@ async def kb_export(name: str, format: str = "obsidian-vault"):
                 "abstract": m.get("abstract"),
             })
     except Exception as exc:
-        logger.warning("kb_export_paper_enum_failed", kb=name, error=str(exc))
+        logger.warning("kb_export_paper_enum_failed kb=%s: %s", name, exc)
         papers = []
 
     # Conversations linked to this KB
@@ -899,7 +899,7 @@ async def kb_export(name: str, format: str = "obsidian-vault"):
             c_dict["messages"] = msgs
             conv_dicts.append(c_dict)
     except Exception as exc:
-        logger.warning("kb_export_conv_enum_failed", kb=name, error=str(exc))
+        logger.warning("kb_export_conv_enum_failed kb=%s: %s", name, exc)
         conv_dicts = []
 
     kb_dict = kb.model_dump()
