@@ -33,7 +33,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from perspicacite.config.paths import resolve_session_db_path
+from perspicacite.config.paths import guard_session_db_path
 from perspicacite.logging import get_logger
 from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
@@ -124,7 +124,7 @@ class MCPState:
         )
 
         # Session store
-        db_path = resolve_session_db_path(config)
+        db_path = guard_session_db_path(config)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_store = SessionStore(db_path)
         await self.session_store.init_db()
