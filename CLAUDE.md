@@ -131,7 +131,17 @@ FastAPI app is defined in [src/perspicacite/web/app.py](src/perspicacite/web/app
 
 Defined in [src/perspicacite/mcp/server.py](src/perspicacite/mcp/server.py) using `fastmcp`. It has its own `MCPState` singleton (separate from `AppState`) and is mounted at `/mcp` by the CLI. Tool usage patterns are documented in [docs/perspicacite_skills.md](docs/perspicacite_skills.md) (and the live `get_usage_guide` tool is the source of truth).
 
-The claim/standardization tools — `extract_claims_from_passages` and `export_astra` — require the optional **`indicia`** extra (`uv sync --extra indicia`), which pulls in the local [`indicium`](../indicium) standard package (typed claims: Bucur 5-slot SuperPattern + ECO/CiTO/SEPIO; SHACL-validated). They degrade with a clear error when the extra isn't installed.
+The claim/standardization tools — `extract_claims_from_passages` and `export_astra` — need the [`indicium`](../indicium) standard package (typed claims: Bucur 5-slot SuperPattern + ECO/CiTO/SEPIO; SHACL-validated). They degrade with a clear error when it is absent, which is the normal state for anyone outside the lab.
+
+`indicium` and its two adapter siblings are private and unpublished, so they are **not** declared in `pyproject.toml` — `uv lock` resolves every extra, so one undeclarable requirement breaks `uv sync` on every fresh clone (issue #29). Maintainers who hold the sibling checkouts install them into the synced venv instead:
+
+```bash
+uv sync --extra dev --extra graph
+uv pip install -e ../indicium -e ../indicium-adapters -e ../indicium-adapters-metabolomics
+uv sync --inexact --extra dev --extra graph   # --inexact, or uv prunes the editable installs
+```
+
+The RDF backend behind the claim graph (`rdflib` + `pyoxigraph`) *is* public: `uv sync --extra graph`.
 
 For using Perspicacité over MCP intelligently (query shaping, tool/mode choice), follow [.claude/skills/perspicacite-mcp/SKILL.md](.claude/skills/perspicacite-mcp/SKILL.md) or call the `get_usage_guide` tool for the live source of truth.
 

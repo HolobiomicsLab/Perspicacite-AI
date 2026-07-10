@@ -6286,7 +6286,7 @@ async def extract_claims_from_passages(
     try:
         from perspicacite.pipeline.claims import extract_claims, validate_claims
     except ImportError:
-        return _json_error("indicium not installed; reinstall with the 'indicia' extra")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
 
     # Resolve domain adapter(s) — compose if multiple (best-effort; skip if not installed)
     adapter = None
@@ -6347,7 +6347,7 @@ async def export_astra(claims: list[dict]) -> str:
     try:
         from indicium import claim_to_insight
     except ImportError:
-        return _json_error("indicium not installed; reinstall with the 'indicia' extra")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
     insights = []
     for i, c in enumerate(claims):
         c = {**c, "id": c.get("id", f"c{i}")}
@@ -6385,7 +6385,7 @@ async def build_claim_graph(
     try:
         import indicium  # noqa: F401
     except ImportError:
-        return _json_error("indicia extra not installed; uv sync --extra indicia")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
 
     import pathlib
 
@@ -6466,7 +6466,7 @@ async def claim_graph_status(kb_name: str) -> str:
     try:
         import indicium  # noqa: F401
     except ImportError:
-        return _json_error("indicia extra not installed; uv sync --extra indicia")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
     from perspicacite.indicium_layer.invalidation import schema_version_changed
     from perspicacite.indicium_layer.manifest import read_manifest
 
@@ -6519,7 +6519,7 @@ async def query_claim_graph(
     try:
         import indicium  # noqa: F401
     except ImportError:
-        return _json_error("indicia extra not installed; uv sync --extra indicia")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
 
     from perspicacite.indicium_layer import queries as _q
 
@@ -6570,7 +6570,7 @@ async def get_claim_figures(
     try:
         import indicium  # noqa: F401
     except ImportError:
-        return _json_error("indicia extra not installed; uv sync --extra indicia")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
 
     from perspicacite.indicium_layer.queries import figures_for_claim
 
@@ -6616,7 +6616,7 @@ async def get_claim_links(
     try:
         import indicium  # noqa: F401
     except ImportError:
-        return _json_error("indicia extra not installed; uv sync --extra indicia")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
 
     from perspicacite.indicium_layer.queries import claim_links_for_claim
 
@@ -6657,7 +6657,7 @@ async def claim_graph_export(
     try:
         import indicium  # noqa: F401
     except ImportError:
-        return _json_error("indicia extra not installed; uv sync --extra indicia")
+        return _json_error("indicium is not installed; it is a private, maintainer-only package")
 
     _valid_formats = ("nquads", "turtle", "jsonld", "rocrate")
     if format not in _valid_formats:

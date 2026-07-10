@@ -123,33 +123,41 @@ browser = [
   "playwright>=1.40",
 ]
 
-# indicium — Knowledge Graph / SHACL validation layer for structured claim
-# representation. Local sibling package (not yet on PyPI). Pulls in linkml,
-# pyshacl, and rdflib. Install only when KG-backed workflows are needed.
-#
-# Local packages are available at ../indicium, ../indicium-adapters, and
-# ../indicium-adapters-metabolomics. The `extract_claims_from_passages`
-# and `export_astra` MCP tools degrade gracefully without these extras.
+# graph — RDF/SPARQL backend for the claim-graph layer. indicium_layer/store.py
+# imports rdflib at module level and pyoxigraph for the production store. Both
+# are on PyPI, so this extra resolves for every user.
 #
 # Install with:
-#   uv sync --extra indicia --extra adapters
-indicia = [
-  # Floor: 1.8.0 is the first release that ships the verify_quote kernel that
-  # the R3 anchor path (anchor_claims / annotate_anchor_status) imports. An
-  # older indicium would make anchoring fail-soft to "unchecked" silently.
-  "indicium>=1.8.0",
-  "pyoxigraph>=0.4",
+#   uv sync --extra graph
+graph = [
+    "rdflib>=6.0",
+    "pyoxigraph>=0.4",
 ]
 
-# indicium-adapters — optional domain adapter protocol. Core package (>=0.4.0)
-# no longer ships the metabolomics adapters; those live in the sibling package
-# indicium-adapters-metabolomics (MetabolomicsAdapter, MetaboKGAdapter,
-# EMIAdapter). Both are needed so discover_adapters() returns all three.
-# Enables domain_adapter= kwarg in extract_claims().
-adapters = [
-    "indicium-adapters>=0.4.0",
-    "indicium-adapters-metabolomics>=0.1.0",
-]
+# The indicium stack — indicium, indicium-adapters,
+# indicium-adapters-metabolomics — backs validate_claims(), build_claim_graph()
+# and export_astra(). Those packages are private and absent from PyPI, so they
+# are deliberately NOT declared here, in any extra, and NOT wired up through
+# [tool.uv.sources]. `uv lock` resolves every extra regardless of which one is
+# requested, so a single undeclarable requirement breaks `uv sync` on every
+# fresh clone — issue #29, and issue #5 before it.
+#
+# Never re-add them. tests/unit/test_pyproject_packaging.py and the
+# `uv-resolve` CI job fail if they come back.
+#
+# The PyPI name `indicium` belongs to an unrelated project (a key-value store,
+# latest 0.1.0a3), so a bare `indicium` requirement installs the wrong package.
+#
+# Maintainers holding the private sibling checkouts install them into the
+# synced venv, without editing this file:
+#
+#   uv sync --extra dev --extra graph
+#   uv pip install -e ../indicium -e ../indicium-adapters \
+#                  -e ../indicium-adapters-metabolomics
+#
+# Every later sync must pass --inexact, or uv prunes those editable installs:
+#
+#   uv sync --inexact --extra dev --extra graph
 
 # docling — high-fidelity PDF -> structured document conversion (layout,
 # tables, sections) for the content pipeline. Heavier than the other
@@ -190,14 +198,6 @@ packages = ["src/perspicacite"]
 # Override scilex's transitive httpx<0.28 pin so fastmcp 3.x can resolve.
 # Safe while the [scilex] extra is unused by the core / KB / MCP paths.
 override-dependencies = ["httpx>=0.28.1"]
-
-[tool.uv.sources]
-# Local-path sources for the indicium stack. All three sibling packages are
-# available at the paths below (editable installs). Pair with the `indicia`
-# and `adapters` extras above: uv sync --extra indicia --extra adapters
-indicium = { path = "../indicium", editable = true }
-indicium-adapters = { path = "../indicium-adapters", editable = true }
-indicium-adapters-metabolomics = { path = "../indicium-adapters-metabolomics", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

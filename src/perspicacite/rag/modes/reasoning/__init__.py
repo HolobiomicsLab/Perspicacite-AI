@@ -4,8 +4,8 @@ Routes on ``request.reasoning_strategy`` to one of four strategy modules.
 Subplan A ships ``provenance`` and ``contradiction``; unshipped strategies
 return a single error StreamEvent pointing to the planned sprint.
 
-The indicia extra (``indicium`` + ``pyoxigraph``) is required. When missing,
-we yield a friendly error event explaining how to enable.
+The private ``indicium`` package is required, alongside ``pyoxigraph`` from the
+``graph`` extra. When either is missing we yield a friendly error event.
 """
 
 from __future__ import annotations
@@ -70,8 +70,9 @@ class ReasoningRAGMode(BaseRAGMode):
                 data=json.dumps(
                     {
                         "message": (
-                            "Reasoning mode requires the 'indicia' extra. "
-                            "Install with: uv sync --extra indicia"
+                            "Reasoning mode requires indicium, a private "
+                            "maintainer-only package, plus pyoxigraph "
+                            "(uv sync --extra graph)."
                         )
                     }
                 ),
