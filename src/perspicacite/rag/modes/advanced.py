@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from perspicacite.config.schema import MultimodalMode
+from perspicacite.llm.embeddings import EmbeddingFailedError
 from perspicacite.logging import get_logger
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
@@ -1050,6 +1051,8 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                             query_embedding=query_embedding[0],
                             top_k=self.initial_docs,
                         )
+                    except EmbeddingFailedError:
+                        raise  # a degenerate query fails against every collection
                     except Exception as e:
                         logger.warning(
                             "advanced_wrrf_fanout_search_failed",
