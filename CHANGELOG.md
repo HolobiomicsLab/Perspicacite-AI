@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The KB-metadata SQLite path now honours `database.path` (and `PERSPICACITE_DB_PATH`) in the
+  web app, the MCP server and the CLI. It was hardcoded to a working-directory-relative
+  `./data/perspicacite.db` while the vector store already honoured `database.chroma_path`, so a
+  second instance listed the main hub's knowledge bases and wrote its vectors elsewhere. When
+  `database.path` is not set, the legacy location is kept, so existing deployments are unaffected.
+  Both resolved paths are now logged at startup.
+
 ### Changed
 - **BREAKING:** the `indicia` and `adapters` optional extras are removed. They required the
   private, unpublished `indicium` stack, and `uv lock` resolves every extra whether or not it
