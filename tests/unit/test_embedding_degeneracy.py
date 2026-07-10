@@ -113,7 +113,8 @@ async def test_zero_vector_for_an_empty_chunk_is_also_rejected(temp_dir):
     """
 
     def zero_for_empty(texts):
-        return [[0.0] * DIMENSION if not t.strip() else _returns_unit_vectors([t])[0] for t in texts]
+        unit = [1.0] + [0.0] * (DIMENSION - 1)
+        return [[0.0] * DIMENSION if not t.strip() else unit for t in texts]
 
     store = _store(temp_dir, zero_for_empty)
     bare = DocumentChunk(
