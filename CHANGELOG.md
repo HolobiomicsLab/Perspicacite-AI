@@ -24,11 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   second instance listed the main hub's knowledge bases and wrote its vectors elsewhere. When
   `database.path` is not set, the legacy location is kept, so existing deployments are unaffected.
   Both resolved paths are now logged at startup.
+- Startup now refuses to open an empty registry when the configured `database.path` does not
+  exist but the legacy `./data/perspicacite.db` still holds knowledge bases. The shipped
+  `config.example.yml` sets `database.path` to a home-directory location, so a deployment created
+  before the path was honoured (metadata in the legacy file) would otherwise present an empty KB
+  list after upgrade. The error names the fix; `PERSPICACITE_ALLOW_NEW_DB=1` opts into a fresh
+  instance. No data is moved.
+- The `embedding_health` probe now samples both ends of a collection instead of a bounded prefix,
+  so a mid-ingest embedding outage that zero-fills the tail is no longer reported healthy. The
+  block gained `total_chunks` and `complete`, so a clean sample of a large KB is not mistaken for
+  a proven-clean KB.
 
 ### Added
 - `GET /api/kb/{name}/stats` reports an `embedding_health` block (`probed_chunks`,
-  `zero_vector_chunks`, `degraded`) so a poisoned knowledge base is visible without reading
-  Chroma by hand.
+  `zero_vector_chunks`, `degraded`, `total_chunks`, `complete`) so a poisoned knowledge base is
+  visible without reading Chroma by hand.
 
 ### Changed
 - **BREAKING:** the `indicia` and `adapters` optional extras are removed. They required the

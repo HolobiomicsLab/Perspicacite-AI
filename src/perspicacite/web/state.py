@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Any
 
-from perspicacite.config.paths import resolve_session_db_path
+from perspicacite.config.paths import guard_session_db_path
 from perspicacite.jobs.registry import JobRegistry
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.provenance.store import ProvenanceStore
@@ -192,7 +192,7 @@ class AppState:
         logger.info("Agentic orchestrator initialized")
 
         # Initialize session store FIRST so RAGEngine can receive it
-        db_path = resolve_session_db_path(config)
+        db_path = guard_session_db_path(config)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_store = SessionStore(db_path)
         await self.session_store.init_db()
