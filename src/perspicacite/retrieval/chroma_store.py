@@ -10,12 +10,48 @@ try:
 except ImportError:
     IncludeEnum = None  # Will use literal values instead
 
-from perspicacite.llm.embeddings import EmbeddingProvider
+from perspicacite.llm.embeddings import EmbeddingFailedError, EmbeddingProvider, is_zero_vector
 from perspicacite.logging import get_logger
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.models.search import RetrievedChunk, SearchFilters
 
 logger = get_logger("perspicacite.retrieval.chroma")
+
+
+def _reject_degenerate_embeddings(
+    texts: list[str], embeddings: list[list[float]], collection: str
+) -> None:
+    """Refuse embeddings that would poison the collection.
+
+    Chroma accepts a zero vector and then reports cosine distance 1.0 against
+    everything, so a poisoned collection answers every query with the same
+    passages at the same score. No zero vector may be stored, whatever produced
+    it: for a text with content it means the embedder failed, and for an empty
+    text it means the chunk has nothing to retrieve.
+    """
+    if len(embeddings) != len(texts):
+        raise EmbeddingFailedError(
+            f"embedding provider returned {len(embeddings)} vector(s) for "
+            f"{len(texts)} text(s) in collection {collection!r}; refusing to "
+            "store misaligned embeddings"
+        )
+    degenerate = [
+        index
+        for index, vector in enumerate(embeddings)
+        if is_zero_vector(vector)
+    ]
+    if not degenerate:
+        return
+    first = degenerate[0]
+    reason = (
+        "the embedding provider returned a zero vector"
+        if texts[first].strip()
+        else "the chunk has no text to embed"
+    )
+    raise EmbeddingFailedError(
+        f"refusing to store {len(degenerate)} zero vector(s) in collection "
+        f"{collection!r} (first at index {first}): {reason}"
+    )
 
 
 class ChromaVectorStore:
@@ -177,8 +213,15 @@ class ChromaVectorStore:
                 count=len(texts_to_embed),
                 collection=collection,
             )
-            embeddings = await self.embedding_provider.embed(texts_to_embed)
-            for idx, embedding in zip(indices_to_embed, embeddings):
+            try:
+                embeddings = await self.embedding_provider.embed(texts_to_embed)
+            except Exception as exc:
+                raise EmbeddingFailedError(
+                    f"embedding {len(texts_to_embed)} chunk(s) for collection "
+                    f"{collection!r} failed: {exc}"
+                ) from exc
+            _reject_degenerate_embeddings(texts_to_embed, embeddings, collection)
+            for idx, embedding in zip(indices_to_embed, embeddings, strict=True):
                 chunks[idx].embedding = embedding
 
         # Prepare data for Chroma (lists must stay aligned — never filter embeddings)
@@ -187,6 +230,20 @@ class ChromaVectorStore:
         embeddings = [chunk.embedding for chunk in chunks]
         if any(e is None for e in embeddings):
             raise ValueError("All chunks must have embeddings before add_documents")
+        # Callers may arrive with chunk.embedding already set (capsule_builder,
+        # capsule_reader, local_docs embed before calling). Those vectors skip the
+        # check above, so screen everything that is about to be written.
+        poisoned = [
+            chunk.id
+            for chunk, e in zip(chunks, embeddings, strict=True)
+            if is_zero_vector(e)
+        ]
+        if poisoned:
+            raise EmbeddingFailedError(
+                f"refusing to store {len(poisoned)} zero vector(s) in collection "
+                f"{collection!r} (first chunk: {poisoned[0]!r}); a zero vector matches "
+                "every query at the same score"
+            )
         metadatas = [_chunk_to_metadata(chunk.metadata) for chunk in chunks]
 
         # Add to Chroma
@@ -229,7 +286,19 @@ class ChromaVectorStore:
 
         Returns:
             List of retrieved chunks with scores
+
+        Raises:
+            EmbeddingFailedError: the query vector has zero norm, which Chroma
+                would answer with distance 1.0 for every document — a uniform
+                score over an arbitrary ordering rather than a ranking.
         """
+        if is_zero_vector(query_embedding):
+            raise EmbeddingFailedError(
+                f"refusing to search collection {collection!r} with a zero-norm query "
+                "embedding: every document would score identically. The embedding "
+                "provider most likely failed (check the API key and its quota)."
+            )
+
         try:
             coll = self.client.get_collection(name=collection)
         except Exception as e:

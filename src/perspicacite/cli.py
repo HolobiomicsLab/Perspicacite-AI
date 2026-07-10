@@ -10,6 +10,7 @@ import click
 
 from perspicacite import __version__
 from perspicacite.config import load_config
+from perspicacite.config.paths import resolve_session_db_path
 from perspicacite.logging import get_logger, setup_logging
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
 from perspicacite.pipeline.github.bundle import ContentSpec
@@ -177,7 +178,7 @@ def serve(
     "--session-db",
     type=click.Path(path_type=Path),
     default=None,
-    help="SQLite DB for KB metadata (default: data/perspicacite.db, same as web app)",
+    help="SQLite DB for KB metadata (default: config database.path, else data/perspicacite.db)",
 )
 @click.option(
     "--chroma-dir",
@@ -259,7 +260,7 @@ def create_kb(
         )
         return
 
-    session_db = session_db or Path("data/perspicacite.db")
+    session_db = session_db or resolve_session_db_path(config)
     chroma_dir = chroma_dir or config.database.chroma_path
 
     click.echo(f"Creating knowledge base '{name}' from {from_bibtex}...")
@@ -313,7 +314,7 @@ def create_kb(
     "--session-db",
     type=click.Path(path_type=Path),
     default=None,
-    help="SQLite DB for KB metadata (default: data/perspicacite.db)",
+    help="SQLite DB for KB metadata (default: config database.path, else data/perspicacite.db)",
 )
 @click.option(
     "--chroma-dir",
@@ -345,7 +346,7 @@ def add_to_kb(
     if ingest_mode is not None:
         config.knowledge_base.ingest_mode = ingest_mode
 
-    session_db = session_db or Path("data/perspicacite.db")
+    session_db = session_db or resolve_session_db_path(config)
     chroma_dir = chroma_dir or config.database.chroma_path
 
     click.echo(f"Adding papers from {from_bibtex} to knowledge base '{name}'...")

@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Ingest and retrieval no longer degrade silently when the embedding provider fails (for
+  example on an exhausted API quota). A zero vector is never stored or queried: `add_documents`
+  rejects a zero-norm vector produced for a non-empty chunk, `search` rejects a zero-norm query,
+  and `add_papers` propagates the failure instead of reporting a successful ingest of zero
+  chunks. Previously a poisoned collection answered every query with the same passages at a
+  constant score of 0.5 while the API reported `success: true`.
+- `add_documents` rejects a provider that returns fewer vectors than texts, which otherwise
+  assigned each embedding to the wrong chunk. `screening.py` gained the same guard.
+- The KB-metadata SQLite path now honours `database.path` (and `PERSPICACITE_DB_PATH`) in the
+  web app, the MCP server and the CLI. It was hardcoded to a working-directory-relative
+  `./data/perspicacite.db` while the vector store already honoured `database.chroma_path`, so a
+  second instance listed the main hub's knowledge bases and wrote its vectors elsewhere. When
+  `database.path` is not set, the legacy location is kept, so existing deployments are unaffected.
+  Both resolved paths are now logged at startup.
+
+### Added
+- `GET /api/kb/{name}/stats` reports an `embedding_health` block (`probed_chunks`,
+  `zero_vector_chunks`, `degraded`) so a poisoned knowledge base is visible without reading
+  Chroma by hand.
+
 ### Changed
 - **BREAKING:** the `indicia` and `adapters` optional extras are removed. They required the
   private, unpublished `indicium` stack, and `uv lock` resolves every extra whether or not it

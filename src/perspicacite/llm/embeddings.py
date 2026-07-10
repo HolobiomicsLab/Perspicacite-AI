@@ -1,5 +1,6 @@
 """Embedding providers for vector search."""
 
+import math
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -8,8 +9,28 @@ from perspicacite.logging import get_logger
 logger = get_logger("perspicacite.llm.embeddings")
 
 
+class EmbeddingFailedError(RuntimeError):
+    """An embedding could not be produced, so no vector may be stored or queried.
+
+    Raised instead of substituting a zero vector. A zero vector is not a
+    neutral placeholder: in cosine space it sits at distance 1.0 from every
+    other vector, which silently turns retrieval into a constant score over an
+    arbitrary ordering rather than an error.
+    """
+
+
+def is_zero_vector(vector: list[float], tolerance: float = 1e-12) -> bool:
+    """Return True when the vector's L2 norm is indistinguishable from zero."""
+    return math.sqrt(sum(component * component for component in vector)) <= tolerance
+
+
 class EmbeddingProvider(Protocol):
-    """Protocol for embedding providers."""
+    """Protocol for embedding providers.
+
+    Contract for implementers: raise on failure, never substitute a zero
+    vector for a text that has content. A zero vector is only ever a valid
+    answer for input that is itself empty or whitespace.
+    """
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed a list of texts (document mode)."""

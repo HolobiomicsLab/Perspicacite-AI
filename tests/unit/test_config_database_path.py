@@ -1,0 +1,70 @@
+"""Regression tests: the KB-metadata SQLite must honour `database.path`.
+
+The vector store has always read `database.chroma_path`, while the session
+store was hardcoded to a working-directory-relative `./data/perspicacite.db`.
+A second instance therefore listed the main hub's knowledge bases while writing
+its vectors elsewhere, so every KB it created "existed" but retrieved nothing.
+"""
+
+from pathlib import Path
+
+import pytest
+
+from perspicacite.config.paths import LEGACY_SESSION_DB_PATH, resolve_session_db_path
+from perspicacite.config.schema import Config
+
+
+def test_unset_path_keeps_the_legacy_location():
+    """Existing deployments keep their metadata where it already lives."""
+    assert resolve_session_db_path(Config()) == LEGACY_SESSION_DB_PATH
+
+
+def test_setting_only_chroma_path_keeps_the_legacy_location():
+    """Touching the vector-store path must not move the metadata store."""
+    config = Config(database={"chroma_path": "/tmp/isolated-chroma"})
+    assert resolve_session_db_path(config) == LEGACY_SESSION_DB_PATH
+
+
+def test_explicit_path_is_honoured_and_home_is_expanded():
+    """`~` must be expanded; SessionStore would otherwise create a `~` directory."""
+    resolved = resolve_session_db_path(Config(database={"path": "~/isolated/memory.db"}))
+    assert resolved == Path.home() / "isolated" / "memory.db"
+    assert "~" not in str(resolved)
+
+
+def test_env_var_override_reaches_the_resolver(monkeypatch, tmp_path):
+    """PERSPICACITE_DB_PATH is documented as the isolation switch."""
+    from perspicacite.config.loader import load_config
+
+    target = tmp_path / "instance" / "memory.db"
+    monkeypatch.setenv("PERSPICACITE_DB_PATH", str(target))
+    assert resolve_session_db_path(load_config(None)) == target
+
+
+@pytest.mark.asyncio
+async def test_app_state_opens_the_configured_database(monkeypatch, tmp_path):
+    """AppState.initialize must hand the configured path to SessionStore."""
+    from perspicacite.web import state as state_module
+
+    target = tmp_path / "instance" / "memory.db"
+    monkeypatch.setenv("PERSPICACITE_DB_PATH", str(target))
+    monkeypatch.setenv("PERSPICACITE_ALLOW_MISSING_LLM_KEYS", "1")
+    monkeypatch.setenv("PERSPICACITE_DB_CHROMA_PATH", str(tmp_path / "chroma"))
+
+    opened: list[Path] = []
+
+    class _RecordingSessionStore:
+        def __init__(self, db_path):
+            opened.append(Path(db_path))
+            self.db_path = Path(db_path)
+
+        async def init_db(self):
+            return None
+
+    monkeypatch.setattr(state_module, "SessionStore", _RecordingSessionStore)
+
+    app_state = state_module.AppState()
+    await app_state.initialize()
+
+    assert opened == [target]
+    assert opened[0] != LEGACY_SESSION_DB_PATH
