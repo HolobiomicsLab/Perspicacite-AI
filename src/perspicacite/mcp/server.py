@@ -5300,6 +5300,8 @@ async def zotero_get_attachment_bytes(
     if not eff_library_id:
         return {"error": "ZOTERO_NOT_CONFIGURED", "message": "library_id required"}
 
+    import httpx
+
     from perspicacite.integrations.zotero import ZoteroClient
 
     client = ZoteroClient(

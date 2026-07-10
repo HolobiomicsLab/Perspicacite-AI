@@ -166,7 +166,7 @@ class AppState:
             tool_registry.register(WebSearchTool(app_state=self))
             logger.info("Tool registry initialized (web_search registered, LOTUS deactivated)")
         except Exception as exc:  # pragma: no cover - best-effort
-            logger.warning("web_search_tool_register_failed", error=str(exc))
+            logger.warning("web_search_tool_register_failed: %s", exc)
             logger.info("Tool registry initialized (LOTUS deactivated)")
 
         # Create LLM adapter for agentic components
