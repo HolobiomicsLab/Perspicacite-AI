@@ -25,7 +25,9 @@ def _reject_degenerate_embeddings(
 
     Chroma accepts a zero vector and then reports cosine distance 1.0 against
     everything, so a poisoned collection answers every query with the same
-    passages at the same score. Catch it at the boundary instead.
+    passages at the same score. No zero vector may be stored, whatever produced
+    it: for a text with content it means the embedder failed, and for an empty
+    text it means the chunk has nothing to retrieve.
     """
     if len(embeddings) != len(texts):
         raise EmbeddingFailedError(
@@ -35,15 +37,21 @@ def _reject_degenerate_embeddings(
         )
     degenerate = [
         index
-        for index, (text, vector) in enumerate(zip(texts, embeddings, strict=True))
-        if text.strip() and is_zero_vector(vector)
+        for index, vector in enumerate(embeddings)
+        if is_zero_vector(vector)
     ]
-    if degenerate:
-        raise EmbeddingFailedError(
-            f"embedding provider returned a zero vector for {len(degenerate)} "
-            f"non-empty chunk(s) in collection {collection!r} "
-            f"(first at index {degenerate[0]}); refusing to store them"
-        )
+    if not degenerate:
+        return
+    first = degenerate[0]
+    reason = (
+        "the embedding provider returned a zero vector"
+        if texts[first].strip()
+        else "the chunk has no text to embed"
+    )
+    raise EmbeddingFailedError(
+        f"refusing to store {len(degenerate)} zero vector(s) in collection "
+        f"{collection!r} (first at index {first}): {reason}"
+    )
 
 
 class ChromaVectorStore:

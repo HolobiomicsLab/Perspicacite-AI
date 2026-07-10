@@ -96,8 +96,35 @@ async def test_provider_failure_surfaces_and_writes_nothing(temp_dir):
 async def test_zero_vector_for_nonempty_text_is_rejected(temp_dir):
     """A zero vector for a text with content means the embedder failed."""
     store = _store(temp_dir, _returns_zero_vectors)
-    with pytest.raises(EmbeddingFailedError, match="zero vector"):
+    with pytest.raises(EmbeddingFailedError, match="provider returned a zero vector"):
         await store.add_documents("test-kb", [_chunk("chunk-1", "real content")])
+
+    collection = store.client.get_or_create_collection(name="test-kb")
+    assert collection.count() == 0
+
+
+@pytest.mark.asyncio
+async def test_zero_vector_for_an_empty_chunk_is_also_rejected(temp_dir):
+    """A cache-style provider zero-fills empty text; that must not reach Chroma.
+
+    A chunk with no text and no title composes to an empty embedding text, so a
+    provider preserving positional alignment returns a zero vector for it. Stored,
+    it would answer every query at cosine distance 1.0.
+    """
+
+    def zero_for_empty(texts):
+        return [[0.0] * DIMENSION if not t.strip() else _returns_unit_vectors([t])[0] for t in texts]
+
+    store = _store(temp_dir, zero_for_empty)
+    bare = DocumentChunk(
+        id="chunk-empty",
+        text="",
+        metadata=ChunkMetadata(
+            paper_id="paper-1", chunk_index=0, title=None, year=None, source=PaperSource.BIBTEX
+        ),
+    )
+    with pytest.raises(EmbeddingFailedError, match="no text to embed"):
+        await store.add_documents("test-kb", [bare])
 
     collection = store.client.get_or_create_collection(name="test-kb")
     assert collection.count() == 0
