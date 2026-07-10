@@ -172,6 +172,30 @@ _TOOL_ENTRIES: list[dict] = [
         "key_knobs": [],
     },
     {
+        "name": "ensure_kb",
+        "purpose": (
+            "Idempotently create and ingest a per-paper KB for a DOI, using the ASB "
+            "binder slug convention. Returns immediately if the KB already has chunks."
+        ),
+        "when_to_use": (
+            "Before grounding questions against a single paper, to guarantee its KB "
+            "exists without re-ingesting it on every call."
+        ),
+        "key_knobs": ["doi (required)", "mode — reserved, currently unused"],
+    },
+    {
+        "name": "ground_paper",
+        "purpose": (
+            "Answer a research question against one paper's dedicated KB, ensuring "
+            "that KB exists first (via ensure_kb)."
+        ),
+        "when_to_use": (
+            "Ask a question of a specific paper by DOI in one call. Set tier='si' to "
+            "prefer evidence from the paper's supplementary information."
+        ),
+        "key_knobs": ["doi (required)", "question (required)", "tier (paper|si) — default: paper"],
+    },
+    {
         "name": "ingest_local_documents",
         "purpose": "Ingest local files (PDF/text) into a KB.",
         "when_to_use": "Add documents already on disk to a KB when the filename is a sufficient identifier.",

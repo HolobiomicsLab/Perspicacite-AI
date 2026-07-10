@@ -30,7 +30,7 @@ def test_claims_to_graph_routes_domain_qualifier_to_domain_slot():
 def test_domain_qualifier_claim_conforms_end_to_end():
     """A domain-qualifier claim round-trips through indicium SHACL (Reading 1).
 
-    Requires the `indicia` extra; skipped otherwise. Proves the routed
+    Requires the private indicium package; skipped otherwise. Proves the routed
     asb:domainQualifier value is accepted by indicium's open snake_case slot."""
     pytest.importorskip("indicium")
     claims = [{"context": "c", "subject": "s", "qualifier": "aligned_with",

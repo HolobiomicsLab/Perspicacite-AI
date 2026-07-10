@@ -675,9 +675,15 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
             # Persist the assistant reply too.
             if conversation_id and app_state.session_store:
                 try:
+                    from perspicacite.rag.utils import collapse_runaway_repeats
+
                     await app_state.session_store.add_message(
                         conversation_id,
-                        Message(id=assistant_message_id, role="assistant", content=reply),
+                        Message(
+                            id=assistant_message_id,
+                            role="assistant",
+                            content=collapse_runaway_repeats(reply),
+                        ),
                     )
                 except Exception as e:
                     logger.warning(f"Failed to save chat-only assistant message: {e}")
@@ -730,10 +736,16 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
     # Save assistant message to conversation
     if conversation_id and app_state.session_store and assistant_content:
         try:
+            from perspicacite.rag.utils import collapse_runaway_repeats
+
             msg_id = assistant_message_id_outer or str(uuid.uuid4())
             await app_state.session_store.add_message(
                 conversation_id,
-                Message(id=msg_id, role="assistant", content=assistant_content),
+                Message(
+                    id=msg_id,
+                    role="assistant",
+                    content=collapse_runaway_repeats(assistant_content),
+                ),
             )
             logger.info(f"Saved conversation messages to {conversation_id}")
         except Exception as e:
@@ -1036,24 +1048,65 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
                 "hits": [h.to_dict() for h in hits],
             }) + "\n\n"
         )
-        # If only one KB matched, route as single-KB; else multi-KB
+        # Auto-routing (esp. the default BM25 text router) can surface KBs
+        # across embedding models — e.g. a legacy all-MiniLM KB alongside
+        # text-embedding-3-large ones. They can't be queried together, and a
+        # KB in a different family than the running embedding provider can't
+        # be queried here at all (dimension mismatch). Narrow to the family
+        # the server can actually query instead of failing outright.
         picked = [h.kb_name for h in hits]
         if len(picked) == 1:
             effective_kb_name = picked[0]
         else:
-            # Run the same embedding-compat guard the manual multi-KB
-            # path uses.
-            from perspicacite.retrieval.multi_kb import check_embedding_compat
+            from perspicacite.retrieval.multi_kb import (
+                canonical_embedding_fingerprint,
+            )
+
             metas = [await app_state.session_store.get_kb_metadata(n) for n in picked]
-            compat_msg = check_embedding_compat(metas)
-            if compat_msg:
+            server_fp = canonical_embedding_fingerprint(
+                getattr(getattr(app_state, "embedding_provider", None), "model_name", None)
+            )
+            # Prefer the running server's embedding family; fall back to the
+            # most-relevant (top-ranked) KB's family if the server model is
+            # unknown.
+            target_fp = server_fp or next(
+                (
+                    canonical_embedding_fingerprint(getattr(m, "embedding_model", None))
+                    for m in metas
+                    if m is not None
+                ),
+                None,
+            )
+            compatible = [
+                n
+                for n, m in zip(picked, metas)
+                if m is not None
+                and canonical_embedding_fingerprint(getattr(m, "embedding_model", None))
+                == target_fp
+            ]
+            dropped = [n for n in picked if n not in compatible]
+            if dropped:
+                logger.info(
+                    f"auto-route narrowed to embedding family {target_fp!r}: "
+                    f"querying {compatible}, dropped {dropped}"
+                )
+            if not compatible:
                 yield (
                     "data: " + json.dumps({
-                        "type": "error", "message": compat_msg,
+                        "type": "error",
+                        "message": (
+                            f"Auto-routing matched {picked}, but none share the "
+                            f"running server's embedding model ({target_fp}). Pick a "
+                            "knowledge base with that embedding directly, or restart "
+                            "the server with the matching embedding config."
+                        ),
                     }) + "\n\n"
                 )
                 return
-            effective_kb_names = picked
+            if len(compatible) == 1:
+                effective_kb_name = compatible[0]
+            else:
+                effective_kb_names = compatible
 
     elif request.kb_names and len(request.kb_names) > 1 and app_state.session_store:
         from perspicacite.retrieval.multi_kb import check_embedding_compat

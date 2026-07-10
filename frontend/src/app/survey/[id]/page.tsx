@@ -174,7 +174,7 @@ export default function SurveyDetailPage({
             <button
               type="button"
               onClick={() => router.push("/survey")}
-              className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+              className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
             >
               ← Back
             </button>
@@ -201,7 +201,7 @@ export default function SurveyDetailPage({
           <button
             type="button"
             onClick={() => router.push("/survey")}
-            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
           >
             Restart
           </button>
@@ -311,7 +311,7 @@ function ReviewPhase({
         {/* Themes */}
         <div>
           <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-body)]">
               Themes
             </h2>
             <p className="text-xs text-[var(--text-muted)]">
@@ -334,7 +334,7 @@ function ReviewPhase({
         {/* Papers */}
         <div>
           <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-body)]">
               Papers
             </h2>
             <p className="text-xs text-[var(--text-muted)]">
@@ -366,7 +366,7 @@ function ReviewPhase({
       <div className="sticky bottom-0 left-0 right-0 z-10 border-t border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-3">
           <p className="text-sm text-[var(--text-body)]">
-            <span className="font-semibold text-[var(--cnrs-blue)]">
+            <span className="font-semibold text-[var(--text-body)]">
               {count}
             </span>{" "}
             of {total} selected
@@ -444,7 +444,7 @@ function PaperCard({
         />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <h3 className="text-[15px] font-semibold leading-snug text-[var(--cnrs-blue)]">
+            <h3 className="text-[15px] font-semibold leading-snug text-[var(--text-body)]">
               {paper.title ?? paper.doi ?? paper.id}
             </h3>
             {paper.recommended && (
@@ -484,7 +484,7 @@ function PaperCard({
                 target="_blank"
                 rel="noreferrer noopener"
                 onClick={(e) => e.stopPropagation()}
-                className="font-mono text-[var(--cnrs-blue)] underline-offset-2 hover:underline"
+                className="font-mono text-[var(--text-body)] underline-offset-2 hover:underline"
               >
                 {paper.doi}
               </a>
@@ -535,7 +535,7 @@ function ConfirmPhase({
   return (
     <section className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 md:px-6">
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-body)]">
           Confirm your selection
         </h2>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
@@ -554,7 +554,7 @@ function ConfirmPhase({
               {i + 1}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-[var(--cnrs-blue)]">
+              <p className="truncate text-sm font-medium text-[var(--text-body)]">
                 {p.title ?? p.id}
               </p>
               {p.doi && (
@@ -578,7 +578,7 @@ function ConfirmPhase({
           type="button"
           onClick={onBack}
           disabled={generating}
-          className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           ← Back to review
         </button>
@@ -627,14 +627,14 @@ function ReportPhase({
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 md:px-6">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-body)]">
           Deep report
         </h2>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onCopy}
-            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+            className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-sm font-medium text-[var(--text-body)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
           >
             {copied ? "Copied ✓" : "Copy report"}
           </button>

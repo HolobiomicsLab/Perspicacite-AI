@@ -22,7 +22,7 @@ async def test_default_strategy_after_subplan_b_is_evidence_graded():
     )
 
 
-async def test_missing_indicia_extra_yields_error(monkeypatch):
+async def test_missing_indicium_yields_error(monkeypatch):
     from perspicacite.rag.modes import reasoning as reasoning_mod
 
     monkeypatch.setattr(reasoning_mod, "_HAS_INDICIA", False)
@@ -33,7 +33,7 @@ async def test_missing_indicia_extra_yields_error(monkeypatch):
     )
     err = next(e for e in events if e.event == "error")
     payload = json.loads(err.data)
-    assert "indicia" in payload["message"]
+    assert "indicium" in payload["message"]
 
 
 async def test_reasoning_mode_registered_in_engine():

@@ -1971,7 +1971,7 @@ async def export_claim_graph(
     except ImportError:
         raise HTTPException(
             status_code=501,
-            detail="indicia extra not installed; run: uv sync --extra indicia",
+            detail="indicium is not installed; it is a private, maintainer-only package",
         ) from None
 
     _valid = ("nquads", "turtle", "jsonld", "rocrate")

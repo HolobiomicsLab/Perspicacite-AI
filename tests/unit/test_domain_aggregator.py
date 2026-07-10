@@ -36,6 +36,44 @@ class _Provider:
         return self._papers
 
 
+class _YearRecordingProvider:
+    """Records the year window it was called with and returns papers of mixed years."""
+
+    def __init__(self, papers: list[Paper]):
+        self.name = "gen"
+        self.description = "gen"
+        self.domains = ["general"]
+        self.tier = "reliable"
+        self.retry = 0
+        self._papers = papers
+        self.seen_year_min: int | None = -1  # sentinel: never called
+        self.seen_year_max: int | None = -1
+
+    async def search(self, query, max_results=20, year_min=None, year_max=None, **kwargs):
+        self.seen_year_min, self.seen_year_max = year_min, year_max
+        return self._papers
+
+
+@pytest.mark.asyncio
+async def test_year_window_enforced_post_merge_not_forwarded():
+    """A year_max keeps in-range + unknown-year papers, drops post-cutoff ones, and is
+    NOT forwarded to providers (fetch on the fast no-year path, then filter)."""
+    papers = [
+        Paper(id="10.1/old", title="Old", doi="10.1/old", source=PaperSource.PUBMED, year=2018),
+        Paper(id="10.1/new", title="New", doi="10.1/new", source=PaperSource.PUBMED, year=2024),
+        Paper(id="10.1/none", title="NoYr", doi="10.1/none", source=PaperSource.PUBMED, year=None),
+    ]
+    p = _YearRecordingProvider(papers)
+    agg = DomainAwareAggregator([p], provider_timeout_s=5.0)
+    results = await agg.search("any query", year_max=2023)
+
+    dois = {r.doi for r in results}
+    assert dois == {"10.1/old", "10.1/none"}  # 2024 dropped; unknown-year kept
+    # The year window is enforced locally, never pushed to the provider (avoids the
+    # SciLEx per-year fan-out that returned zero results).
+    assert p.seen_year_min is None and p.seen_year_max is None
+
+
 @pytest.mark.asyncio
 async def test_basic_routing_general_provider():
     p = _Provider("gen", [_paper("10.1/a")])

@@ -292,6 +292,23 @@ function parseFrame(frame: string): ChatStreamEvent[] {
       },
     ];
   }
+  // Plain status frames carry the live phase text (e.g. "Basic RAG:
+  // Retrieving documents…", "Basic RAG: Generating response…"). Surface
+  // them as steps so the agentic trail advances through its phases in real
+  // time as the answer streams, instead of only snapping to done at the end.
+  if (obj.type === "status" && typeof obj.message === "string") {
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "status",
+          label: obj.message,
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
   if (obj.kind === "provider_progress") {
     const phase = obj.phase === "done" ? "done" : "start";
     const providers = Array.isArray(obj.providers)

@@ -24,6 +24,10 @@ llm:
   default_provider: "anthropic"
   default_model: "claude-sonnet-4-5"
   default_timeout_s: 60  # applied to every LLM call that doesn't set its own timeout
+  # Ollama only: context window forwarded to the local model. Ollama defaults
+  # num_ctx to 2048, which truncates long RAG synthesis prompts and makes the
+  # model return nothing. Raise to fit your prompts (more RAM = larger value).
+  ollama_num_ctx: 8192
 
   # ── Free-tier auto-rotation (zero-cost alternative) ──────────────────────
   # Set free_auto_mode: true + add your OPENROUTER_API_KEY (free account at
@@ -159,6 +163,10 @@ rag_modes:
     # Higher values improve coverage but increase latency and token cost.
     # Range: 1–64; default is 8.
     map_reduce_max_papers: 8
+    # Opt-in: write each agentic answer + an APA reference list to a .docx.
+    # Off by default; requires the optional [docx] extra (`uv sync --extra docx`).
+    export_apa_docx: false
+    export_apa_docx_dir: "output"
 
   literature_survey:
     seed_known_max: 5   # known papers to keep as survey anchors when all results are already in KB

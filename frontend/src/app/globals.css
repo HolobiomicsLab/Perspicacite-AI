@@ -31,6 +31,8 @@
   --border: #dfe4ec;
   --text-body: #00284b;
   --text-muted: #4a5b75;
+  --surface-hover: var(--cnrs-grey-light);   /* light grey hover (unchanged in light mode) */
+  color-scheme: light;
 
   /* Geometry */
   --radius-sm: 8px;
@@ -77,6 +79,8 @@ html:not(.theme-light) {
     --border: #1d3d5e;
     --text-body: #ebf0f5;
     --text-muted: #8296a5;
+  --surface-hover: #1b3f63;   /* subtle elevated navy for button :hover (was a near-white flash) */
+  color-scheme: dark;          /* themes native controls (select dropdowns, scrollbars) */
     --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.4);
     --shadow-elev: 0 16px 48px rgba(0, 0, 0, 0.5);
     /* In dark mode, "CNRS-blue accent text" disappears against the
@@ -95,6 +99,8 @@ html.theme-dark {
   --border: #1d3d5e;
   --text-body: #ebf0f5;
   --text-muted: #8296a5;
+  --surface-hover: #1b3f63;   /* subtle elevated navy for button :hover (was a near-white flash) */
+  color-scheme: dark;          /* themes native controls (select dropdowns, scrollbars) */
   --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.4);
   --shadow-elev: 0 16px 48px rgba(0, 0, 0, 0.5);
   --accent-fg: #ffeb6e;
@@ -110,6 +116,8 @@ html.theme-light {
   --border: #dfe4ec;
   --text-body: #00284b;
   --text-muted: #4a5b75;
+  --surface-hover: var(--cnrs-grey-light);   /* light grey hover (unchanged in light mode) */
+  color-scheme: light;
   --shadow-card: 0 8px 30px rgba(0, 40, 75, 0.08);
   --shadow-elev: 0 16px 48px rgba(0, 40, 75, 0.12);
 }

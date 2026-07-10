@@ -54,7 +54,7 @@ export function DatabasePicker({
         <button
           type="button"
           onClick={toggleAll}
-          className="text-[11px] font-medium text-[var(--cnrs-blue)] underline-offset-2 hover:underline"
+          className="text-[11px] font-medium text-[var(--text-body)] underline-offset-2 hover:underline"
           disabled={disabled}
         >
           {allOn ? "Deselect all" : "Select all"}
@@ -80,7 +80,7 @@ export function DatabasePicker({
           <button
             type="button"
             onClick={() => setShowOthers((s) => !s)}
-            className="flex w-full items-center justify-between rounded-[var(--radius-sm)] px-2 py-1.5 text-[11px] font-medium text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)]"
+            className="flex w-full items-center justify-between rounded-[var(--radius-sm)] px-2 py-1.5 text-[11px] font-medium text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-body)]"
             aria-expanded={showOthers}
           >
             <span className="inline-flex items-center gap-1.5">
@@ -129,7 +129,7 @@ function DatabaseChip({
         "flex cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] border px-2 py-1.5 text-xs transition",
         on
           ? "border-[var(--cnrs-blue)] bg-[var(--cnrs-yellow)]/30 text-[var(--cnrs-blue)]"
-          : "border-[var(--border)] bg-transparent text-[var(--text-body)] hover:bg-[var(--cnrs-grey-light)]",
+          : "border-[var(--border)] bg-transparent text-[var(--text-body)] hover:bg-[var(--surface-hover)]",
         disabled && "cursor-not-allowed opacity-60",
       ].join(" ")}
       title={db.blurb ? `${db.label} · ${db.blurb}` : db.label}

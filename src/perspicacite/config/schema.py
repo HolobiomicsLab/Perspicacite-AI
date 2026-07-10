@@ -499,6 +499,13 @@ class LLMConfig(BaseModel):
     # v1 core/core.py get_response: truncate mandatory + base system prompt to this length (chars)
     max_context_window: int = Field(default=10000, ge=2000, le=500000)
 
+    # Ollama only: context window (num_ctx) forwarded to the local model.
+    # Ollama silently defaults num_ctx to 2048, which truncates long RAG
+    # synthesis prompts (assembled up to ~context.max_tokens) so the model
+    # emits nothing. Forwarding this keeps the prompt inside the window.
+    # Larger values use more RAM; ignored by non-Ollama providers.
+    ollama_num_ctx: int = Field(default=8192, ge=512)
+
     embedding_models_per_type: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -745,6 +752,10 @@ class RAGModeSettings(BaseModel):
     # deep_research: allow live web / academic-API searches in research cycles.
     # Set to false for KB-only evaluation environments to prevent rate-limit errors.
     use_websearch: bool = True
+    # Opt-in: write each agentic answer + an APA reference list to a .docx.
+    # Off by default; requires the optional [docx] extra (`uv sync --extra docx`).
+    export_apa_docx: bool = False
+    export_apa_docx_dir: str = "output"
 
 
 class RAGModesConfig(BaseModel):
