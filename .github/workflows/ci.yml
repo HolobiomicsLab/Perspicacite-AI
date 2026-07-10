@@ -23,6 +23,23 @@ jobs:
       - name: Ruff (report-only, --exit-zero)
         run: ruff check src/ tests/ --exit-zero --statistics
 
+  uv-resolve:
+    # Issue #29: uv resolves every extra and every [tool.uv.sources] entry when
+    # it locks, so one local-path source breaks `uv sync` on every fresh clone.
+    # The `test` job below installs with pip, which ignores [tool.uv.sources]
+    # outright and so cannot catch this. A GitHub runner never has the private
+    # sibling checkouts, which is exactly an external user's environment.
+    name: uv resolves on a clean checkout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v5
+      - name: uv lock
+        run: uv lock
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -57,11 +74,12 @@ jobs:
             -v --timeout=30 --timeout-method=signal --no-header
 
       - name: Unit tests (safe subset)
-        # The indicium knowledge-graph layer depends on the local sibling
-        # packages indicium / indicium-adapters (see [tool.uv.sources]) plus
-        # rdflib; indicium-adapters is not published on PyPI, so these modules
-        # cannot import under CI's plain `pip install -e ".[dev]"`. Excluded
-        # here until CI provisions the KG stack.
+        # The indicium knowledge-graph layer depends on the private sibling
+        # packages indicium / indicium-adapters, which are unpublished and so
+        # cannot be declared in pyproject.toml at all (see the comment there,
+        # and issue #29). These modules cannot import under CI's plain
+        # `pip install -e ".[dev]"`. Excluded here until CI provisions the
+        # KG stack.
         #
         # The trailing --deselect block additionally drops individual tests
         # that cannot pass in CI without the KG stack or network:
