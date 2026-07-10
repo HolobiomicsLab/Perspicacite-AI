@@ -172,9 +172,8 @@ class LiteLLMEmbeddingProvider:
                     )
                     batch_embeddings = [item["embedding"] for item in response["data"]]
                 except Exception as batch_err:
-                    # One poisoned input must not drop the whole paper: fall back
-                    # to embedding the batch item-by-item, zero-filling only the
-                    # individual texts that still fail.
+                    # Retry item-by-item so the log names the input that failed,
+                    # rather than the whole batch.
                     logger.warning(
                         "embedding_batch_fallback",
                         model=self.model,
@@ -182,17 +181,22 @@ class LiteLLMEmbeddingProvider:
                         error=str(batch_err),
                     )
                     batch_embeddings = []
-                    for one in batch:
+                    for position, one in enumerate(batch):
                         try:
                             r1 = await litellm.aembedding(model=self.model, input=[one])
                             batch_embeddings.append(r1["data"][0]["embedding"])
                         except Exception as item_err:
+                            # Never zero-fill. A zero vector sits at cosine
+                            # distance 1.0 from every other vector, so the chunk
+                            # is stored, retrieval degrades to a constant score,
+                            # and the ingest still reports success.
                             logger.error(
-                                "embedding_item_skipped",
+                                "embedding_item_failed",
                                 model=self.model,
+                                position=position,
                                 error=str(item_err),
                             )
-                            batch_embeddings.append([0.0] * self.dimension)
+                            raise
                 all_embeddings.extend(batch_embeddings)
 
             logger.debug(
