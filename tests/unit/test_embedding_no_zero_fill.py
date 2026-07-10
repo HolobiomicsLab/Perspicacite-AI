@@ -20,7 +20,7 @@ class _FakeLiteLLM:
         self.dimension = dimension
         self.single_calls: list[str] = []
 
-    async def aembedding(self, model: str, input: list[str]):  # noqa: A002
+    async def aembedding(self, model: str, input: list[str]):
         if len(input) > 1:
             raise RuntimeError("batch too large")
         text = input[0]
