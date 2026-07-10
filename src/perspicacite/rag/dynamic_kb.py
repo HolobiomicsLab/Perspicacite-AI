@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from perspicacite.llm.embeddings import EmbeddingFailedError
 from perspicacite.logging import get_logger
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 from perspicacite.rag.query_scope import PaperScopeResult, merge_scope_with_candidates
@@ -116,6 +117,12 @@ class DynamicKnowledgeBase:
                 total_added += docs_added
                 self._paper_ids.add(paper.id)
 
+            except EmbeddingFailedError:
+                # The embedder is down (bad key, exhausted quota). Every
+                # remaining paper would fail the same way, and swallowing it
+                # would report a successful ingest of zero usable chunks.
+                logger.error("add_paper_embedding_failed", paper_id=paper.id)
+                raise
             except Exception as e:
                 logger.error("add_paper_error", paper_id=paper.id, error=str(e))
 
