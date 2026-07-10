@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from perspicacite.indicium_layer.builder import build_claim_graph
+from perspicacite.indicium_layer.queries import ASB_NS
 from perspicacite.indicium_layer.store import ClaimGraphStore
 
 
@@ -57,13 +58,13 @@ async def test_builder_binds_quote_to_content_matched_passage(tmp_path, monkeypa
         )
         # The verified quote_exact must be present on some Evidence node.
         rows = store.select(
-            'SELECT ?q WHERE { ?e <https://asb.holobiomics.org/ns/asb#quoteExact> ?q }'
+            f'SELECT ?q WHERE {{ ?e <{ASB_NS}quoteExact> ?q }}'
         )
         quotes = {r["q"] for r in rows}
         assert "compound A inhibits enzyme B" in quotes
         # anchorStatus verified is recorded.
         status_rows = store.select(
-            'SELECT ?s WHERE { ?e <https://asb.holobiomics.org/ns/asb#anchorStatus> ?s }'
+            f'SELECT ?s WHERE {{ ?e <{ASB_NS}anchorStatus> ?s }}'
         )
         assert "verified" in {r["s"] for r in status_rows}
     finally:
@@ -109,12 +110,12 @@ async def test_builder_does_not_launder_unverified_quote(tmp_path, monkeypatch):
         )
         # No quoteExact may be laundered onto any Evidence node.
         quote_rows = store.select(
-            'SELECT ?q WHERE { ?e <https://asb.holobiomics.org/ns/asb#quoteExact> ?q }'
+            f'SELECT ?q WHERE {{ ?e <{ASB_NS}quoteExact> ?q }}'
         )
         assert quote_rows == []
         # The claim is still kept (fail-open) and tagged unverified.
         status_rows = store.select(
-            'SELECT ?s WHERE { ?e <https://asb.holobiomics.org/ns/asb#anchorStatus> ?s }'
+            f'SELECT ?s WHERE {{ ?e <{ASB_NS}anchorStatus> ?s }}'
         )
         assert "unverified" in {r["s"] for r in status_rows}
     finally:

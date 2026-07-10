@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+from perspicacite.indicium_layer.queries import ASB_NS
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGRequest, SourceReference, StreamEvent
 from perspicacite.rag.modes.base import BaseRAGMode
@@ -58,7 +59,7 @@ Return ONLY valid JSON with this exact structure:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_CLAIM_NS = "https://asb.holobiomics.org/ns/asb#"
+_CLAIM_NS = ASB_NS
 _RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 
 

@@ -25,6 +25,8 @@ from typing import Literal as LiteralType
 from rdflib import Dataset, URIRef
 from rdflib import Literal as RdflibLiteral
 
+from perspicacite.indicium_layer.queries import ASB_NS
+
 # rdflib ≥ 6.0 deprecates ConjunctiveGraph in favour of Dataset.
 # Dataset is a drop-in for our usage (add/query named graphs).
 ConjunctiveGraph = Dataset  # alias for backward compat in type hints below
@@ -32,7 +34,7 @@ ConjunctiveGraph = Dataset  # alias for backward compat in type hints below
 _RDF_SUBJECT = URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#subject")
 _RDF_PREDICATE = URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate")
 _RDF_OBJECT = URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#object")
-_ASB_CONFIDENCE = URIRef("https://asb.holobiomics.org/ns/asb#confidence")
+_ASB_CONFIDENCE = URIRef(f"{ASB_NS}confidence")
 _PROV_WAS_GENERATED_BY = URIRef("http://www.w3.org/ns/prov#wasGeneratedBy")
 _XSD_DECIMAL = "http://www.w3.org/2001/XMLSchema#decimal"
 

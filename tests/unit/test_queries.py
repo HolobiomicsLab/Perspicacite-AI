@@ -16,7 +16,11 @@ CITO_DISPUTES = f"{CITO_NS}disputes"
 
 
 def test_namespace_constants():
-    assert ASB_NS == "https://asb.holobiomics.org/ns/asb#"
+    # Guards the bug class: a stale copy means SHACL matches nothing and
+    # every claim graph "conforms" without a constraint being checked.
+    import indicium
+
+    assert ASB_NS == indicium.ASB_BASE
     assert CITO_NS == "http://purl.org/spar/cito/"
     assert "asb:" in SPARQL_PREFIXES
     assert "cito:" in SPARQL_PREFIXES

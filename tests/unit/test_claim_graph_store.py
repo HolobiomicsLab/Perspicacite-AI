@@ -1,9 +1,10 @@
 """Unit tests for indicium_layer.store.ClaimGraphStore (rdflib backend)."""
 
+from perspicacite.indicium_layer.queries import ASB_NS
 from perspicacite.indicium_layer.store import ClaimGraphStore
 
 PROV_WAS_GEN_BY = "http://www.w3.org/ns/prov#wasGeneratedBy"
-ASB_CONFIDENCE = "https://asb.holobiomics.org/ns/asb#confidence"
+ASB_CONFIDENCE = f"{ASB_NS}confidence"
 RDF_SUBJECT = "http://www.w3.org/1999/02/22-rdf-syntax-ns#subject"
 CITO_SUPPORTS = "http://purl.org/spar/cito/supports"
 
@@ -32,11 +33,11 @@ def test_literal_with_datatype():
     xsd_decimal = "http://www.w3.org/2001/XMLSchema#decimal"
     store.add(
         "kb://kbA/x",
-        "https://asb.holobiomics.org/ns/asb#confidence",
+        ASB_CONFIDENCE,
         ("literal", "0.82", xsd_decimal),
     )
     rows = store.select(
-        "SELECT ?v WHERE { <kb://kbA/x> <https://asb.holobiomics.org/ns/asb#confidence> ?v }"
+        f"SELECT ?v WHERE {{ <kb://kbA/x> <{ASB_CONFIDENCE}> ?v }}"
     )
     assert rows[0]["v"] == "0.82"
     store.close()
