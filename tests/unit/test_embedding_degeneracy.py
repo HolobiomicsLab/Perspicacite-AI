@@ -132,6 +132,35 @@ async def test_zero_vector_for_an_empty_chunk_is_also_rejected(temp_dir):
 
 
 @pytest.mark.asyncio
+async def test_pre_embedded_zero_vector_is_rejected(temp_dir):
+    """capsule_builder, capsule_reader and local_docs embed before calling add_documents.
+
+    Those chunks arrive with .embedding already set, so they never pass through the
+    provider branch. Screen them too, or the collection is poisoned by the back door.
+    """
+    store = _store(temp_dir, _returns_unit_vectors)
+    chunk = _chunk("chunk-1", "real content")
+    chunk.embedding = [0.0] * DIMENSION
+
+    with pytest.raises(EmbeddingFailedError, match="zero vector"):
+        await store.add_documents("test-kb", [chunk])
+
+    collection = store.client.get_or_create_collection(name="test-kb")
+    assert collection.count() == 0
+
+
+@pytest.mark.asyncio
+async def test_pre_embedded_real_vector_still_stores(temp_dir):
+    """A caller-supplied healthy vector must still be accepted."""
+    store = _store(temp_dir, _returns_unit_vectors)
+    chunk = _chunk("chunk-1", "real content")
+    chunk.embedding = [1.0] + [0.0] * (DIMENSION - 1)
+
+    await store.add_documents("test-kb", [chunk])
+    assert store.client.get_collection(name="test-kb").count() == 1
+
+
+@pytest.mark.asyncio
 async def test_misaligned_embedding_count_is_rejected(temp_dir):
     """A short vector list would misassign every embedding after the dropped text."""
     store = _store(temp_dir, _returns_too_few_vectors)

@@ -37,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from perspicacite.llm.embeddings import EmbeddingFailedError
 from perspicacite.logging import get_logger
 
 logger = get_logger("perspicacite.pipeline.search_to_kb")
@@ -547,6 +548,9 @@ async def ingest_dois_into_kb(
         cookies_path = pdf_config.cookies_path
 
     papers_to_add: list[Paper] = []
+    # DOIs marked "added" on retrieval but not yet embedded. The checkpoint never
+    # re-offers an "added" id, so the mark must be undone if the batch never lands.
+    pending_dois: list[str] = []
     skipped: list[dict] = []
     failed: list[dict[str, str]] = []
     dl: dict[str, int] = {"attempted": 0, "success": 0, "failed": 0}
@@ -632,6 +636,7 @@ async def ingest_dois_into_kb(
             # Mark as added immediately on successful retrieval (Wave 3.3).
             ck_state.record(doi, "added")
             ckpt.save(ck_state)
+            pending_dois.append(doi)
 
     added_chunks = 0
     if papers_to_add:
@@ -641,7 +646,17 @@ async def ingest_dois_into_kb(
         )
         dkb.collection_name = collection_name
         dkb._initialized = True
-        added_chunks = await dkb.add_papers(papers_to_add, include_full_text=True)
+        try:
+            added_chunks = await dkb.add_papers(papers_to_add, include_full_text=True)
+        except EmbeddingFailedError:
+            # These DOIs were marked "added" the moment they were retrieved, before
+            # the batch was embedded. remaining_ids() never re-offers an "added" id,
+            # so leaving the mark would make a resume skip them for ever. Chroma
+            # ignores duplicate ids, so re-ingesting any that did land is harmless.
+            for pending in pending_dois:
+                ck_state.processed.pop(pending, None)
+            ckpt.save(ck_state)
+            raise
         kb_meta.paper_count = (kb_meta.paper_count or 0) + len(papers_to_add)
         kb_meta.chunk_count = (kb_meta.chunk_count or 0) + added_chunks
         await app_state.session_store.save_kb_metadata(kb_meta)

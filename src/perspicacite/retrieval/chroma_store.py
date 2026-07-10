@@ -230,6 +230,20 @@ class ChromaVectorStore:
         embeddings = [chunk.embedding for chunk in chunks]
         if any(e is None for e in embeddings):
             raise ValueError("All chunks must have embeddings before add_documents")
+        # Callers may arrive with chunk.embedding already set (capsule_builder,
+        # capsule_reader, local_docs embed before calling). Those vectors skip the
+        # check above, so screen everything that is about to be written.
+        poisoned = [
+            chunk.id
+            for chunk, e in zip(chunks, embeddings, strict=True)
+            if is_zero_vector(e)
+        ]
+        if poisoned:
+            raise EmbeddingFailedError(
+                f"refusing to store {len(poisoned)} zero vector(s) in collection "
+                f"{collection!r} (first chunk: {poisoned[0]!r}); a zero vector matches "
+                "every query at the same score"
+            )
         metadatas = [_chunk_to_metadata(chunk.metadata) for chunk in chunks]
 
         # Add to Chroma
