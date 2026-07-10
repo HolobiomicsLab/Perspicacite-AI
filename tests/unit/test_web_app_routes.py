@@ -54,12 +54,27 @@ def _load_app():
     return app
 
 
+def _flatten_routes(routes):
+    """Yield leaf routes, descending into routers wrapped by include_router.
+
+    FastAPI >= 0.139 no longer copies an included router's routes onto the app.
+    It appends one wrapper per include_router() call, exposing the router as
+    ``original_router``. Older versions flatten, leaving nothing to descend into.
+    """
+    for route in routes:
+        included_router = getattr(route, "original_router", None)
+        if included_router is None:
+            yield route
+        else:
+            yield from _flatten_routes(included_router.routes)
+
+
 def _route_methods_by_path(app):
-    """Return {path: {methods}} for every APIRoute on the app."""
+    """Return {path: {methods}} for every APIRoute reachable from the app."""
     from fastapi.routing import APIRoute
 
     out: dict[str, set[str]] = {}
-    for r in app.routes:
+    for r in _flatten_routes(app.routes):
         if isinstance(r, APIRoute):
             out.setdefault(r.path, set()).update(r.methods or set())
         else:
