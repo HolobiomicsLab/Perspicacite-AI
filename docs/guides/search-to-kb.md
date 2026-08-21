@@ -152,6 +152,49 @@ citation counts.
 
 ---
 
+## When a search returns nothing
+
+`searched=0, candidates=0` has two very different causes, and they must not be
+confused:
+
+- **The query genuinely matched nothing.** Broaden it, drop a filter, or widen
+  the year range.
+- **Every database refused the request.** The literature is there; you never got
+  to see it.
+
+The second case is now reported explicitly. When a backend answers `429`, the
+run logs `scilex_backends_throttled` naming the affected databases, and callers
+using `search_with_warnings` (or the `build_kb_from_search` MCP tool) receive a
+`rate_limit_blocked` warning carrying the provider list and the longest
+`Retry-After` the server asked for:
+
+```json
+{
+  "kind": "rate_limit_blocked",
+  "providers": ["OpenAlex"],
+  "retry_after_s": 14917,
+  "advice": "One or more databases answered 429 and returned nothing, ..."
+}
+```
+
+**Never read a throttled run as evidence that a field is empty.** A systematic
+survey built on a throttled search will silently under-report its coverage.
+
+Two common causes:
+
+- **OpenAlex meters a daily credit budget** (1000 credits/day on the free tier)
+  that resets at midnight UTC. A large DOI ingest earlier in the day can exhaust
+  it, after which every search request returns `429` with a multi-hour
+  `Retry-After`. See <https://openalex.org/pricing>.
+- **Semantic Scholar's public tier throttles hard** without an API key. Set
+  `pdf_download.semantic_scholar_api_key` in `config.yml` to lift it.
+
+Databases needing paid keys (`ieee`, `springer`, `elsevier`) are `enabled: false`
+in `config.example.yml`. Passing `-d ieee` while it is disabled is a silent
+no-op — the flag is accepted and the backend is never queried.
+
+---
+
 ## Via MCP
 
 The same workflow is available as the `build_kb_from_search` MCP tool:
