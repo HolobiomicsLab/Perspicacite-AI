@@ -15,12 +15,16 @@ def _paper():
 
 
 def test_constant_is_false_when_dep_missing():
-    # Treat as a runtime probe — the constant equals importability.
-    expected = importlib.util.find_spec("tree_sitter_languages") is not None
+    # Treat as a runtime probe — the constant equals importability. Mirror the
+    # probe's own resolution order: either parser pack satisfies it.
+    expected = (
+        importlib.util.find_spec("tree_sitter_language_pack") is not None
+        or importlib.util.find_spec("tree_sitter_languages") is not None
+    )
     assert expected == HAS_TREE_SITTER
 
 
-@pytest.mark.skipif(not HAS_TREE_SITTER, reason="tree_sitter_languages not installed")
+@pytest.mark.skipif(not HAS_TREE_SITTER, reason="no tree-sitter parser pack installed")
 def test_go_function_extracted():
     src = (
         "package main\n\n"
