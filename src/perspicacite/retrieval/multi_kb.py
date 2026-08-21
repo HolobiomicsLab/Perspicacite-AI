@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from perspicacite.llm.embeddings import EmbeddingFailedError
 from perspicacite.logging import get_logger
 
 if TYPE_CHECKING:
@@ -103,6 +104,10 @@ class MultiKBRetriever:
                     query_embedding=query_embedding,
                     top_k=top_k * 2,
                 )
+            except EmbeddingFailedError:
+                # A degenerate query fails against every collection, so skipping
+                # them one by one would return an empty result reported as success.
+                raise
             except Exception as e:
                 logger.warning("multi_kb_search_collection_failed", collection=coll, error=str(e))
                 continue
@@ -252,6 +257,10 @@ async def query_chunks_across_collections(
                 collection=coll, query_embedding=query_embedding, top_k=top_k * 2
             )
             return results
+        except EmbeddingFailedError:
+            # Degenerate query: every collection fails identically, and an empty
+            # merged result would be indistinguishable from "nothing matched".
+            raise
         except Exception as e:
             logger.warning("fanout_search_failed", collection=coll, error=str(e))
             return []

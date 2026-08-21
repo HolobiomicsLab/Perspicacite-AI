@@ -30,9 +30,10 @@ _root.addHandler(_stream_handler)
 
 # Now safe to import modules that use structlog.
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from perspicacite.llm.embeddings import EmbeddingFailedError
 from perspicacite.web.routers import (
     chat as chat_router,
 )
@@ -103,6 +104,13 @@ async def _no_cache_for_assets(request, call_next):
         response.headers["Cache-Control"] = "no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
     return response
+
+
+@app.exception_handler(EmbeddingFailedError)
+async def _embedding_failed_handler(request, exc: EmbeddingFailedError):
+    """Report a dead embedder as an upstream failure, never as a successful ingest."""
+    logger.error("Embedding failed on %s: %s", request.url.path, exc)
+    return JSONResponse(status_code=502, content={"success": False, "error": str(exc)})
 
 
 # Mount routers

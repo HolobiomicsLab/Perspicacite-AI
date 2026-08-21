@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
+from perspicacite.config.paths import guard_session_db_path
 from perspicacite.jobs.registry import JobRegistry
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.provenance.store import ProvenanceStore
@@ -166,7 +166,7 @@ class AppState:
             tool_registry.register(WebSearchTool(app_state=self))
             logger.info("Tool registry initialized (web_search registered, LOTUS deactivated)")
         except Exception as exc:  # pragma: no cover - best-effort
-            logger.warning("web_search_tool_register_failed", error=str(exc))
+            logger.warning("web_search_tool_register_failed: %s", exc)
             logger.info("Tool registry initialized (LOTUS deactivated)")
 
         # Create LLM adapter for agentic components
@@ -192,11 +192,17 @@ class AppState:
         logger.info("Agentic orchestrator initialized")
 
         # Initialize session store FIRST so RAGEngine can receive it
-        db_path = Path("./data/perspicacite.db")
+        db_path = guard_session_db_path(config)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_store = SessionStore(db_path)
         await self.session_store.init_db()
-        logger.info("Session store initialized")
+        # Log both stores: an instance whose metadata and vectors live in
+        # different places lists knowledge bases that return nothing.
+        logger.info(
+            "Session store initialized at %s (chroma: %s)",
+            db_path,
+            config.database.chroma_path,
+        )
 
         # Initialize RAG engine for multi-mode support
         from perspicacite.rag.engine import RAGEngine

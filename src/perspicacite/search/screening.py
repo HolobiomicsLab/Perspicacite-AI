@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from rank_bm25 import BM25Plus
 
+from perspicacite.llm.embeddings import EmbeddingFailedError
 from perspicacite.logging import get_logger
 
 if TYPE_CHECKING:
@@ -487,6 +488,13 @@ async def screen_papers_embedding(
     try:
         ref_vecs = await embedding_provider.embed(list(flat))
         cand_vecs = await embedding_provider.embed(to_embed) if to_embed else []
+        # `bounds` indexes ref_vecs positionally, so a provider that drops
+        # empty texts would score candidates against the wrong paper.
+        if len(ref_vecs) != len(flat):
+            raise EmbeddingFailedError(
+                f"embedding provider returned {len(ref_vecs)} vector(s) for "
+                f"{len(flat)} reference text(s); refusing to score misaligned vectors"
+            )
     except Exception as exc:
         return [
             ScreenResult(item=c, score=0.0, kept=False, reason=f"embedding_error: {exc}")

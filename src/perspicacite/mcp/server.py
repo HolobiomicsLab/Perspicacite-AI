@@ -33,6 +33,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from perspicacite.config.paths import guard_session_db_path
 from perspicacite.logging import get_logger
 from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
@@ -95,8 +96,6 @@ class MCPState:
         if self.initialized:
             return
 
-        from pathlib import Path
-
         from perspicacite.llm import AsyncLLMClient
         from perspicacite.llm.embeddings import create_embedding_provider
         from perspicacite.memory.session_store import SessionStore
@@ -125,15 +124,20 @@ class MCPState:
         )
 
         # Session store
-        db_path = Path("./data/perspicacite.db")
+        db_path = guard_session_db_path(config)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_store = SessionStore(db_path)
         await self.session_store.init_db()
+        logger.info(
+            "mcp_stores_initialized",
+            session_db=str(db_path),
+            chroma_path=str(config.database.chroma_path),
+        )
 
         # Provenance store (shares the same DB as the session store)
         from perspicacite.provenance.store import ProvenanceStore
 
-        sidecar_dir = Path("./data/provenance")
+        sidecar_dir = db_path.parent / "provenance"
         sidecar_dir.mkdir(parents=True, exist_ok=True)
         self.provenance_store = ProvenanceStore(db_path=db_path, sidecar_dir=sidecar_dir)
 
@@ -5301,6 +5305,8 @@ async def zotero_get_attachment_bytes(
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
         return {"error": "ZOTERO_NOT_CONFIGURED", "message": "library_id required"}
+
+    import httpx
 
     from perspicacite.integrations.zotero import ZoteroClient
 
