@@ -1,24 +1,33 @@
 # REST API Reference
 
-The REST API is served by FastAPI at the same port as the web UI (default `:5468`).
+The REST API is served by FastAPI at the same port as the web UI (default `:8000`).
 All endpoints return JSON unless noted. Long-running operations return a `job_id`
 and stream progress via Server-Sent Events (SSE).
 
-Base URL: `http://localhost:5468`
+Base URL: `http://localhost:8000`
 
 ---
 
 ## Authentication
 
-Authentication is controlled by `auth.enabled` in `config.yml`. When enabled, pass a
-bearer token:
+The API is unauthenticated until you set a token. Set one via the
+`PERSPICACITE_AUTH_TOKEN` environment variable (or `auth.token` in `config.yml`)
+and every `/api/*` route except `GET /api/health` then requires it:
 
 ```
 Authorization: Bearer <your-token>
 ```
 
-Set the token via `auth.token` in `config.yml` or the `PERSPICACITE_AUTH_TOKEN`
-environment variable.
+Requests without it get `401` and a `WWW-Authenticate: Bearer` header. Setting
+`auth.enabled: false` disables enforcement even when a token is present.
+
+### Binding to a network interface
+
+Because an unauthenticated API exposes `POST /api/llm/proxy` — which spends your
+own LLM credits — and read/write access to every knowledge base, the server
+**refuses to start** on a non-loopback host unless a token is set. Bind
+`127.0.0.1` (the default), or set a token, or, if a reverse proxy in front
+already authenticates callers, set `auth.allow_insecure_network_bind: true`.
 
 ---
 

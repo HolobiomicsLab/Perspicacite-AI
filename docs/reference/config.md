@@ -257,7 +257,14 @@ logging:
 auth:
   enabled: true
   token: null   # set via PERSPICACITE_AUTH_TOKEN env var
+  allow_insecure_network_bind: false
 ```
+
+With no `token` the API is unauthenticated, so the server refuses to bind a
+non-loopback `server.host` (or `mcp.host`) — an open `/api/llm/proxy` spends
+your LLM credits for anyone who can reach it. Set a token to serve on a routable
+interface, or set `allow_insecure_network_bind: true` when something in front of
+the process already authenticates callers.
 
 ---
 

@@ -28,7 +28,7 @@ version: "2.0.0"
 config_name: "code-kb-codestral-port8003"
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8003
   reload: false
 
@@ -150,7 +150,7 @@ google_scholar:
 
 mcp:
   enabled: true
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8003
   transport: "streamable-http"
 

@@ -26,7 +26,7 @@ version: "2.0.0"
 config_name: "openai-large-port8002"
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8002
   reload: false
 
@@ -141,7 +141,7 @@ google_scholar:
 
 mcp:
   enabled: true
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8002
   transport: "streamable-http"
 

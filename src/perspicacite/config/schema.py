@@ -1251,10 +1251,23 @@ class LoggingConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """Authentication configuration."""
+    """Authentication configuration.
+
+    With no ``token`` the API is unauthenticated, which is why a tokenless
+    bind is restricted to loopback — see ``web.auth.assert_bind_is_safe``.
+    """
 
     enabled: bool = True
     token: str | None = None  # Set via env: PERSPICACITE_AUTH_TOKEN
+    allow_insecure_network_bind: bool = Field(
+        default=False,
+        description=(
+            "Permit binding a non-loopback interface without an API token. "
+            "Only set this when something in front of this process (a reverse "
+            "proxy, an SSH tunnel) already authenticates callers: the API "
+            "exposes an LLM gateway that spends your credits."
+        ),
+    )
 
 
 class UIConfig(BaseModel):

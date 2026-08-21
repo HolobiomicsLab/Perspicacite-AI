@@ -26,7 +26,7 @@ version: "2.0.0"
 config_name: "bge-m3-port8004"
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8004
   reload: false
 
@@ -86,7 +86,7 @@ scilex:
 
 mcp:
   enabled: true
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8004
   transport: "streamable-http"
 

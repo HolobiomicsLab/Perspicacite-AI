@@ -124,6 +124,14 @@ def serve(
     if no_mcp:
         config.mcp.enabled = False
 
+    # Fail before binding rather than publishing an unauthenticated LLM
+    # gateway and every knowledge base to the network.
+    from perspicacite.web.auth import assert_bind_is_safe
+
+    assert_bind_is_safe(config.server.host, config)
+    if config.mcp.enabled:
+        assert_bind_is_safe(config.mcp.host, config)
+
     logger.info(
         "starting_server",
         host=config.server.host,
@@ -557,6 +565,11 @@ def _start_mcp_and_web(config, app) -> None:
 
     # Mount MCP ASGI app — its internal routes are at /mcp
     app.mount("/", mcp_app)
+
+    # Guard at the bind itself, so no caller can reach uvicorn without it.
+    from perspicacite.web.auth import assert_bind_is_safe
+
+    assert_bind_is_safe(config.server.host, config)
 
     # Run single server
     uvicorn.run(

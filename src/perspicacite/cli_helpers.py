@@ -45,6 +45,11 @@ def _start_mcp_and_web(config, app) -> None:
     # Mount MCP ASGI app — its internal routes are at /mcp
     app.mount("/", mcp_app)
 
+    # Guard at the bind itself, so no caller can reach uvicorn without it.
+    from perspicacite.web.auth import assert_bind_is_safe
+
+    assert_bind_is_safe(config.server.host, config)
+
     # Run single server
     uvicorn.run(
         app,

@@ -10,7 +10,7 @@ config_name: "anthropic-default"
 # =============================================================================
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8000
   reload: false
 
@@ -284,7 +284,7 @@ pdf_download:
 
 mcp:
   enabled: true
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8000
   transport: "streamable-http"  # co-hosted with FastAPI at /mcp
 
@@ -294,7 +294,14 @@ mcp:
 
 auth:
   enabled: true
-  # Token set via PERSPICACITE_AUTH_TOKEN environment variable
+  # Token set via PERSPICACITE_AUTH_TOKEN environment variable.
+  #
+  # With no token the API is unauthenticated, so the server refuses to bind a
+  # non-loopback server.host / mcp.host: an open /api/llm/proxy spends your own
+  # LLM credits for anyone who can reach the port, and the KB routes are
+  # read/write. To serve on a routable interface, set a token — or set the
+  # flag below if a reverse proxy in front already authenticates callers.
+  allow_insecure_network_bind: false
 
 # =============================================================================
 # UI Configuration
