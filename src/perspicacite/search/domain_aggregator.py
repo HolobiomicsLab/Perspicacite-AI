@@ -19,6 +19,11 @@ _OBVIOUS_PLACEHOLDERS = {
     "your.email@domain.com", "email@example.com", "test@test.com",
 }
 
+# SciLEx's own collection deadline must land inside the provider timeout that
+# wraps it, or asyncio.wait_for cancels the call and the partial results it
+# was meant to preserve are discarded anyway.
+_SCILEX_DEADLINE_FRACTION = 0.8
+
 
 class ProviderHealthTracker:
     """In-memory circuit breaker: skip providers with repeated failures."""
@@ -204,14 +209,28 @@ class DomainAwareAggregator:
         tasks = []
         for p in providers:
             extra: dict[str, Any] = {}
-            if selected_names and getattr(p, "name", "") == "scilex":
-                # Forward only the names SciLEx itself dispatches to.
-                scilex_sub_names = {
-                    "arxiv", "crossref", "pubmed", "semantic_scholar", "openalex",
-                }
-                sx_apis = [n for n in selected_names if n in scilex_sub_names]
-                if sx_apis:
-                    extra["apis"] = sx_apis
+            if getattr(p, "name", "") == "scilex":
+                # SciLEx is itself a multi-API, multi-year fan-out; a single
+                # rate-limited backend (Semantic Scholar's public tier) can run
+                # past our per-provider ``wait_for`` budget below. ``wait_for``
+                # would then cancel and return [] — discarding the results the
+                # *fast* backends already collected. Hand SciLEx a soft deadline
+                # safely under that budget so it abandons stragglers and returns
+                # partial results instead of nothing. Without this, a query
+                # narrowed to only SciLEx sub-providers returns 0 hits even when
+                # SciLEx collected hundreds.
+                tier = getattr(p, "tier", "reliable")
+                extra["collect_deadline_s"] = (
+                    self._tier_timeout(tier) * _SCILEX_DEADLINE_FRACTION
+                )
+                if selected_names:
+                    # Forward only the names SciLEx itself dispatches to.
+                    scilex_sub_names = {
+                        "arxiv", "crossref", "pubmed", "semantic_scholar", "openalex",
+                    }
+                    sx_apis = [n for n in selected_names if n in scilex_sub_names]
+                    if sx_apis:
+                        extra["apis"] = sx_apis
             tasks.append(
                 self._call_provider(
                     p,

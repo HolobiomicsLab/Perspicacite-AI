@@ -556,6 +556,8 @@ async def search_literature(
                         )
                     if _prov._last_quota_warning is not None:
                         mcp_warnings.append(_prov._last_quota_warning)
+                    if getattr(_prov, "_last_partial_collection", None) is not None:
+                        mcp_warnings.append(_prov._last_partial_collection)
                     break
         except Exception:
             pass
