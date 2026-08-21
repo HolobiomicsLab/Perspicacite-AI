@@ -151,6 +151,10 @@ async def delete_conversation(conv_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
+    # The provenance sidecar holds verbatim prompts, so it goes with it.
+    if getattr(app_state, "provenance_store", None):
+        await app_state.provenance_store.purge_conversation(conv_id)
+
     return {"status": "deleted", "conversation_id": conv_id}
 
 
@@ -161,6 +165,11 @@ async def delete_all_conversations():
         raise HTTPException(status_code=503, detail="Session store not available")
 
     count = await app_state.session_store.delete_all_conversations()
+
+    # The provenance sidecars hold verbatim prompts, so they go with them.
+    if getattr(app_state, "provenance_store", None):
+        await app_state.provenance_store.purge_all()
+
     return {"status": "deleted", "count": count}
 
 

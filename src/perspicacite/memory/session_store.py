@@ -480,6 +480,10 @@ class SessionStore:
     async def delete_conversation(self, conv_id: str) -> bool:
         """Delete a conversation and all its messages.
 
+        Does NOT touch provenance: pair this with
+        ``ProvenanceStore.purge_conversation`` or the verbatim prompt sidecar
+        survives the deletion.
+
         Returns True if conversation was found and deleted, False otherwise.
         """
         async with aiosqlite.connect(self.db_path) as db:
