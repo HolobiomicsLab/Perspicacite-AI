@@ -242,7 +242,7 @@ perspicacite expand-kb              # Grow KB via citation graph
 perspicacite export-kb              # Export KB (BibTeX / Obsidian vault)
 perspicacite screen-papers          # Score candidates by relevance (no server needed)
 perspicacite pubmed-search          # Search PubMed to BibTeX (no server needed)
-perspicacite import-browser-cookies # Export session cookies for institutional PDF access
+perspicacite import-browser-cookies --domain nature.com   # Session cookies for institutional PDF access
 perspicacite check-cookies          # Check cookie freshness
 perspicacite build-capsule          # Build per-paper capsule (figures, SI, code)
 perspicacite build-capsules         # Build capsules for all papers in a KB
