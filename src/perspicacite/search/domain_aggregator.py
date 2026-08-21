@@ -24,6 +24,12 @@ _OBVIOUS_PLACEHOLDERS = {
 # was meant to preserve are discarded anyway.
 _SCILEX_DEADLINE_FRACTION = 0.8
 
+# Sub-provider names SciLEx dispatches to internally, so a filter naming any of
+# them must keep SciLEx in the fan-out and be forwarded down to it.
+_SCILEX_SUB_PROVIDERS = frozenset({
+    "arxiv", "crossref", "pubmed", "semantic_scholar", "openalex",
+})
+
 
 class ProviderHealthTracker:
     """In-memory circuit breaker: skip providers with repeated failures."""
@@ -191,11 +197,7 @@ class DomainAwareAggregator:
         # sub-provider, since SciLEx itself dispatches to those.
         if selected_names:
             requested = set(selected_names)
-            # Sub-provider names that SciLEx routes to internally.
-            scilex_sub_names = {
-                "arxiv", "crossref", "pubmed", "semantic_scholar", "openalex",
-            }
-            wants_scilex_sub = bool(requested & scilex_sub_names)
+            wants_scilex_sub = bool(requested & _SCILEX_SUB_PROVIDERS)
             filtered_providers = []
             for p in providers:
                 name = getattr(p, "name", "")
@@ -225,10 +227,7 @@ class DomainAwareAggregator:
                 )
                 if selected_names:
                     # Forward only the names SciLEx itself dispatches to.
-                    scilex_sub_names = {
-                        "arxiv", "crossref", "pubmed", "semantic_scholar", "openalex",
-                    }
-                    sx_apis = [n for n in selected_names if n in scilex_sub_names]
+                    sx_apis = [n for n in selected_names if n in _SCILEX_SUB_PROVIDERS]
                     if sx_apis:
                         extra["apis"] = sx_apis
             tasks.append(

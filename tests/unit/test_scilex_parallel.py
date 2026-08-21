@@ -1,5 +1,6 @@
 """Per-backend fan-out should be concurrent (ThreadPoolExecutor), not
 serial. A failure in one backend must not delay or poison the others."""
+import asyncio
 import sys
 import threading
 import time
@@ -105,12 +106,14 @@ class TestCollectDeadlineReturnsPartial:
             "Arxiv": [{"q": "x"}],            # fast
         }
 
+        report: dict = {}
         t0 = time.monotonic()
         successful, failed = adapter._collect_all_backends(
             collector=collector,
             queries_by_api=queries_by_api,
             max_results=10,
             collect_deadline_s=0.4,
+            report=report,
         )
         elapsed = time.monotonic() - t0
 
@@ -122,10 +125,14 @@ class TestCollectDeadlineReturnsPartial:
         # Slow backend was abandoned: neither succeeded nor failed.
         assert "SemanticScholar" not in successful
         assert "SemanticScholar" not in failed
-        # A structured partial-results warning is recorded for the caller.
-        assert adapter._last_partial_collection is not None
-        assert adapter._last_partial_collection["kind"] == "partial_results_timeout"
-        assert "SemanticScholar" in adapter._last_partial_collection["abandoned"]
+        # A structured partial-results warning is recorded for the caller —
+        # in the call-local report, never on the shared adapter.
+        partial = report["partial_collection"]
+        assert partial["kind"] == "partial_results_timeout"
+        assert "SemanticScholar" in partial["abandoned"]
+        assert adapter._last_partial_collection is None, (
+            "worker thread wrote adapter state; it can outlive its own call"
+        )
 
     def test_no_deadline_waits_for_all(self):
         """collect_deadline_s=None keeps legacy behaviour: wait for every
@@ -145,16 +152,18 @@ class TestCollectDeadlineReturnsPartial:
             "Arxiv": [{"q": "x"}],
         }
 
+        report: dict = {}
         successful, failed = adapter._collect_all_backends(
             collector=collector,
             queries_by_api=queries_by_api,
             max_results=10,
             collect_deadline_s=None,
+            report=report,
         )
 
         assert sorted(successful) == ["Arxiv", "OpenAlex"]
         assert failed == []
-        assert adapter._last_partial_collection is None
+        assert "partial_collection" not in report
 
 
 class TestStragglerDoesNotDiscardResults:
@@ -213,6 +222,7 @@ class TestStragglerDoesNotDiscardResults:
                 except OSError:
                     pass  # scratch dir already removed — expected
                 attempt += 1
+                time.sleep(0.001)  # exercise the race without flooding the disk
 
         fake_collector.run_job_collects.side_effect = collect
 
@@ -222,6 +232,7 @@ class TestStragglerDoesNotDiscardResults:
 
         self._install_fake_scilex(monkeypatch, build_collector)
 
+        report: dict = {}
         try:
             result = adapter._scilex_search_sync(
                 query="anything",
@@ -230,6 +241,7 @@ class TestStragglerDoesNotDiscardResults:
                 year_max=None,
                 apis=["openalex", "semantic_scholar"],
                 collect_deadline_s=0.2,
+                report=report,
             )
         finally:
             stop.set()
@@ -237,8 +249,15 @@ class TestStragglerDoesNotDiscardResults:
         # The point of the test: cleanup raced a live writer and we still
         # returned instead of throwing away the collected results.
         assert result == []
-        assert adapter._last_partial_collection is not None
-        assert "SemanticScholar" in adapter._last_partial_collection["abandoned"]
+        assert "SemanticScholar" in report["partial_collection"]["abandoned"]
+
+        # And the scratch directory is reclaimed once the straggler stops,
+        # rather than left on disk to grow back.
+        scratch = Path(scratch_dirs[0])
+        deadline = time.monotonic() + 10
+        while scratch.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not scratch.exists(), f"scratch directory leaked: {scratch}"
 
     def test_returned_backend_lists_are_snapshots(self):
         """Abandoned threads keep appending; the caller's lists must not move."""
@@ -309,3 +328,68 @@ class TestCollectAllBackendsPreservesQueryStructure:
         assert item["query"]["q"] == "x"
         # max_articles_per_query should be 2x max_results per the existing pattern
         assert item["query"]["max_articles_per_query"] == 14
+
+
+class TestDeadlineIsPerCallNotPerPass:
+    """search() retries a title-like query with a normalized title. Both passes
+    share one budget: giving each the full deadline would take twice the
+    caller's timeout, which cancels the call and discards both passes — the
+    failure the deadline exists to prevent."""
+
+    def _adapter_recording_deadlines(self, deadlines: list):
+        adapter = SciLExAdapter()
+        adapter._scilex_available = True
+
+        async def fake_search_once(*, collect_deadline_s=None, report=None, **kw):
+            deadlines.append(collect_deadline_s)
+            await asyncio.sleep(0.05)  # a pass that leaves budget for the retry
+            return []
+
+        adapter._search_once = fake_search_once
+        return adapter
+
+    async def test_retry_gets_only_the_remaining_budget(self):
+        deadlines: list = []
+        adapter = self._adapter_recording_deadlines(deadlines)
+
+        t0 = time.monotonic()
+        await adapter.search(
+            query="Deep learning for protein structure prediction: a review",
+            collect_deadline_s=0.4,
+        )
+        elapsed = time.monotonic() - t0
+
+        assert len(deadlines) == 2, "the normalize-retry should have run"
+        # The retry gets what is LEFT of the budget, not a fresh copy of it.
+        assert deadlines[1] < deadlines[0], (
+            f"retry was given a fresh budget instead of the remainder: {deadlines}"
+        )
+        assert elapsed < 0.4 * 1.5, (
+            f"call overran its budget ({elapsed:.2f}s for a 0.4s deadline)"
+        )
+
+    async def test_retry_is_skipped_when_the_budget_is_already_spent(self):
+        deadlines: list = []
+        adapter = SciLExAdapter()
+        adapter._scilex_available = True
+
+        async def burn_the_budget(*, collect_deadline_s=None, report=None, **kw):
+            deadlines.append(collect_deadline_s)
+            await asyncio.sleep(0.25)  # spends the whole deadline
+            return []
+
+        adapter._search_once = burn_the_budget
+
+        await adapter.search(query="A title: with a colon", collect_deadline_s=0.2)
+
+        assert len(deadlines) == 1, "retry ran with no budget left"
+
+    async def test_no_deadline_still_retries(self):
+        """collect_deadline_s=None keeps the legacy unbounded retry."""
+        deadlines: list = []
+        adapter = self._adapter_recording_deadlines(deadlines)
+
+        await adapter.search(query="A title: with a colon", collect_deadline_s=None)
+
+        assert deadlines == [None, None]
+

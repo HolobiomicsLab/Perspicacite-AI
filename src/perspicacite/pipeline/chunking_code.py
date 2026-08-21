@@ -445,6 +445,8 @@ def _chunk_treesitter(
                 end_row = (er if er is not None else sr) + 1
                 body = "\n".join(lines[start_row - 1 : end_row])
                 name = _name(child) or f"{kind}_{idx}"
+                if not body.strip():
+                    continue
                 md = ChunkMetadata(
                     paper_id=paper.id, chunk_index=idx, source=paper.source,
                     title=paper.title, content_type="code", language=language,

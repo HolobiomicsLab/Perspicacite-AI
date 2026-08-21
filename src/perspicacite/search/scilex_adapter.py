@@ -5,11 +5,16 @@ Uses SciLEx's collection, then manually aggregates and converts to Papers.
 """
 
 import asyncio
+import contextlib
 import json
 import logging as _stdlib_logging
 import os
 import re
+import shutil
 import tempfile
+import threading
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +53,75 @@ KNOWN_DATABASES: frozenset[str] = frozenset({
 # F-33: cache the per-key validation result so we only hit SS once per
 # adapter init (and not once per query).
 _SS_KEY_CACHE: dict[str, bool] = {}
+
+# How long a reaper thread will wait for abandoned backends before giving up on
+# removing their scratch directory. Generous: the point is to bound the wait,
+# not to race the backend.
+_SCRATCH_REAP_TIMEOUT_S = 600.0
+
+_PARTIAL_RESULTS_ADVICE = (
+    "Results are partial: some databases (often Semantic Scholar's rate-limited "
+    "public tier) did not finish within the time budget. Narrow the year range, "
+    "add an API key, or query fewer databases for complete coverage."
+)
+
+
+def _remaining_budget(expires_at: float | None) -> float | None:
+    """Seconds left before ``expires_at``, or None when there is no deadline."""
+    if expires_at is None:
+        return None
+    return expires_at - time.monotonic()
+
+
+@contextlib.contextmanager
+def _scratch_dir(report: dict) -> Iterator[str]:
+    """Scratch directory that is reclaimed even when backends are abandoned.
+
+    Removing it inline would race the abandoned threads still writing into it,
+    which either raises (discarding results already collected) or leaves a tree
+    that grows back. When ``report`` says backends are still running, hand the
+    directory to a reaper instead of removing it here.
+    """
+    path = tempfile.mkdtemp(prefix="perspicacite-scilex-")
+    try:
+        yield path
+    finally:
+        pending = report.get("pending")
+        if pending:
+            futures, executor = pending
+            _reap_scratch_dir(path, futures, executor)
+        else:
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def _reap_scratch_dir(path: str, futures: list, executor: Any) -> None:
+    """Remove a scratch directory once its abandoned backends stop writing.
+
+    Abandoned threads cannot be cancelled, so removing the directory while they
+    still hold it either races them or leaves a tree that grows back. Waiting
+    for them off the request path is the only way to reclaim the space.
+    """
+
+    def wait_then_remove() -> None:
+        deadline = time.monotonic() + _SCRATCH_REAP_TIMEOUT_S
+        for future in futures:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                future.exception(timeout=remaining)
+            except Exception:
+                pass
+        executor.shutdown(wait=False)
+        shutil.rmtree(path, ignore_errors=True)
+        still_there = os.path.exists(path)
+        logger.info(
+            "scilex_scratch_reaped", path=path, removed=not still_there
+        )
+
+    threading.Thread(
+        target=wait_then_remove, name="scilex-scratch-reaper", daemon=True
+    ).start()
 
 
 def _ss_key_is_valid(api_key: str) -> bool:
@@ -215,6 +289,21 @@ class SciLExAdapter:
         abandon stragglers and return partial results. ``None`` waits for every
         backend (legacy behaviour).
         """
+        # The deadline is a budget for the whole call, not for each pass: the
+        # normalize-retry below would otherwise take twice as long as the
+        # caller's timeout and get cancelled, discarding both passes.
+        expires_at = (
+            time.monotonic() + collect_deadline_s
+            if collect_deadline_s is not None
+            else None
+        )
+        # Reset once per call, not once per pass, or a clean retry erases the
+        # warning explaining why the first pass came back short. The worker
+        # thread writes into this dict rather than onto self: it can outlive a
+        # cancelled call, and adapter state would then leak into the next one.
+        report: dict = {}
+        self._last_partial_collection = None
+
         out = await self._search_once(
             query=query,
             max_results=max_results,
@@ -223,15 +312,22 @@ class SciLExAdapter:
             apis=apis,
             article_type=article_type,
             collect_deadline_s=collect_deadline_s,
+            report=report,
         )
+        self._last_partial_collection = report.get("partial_collection")
         if out:
             return out
 
-        from perspicacite.search.title_normalize import normalize_title, is_titlelike
+        from perspicacite.search.title_normalize import is_titlelike, normalize_title
         if not is_titlelike(query):
             return out
         normalised = normalize_title(query)
         if normalised == query or len(normalised) < 4:
+            return out
+
+        remaining = _remaining_budget(expires_at)
+        if remaining is not None and remaining <= 0:
+            logger.info("scilex_normalize_retry_skipped_no_budget", original=query)
             return out
 
         logger.info(
@@ -246,8 +342,10 @@ class SciLExAdapter:
             year_max=year_max,
             apis=apis,
             article_type=article_type,
-            collect_deadline_s=collect_deadline_s,
+            collect_deadline_s=remaining,
+            report=report,
         )
+        self._last_partial_collection = report.get("partial_collection")
         for p in retried:
             if p.metadata is None:
                 p.metadata = {}
@@ -264,6 +362,7 @@ class SciLExAdapter:
         apis: list[str] | None = None,
         article_type: str | None = None,
         collect_deadline_s: float | None = None,
+        report: dict | None = None,
     ) -> list[Paper]:
         """Internal: do one actual search pass without normalize-retry.
 
@@ -285,6 +384,7 @@ class SciLExAdapter:
             apis,
             article_type,
             collect_deadline_s,
+            report,
         )
 
     def _scilex_search_sync(
@@ -296,11 +396,17 @@ class SciLExAdapter:
         apis: list[str] | None,
         article_type: str | None = None,
         collect_deadline_s: float | None = None,
+        report: dict | None = None,
     ) -> list[Paper]:
-        """Synchronous SciLEx search."""
-        # Reset partial-collection state at the start of each call so a clean
-        # run doesn't inherit a previous call's deadline warning.
-        self._last_partial_collection = None
+        """Synchronous SciLEx search.
+
+        ``report`` is a call-local dict for out-of-band results (partial-collection
+        warning, still-running backends). The caller resets and reads it; this runs
+        in a worker thread that can outlive its own call, so it must not write
+        adapter state.
+        """
+        if report is None:
+            report = {}
         from scilex.crawlers.aggregate import (
             ArxivtoZoteroFormat,
             DBLPtoZoteroFormat,
@@ -403,12 +509,7 @@ class SciLExAdapter:
         years = list(range(_lo, _hi + 1))
         capitalized_apis = [api_name_map.get(a, a) for a in apis]
 
-        # ignore_cleanup_errors is load-bearing: when ``collect_deadline_s``
-        # abandons a slow backend, that backend's thread keeps writing here.
-        # Removal then races those writes and raises "Directory not empty",
-        # which would discard every result we already collected — the exact
-        # failure the deadline exists to prevent.
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+        with _scratch_dir(report) as tmpdir:
             # Configure SciLEx
             main_config = {
                 "collect_name": "perspicacite_search",
@@ -441,6 +542,7 @@ class SciLExAdapter:
                     queries_by_api=queries_by_api,
                     max_results=max_results,
                     collect_deadline_s=collect_deadline_s,
+                    report=report,
                 )
 
                 if failed_backends:
@@ -647,6 +749,7 @@ class SciLExAdapter:
         queries_by_api: dict[str, list[dict]],
         max_results: int,
         collect_deadline_s: float | None = None,
+        report: dict | None = None,
     ) -> tuple[list[str], list[str]]:
         """Fan out per-backend collection concurrently via ThreadPoolExecutor.
 
@@ -667,6 +770,12 @@ class SciLExAdapter:
                 running in their threads (a thread can't be cancelled), but
                 their partial output already on disk is still aggregated by the
                 caller. ``None`` waits for every backend (legacy behaviour).
+            report: Call-local dict for out-of-band results. Populated with
+                ``partial_collection`` when the deadline abandoned a backend and
+                with ``pending`` (unfinished futures + their executor) so the
+                caller can reclaim the scratch directory later. Deliberately not
+                stored on ``self``: this runs in a worker thread that can outlive
+                its own call, so instance state would leak into the next search.
 
         Returns:
             (successful_backends, failed_backends) — mutable lists populated
@@ -705,11 +814,10 @@ class SciLExAdapter:
         # _collect_from_backend swallows collector exceptions and appends to
         # the shared lists. CPython list.append is GIL-safe.
         #
-        # We deliberately do NOT use ``with ThreadPoolExecutor(...)`` here:
-        # its __exit__ calls shutdown(wait=True), which would block on a slow
-        # straggler and defeat the deadline. Instead we shut down with
-        # wait=False so abandoned backends are left to finish (or error out
-        # once the caller's temp dir is gone) in the background.
+        # We deliberately do NOT use ``with ThreadPoolExecutor(...)`` here: its
+        # __exit__ calls shutdown(wait=True), which would block on a slow
+        # straggler and defeat the deadline. Abandoned backends keep running;
+        # the caller reaps their scratch directory once they stop.
         executor = ThreadPoolExecutor(max_workers=len(api_lists))
         futures = {
             executor.submit(
@@ -728,9 +836,8 @@ class SciLExAdapter:
                 # unexpected helper-level exceptions here.
                 f.result()
         except TimeoutError:  # concurrent.futures.TimeoutError is this alias
-            abandoned = sorted(
-                name for fut, name in futures.items() if not fut.done()
-            )
+            pending = [fut for fut in futures if not fut.done()]
+            abandoned = sorted(futures[fut] for fut in pending)
             logger.warning(
                 "scilex_collect_deadline_partial",
                 deadline_s=collect_deadline_s,
@@ -742,22 +849,21 @@ class SciLExAdapter:
                     "discarding everything."
                 ),
             )
-            if abandoned:
-                self._last_partial_collection = {
+            if abandoned and report is not None:
+                report["partial_collection"] = {
                     "kind": "partial_results_timeout",
                     "abandoned": abandoned,
                     "completed": sorted(successful),
-                    "advice": (
-                        "Results are partial: some databases (often Semantic "
-                        "Scholar's rate-limited public tier) did not finish "
-                        "within the time budget. Narrow the year range, add an "
-                        "API key, or query fewer databases for complete coverage."
-                    ),
+                    "advice": _PARTIAL_RESULTS_ADVICE,
                 }
+            if pending and report is not None:
+                # The caller owns the scratch directory these threads still write
+                # to, so it decides when it can be reclaimed.
+                report["pending"] = (pending, executor)
+                return list(successful), list(failed)
         finally:
-            # Don't block on stragglers — partial output already on disk is
-            # aggregated by the caller regardless.
-            executor.shutdown(wait=False)
+            if report is None or "pending" not in report:
+                executor.shutdown(wait=False)
 
         # Snapshot: abandoned threads keep appending to the live lists.
         return list(successful), list(failed)

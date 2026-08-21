@@ -579,7 +579,10 @@ async def _ingest_code_papers_symbolwise(
     if code_chunks:
         texts = [c.text for c in code_chunks]
         embeds = await embedding_service.embed(texts)
-        for c, e in zip(code_chunks, embeds):
+        # strict: providers drop blank inputs, so a short list would silently
+        # shift every vector onto the wrong chunk. The store's own guard cannot
+        # see this path — these chunks arrive already embedded.
+        for c, e in zip(code_chunks, embeds, strict=True):
             c.embedding = e
         await vector_store.add_documents(collection=collection_name, chunks=code_chunks)
         added += len(code_chunks)
