@@ -14,6 +14,26 @@ from perspicacite.pipeline.github_kb import (
 )
 
 
+_EMBED_DIM = 384
+
+
+def _mock_embedder():
+    """Embedding service stub whose ``embed`` is awaitable.
+
+    The symbol-wise code path embeds in the orchestrator itself, so a bare
+    MagicMock is not enough. ``side_effect`` returns one vector per text —
+    a plain AsyncMock would return a MagicMock that zips to nothing, letting
+    the tests pass without exercising the chunks.
+    """
+    embedder = MagicMock()
+    embedder.model_name = "all-MiniLM-L6-v2"
+    embedder.dimension = _EMBED_DIM
+    embedder.embed = AsyncMock(
+        side_effect=lambda texts: [[0.1] * _EMBED_DIM for _ in texts]
+    )
+    return embedder
+
+
 def _make_bundle(tmp_path: Path, name: str = "test-bundle") -> Path:
     bundle_dir = tmp_path / name
     bundle_dir.mkdir()
@@ -56,9 +76,7 @@ async def test_ingest_skill_bundle_calls_add_papers(tmp_path):
     mock_dkb.add_papers = AsyncMock(return_value=5)
     mock_session = AsyncMock()
     mock_session.get_kb_metadata = AsyncMock(return_value=None)
-    mock_embed = MagicMock()
-    mock_embed.model_name = "all-MiniLM-L6-v2"
-    mock_embed.dimension = 384
+    mock_embed = _mock_embedder()
 
     with patch("perspicacite.pipeline.github_kb.ingest_dois_into_kb", new=fake_ingest), \
          patch("perspicacite.rag.dynamic_kb.DynamicKnowledgeBase", return_value=mock_dkb):
@@ -87,9 +105,7 @@ async def test_ingest_skill_bundle_no_linked_papers(tmp_path):
     mock_dkb.add_papers = AsyncMock(return_value=3)
     mock_session = AsyncMock()
     mock_session.get_kb_metadata = AsyncMock(return_value=None)
-    mock_embed = MagicMock()
-    mock_embed.model_name = "all-MiniLM-L6-v2"
-    mock_embed.dimension = 384
+    mock_embed = _mock_embedder()
 
     with patch("perspicacite.rag.dynamic_kb.DynamicKnowledgeBase", return_value=mock_dkb):
         summary = await ingest_skill_bundle(
@@ -113,9 +129,7 @@ async def test_ingest_skill_bundles_batch_processes_all(tmp_path):
     mock_dkb.add_papers = AsyncMock(return_value=1)
     mock_session = AsyncMock()
     mock_session.get_kb_metadata = AsyncMock(return_value=None)
-    mock_embed = MagicMock()
-    mock_embed.model_name = "all-MiniLM-L6-v2"
-    mock_embed.dimension = 384
+    mock_embed = _mock_embedder()
 
     async def fake_ingest(app_state, kb_name, dois, **kw):
         return {"added_papers": len(dois), "added_chunks": 0, "skipped_duplicates": 0, "failed": [], "pdf_download": {}}  # noqa: E501
