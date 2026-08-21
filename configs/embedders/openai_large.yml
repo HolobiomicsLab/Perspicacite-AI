@@ -100,7 +100,7 @@ scilex:
 # 'build_aggregator_pubmed_skipped_no_email' and PubMed silently drops
 # out of the aggregator. Mirrors config.yml.
 pdf_download:
-  unpaywall_email: "tao.jiang@univ-cotedazur.fr"
+  unpaywall_email: "your@email.com"   # replace with your address for the polite pool
 
 # Mirror config.yml's provider allowlist so users can actually select
 # google_scholar / dblp_sparql in the chat UI without the new
