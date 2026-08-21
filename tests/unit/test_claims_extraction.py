@@ -450,7 +450,10 @@ def test_claims_to_graph_skips_none_ontology_terms():
 @pytest.mark.unit
 async def test_extract_claims_with_composite_adapter_chains_enrichments():
     """CompositeAdapter must chain both adapters' enrich_claim() calls."""
-    from indicium_adapters.composite import compose_adapters
+    compose_adapters = pytest.importorskip(
+        "indicium_adapters.composite",
+        reason="indicium-adapters is private and not installed",
+    ).compose_adapters
 
     llm = AsyncMock()
     llm.complete = AsyncMock(return_value=json.dumps({"claims": [{
@@ -480,7 +483,10 @@ async def test_extract_claims_with_composite_adapter_chains_enrichments():
 @pytest.mark.unit
 async def test_extract_claims_composite_accepts_union_of_qualifiers():
     """Qualifiers from both adapters must be accepted by extract_claims()."""
-    from indicium_adapters.composite import compose_adapters
+    compose_adapters = pytest.importorskip(
+        "indicium_adapters.composite",
+        reason="indicium-adapters is private and not installed",
+    ).compose_adapters
 
     llm = AsyncMock()
     # Claim uses qualifier_b, which is only in _MockAdapterB
@@ -508,7 +514,10 @@ async def test_extract_claims_composite_accepts_union_of_qualifiers():
 @pytest.mark.unit
 def test_compose_adapters_filters_unknown_domains():
     """resolve logic: unknown domain IDs are silently dropped."""
-    from indicium_adapters.composite import compose_adapters
+    compose_adapters = pytest.importorskip(
+        "indicium_adapters.composite",
+        reason="indicium-adapters is private and not installed",
+    ).compose_adapters
 
     adapter_a = _MockAdapter()
     discovered = {"test": adapter_a}   # only "test" is known
@@ -523,7 +532,10 @@ def test_compose_adapters_filters_unknown_domains():
 @pytest.mark.unit
 def test_compose_adapters_all_unknown_gives_none():
     """If all requested domains are unknown, adapter must resolve to None."""
-    from indicium_adapters.composite import compose_adapters
+    compose_adapters = pytest.importorskip(
+        "indicium_adapters.composite",
+        reason="indicium-adapters is private and not installed",
+    ).compose_adapters
 
     discovered: dict = {}   # nothing installed
     valid = [discovered[d] for d in ["foo", "bar"] if d in discovered]
