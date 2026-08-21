@@ -27,7 +27,7 @@ version: "2.0.0"
 config_name: "bge-en-icl-port8005"
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8005
   reload: false
 
@@ -80,7 +80,7 @@ scilex:
 
 mcp:
   enabled: true
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8005
   transport: "streamable-http"
 

@@ -186,8 +186,13 @@ perspicacite import-browser-cookies \
 | Flag | Description |
 |------|-------------|
 | `--browser` | Browser name: `chrome`, `brave`, `firefox`, `edge`, `safari`, `opera`, `arc` |
-| `--domain DOMAIN` | Domain to filter cookies for (repeatable) |
+| `--domain DOMAIN` | Domain to filter cookies for (repeatable). Required unless `--all-domains` |
+| `--all-domains` | Export every cookie in the browser. See the warning below |
 | `--output FILE` | Output path for Netscape `cookies.txt` |
+
+At least one `--domain` is required. Without a filter the export would write
+every logged-in session the browser holds — mail, bank, everything — as
+plaintext, so that needs the explicit `--all-domains` flag.
 
 Requires `uv pip install -e ".[cookies]"`.
 

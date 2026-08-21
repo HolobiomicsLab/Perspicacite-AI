@@ -124,6 +124,14 @@ def serve(
     if no_mcp:
         config.mcp.enabled = False
 
+    # Fail before binding rather than publishing an unauthenticated LLM
+    # gateway and every knowledge base to the network.
+    from perspicacite.web.auth import assert_bind_is_safe
+
+    assert_bind_is_safe(config.server.host, config)
+    if config.mcp.enabled:
+        assert_bind_is_safe(config.mcp.host, config)
+
     logger.info(
         "starting_server",
         host=config.server.host,
@@ -557,6 +565,11 @@ def _start_mcp_and_web(config, app) -> None:
 
     # Mount MCP ASGI app — its internal routes are at /mcp
     app.mount("/", mcp_app)
+
+    # Guard at the bind itself, so no caller can reach uvicorn without it.
+    from perspicacite.web.auth import assert_bind_is_safe
+
+    assert_bind_is_safe(config.server.host, config)
 
     # Run single server
     uvicorn.run(
@@ -1030,7 +1043,17 @@ def fetch_resources_cmd(
     help=(
         "Cookie host substring filter. Pass multiple times. "
         "E.g. --domain nature.com --domain wiley.com. "
-        "Empty = all cookies (NOT recommended)."
+        "Required unless --all-domains is given."
+    ),
+)
+@click.option(
+    "--all-domains",
+    is_flag=True,
+    default=False,
+    help=(
+        "Export EVERY cookie in the browser, not just publisher domains. "
+        "This writes your logged-in sessions for every site — bank, mail, "
+        "everything — to a plaintext file. Almost never what you want."
     ),
 )
 @click.option(
@@ -1047,6 +1070,7 @@ def fetch_resources_cmd(
 def import_browser_cookies_cmd(
     browser_name: str,
     domains: tuple[str, ...],
+    all_domains: bool,
     output_path: str,
     print_config_snippet: bool,
 ) -> None:
@@ -1064,6 +1088,20 @@ def import_browser_cookies_cmd(
         perspicacite import-browser-cookies --browser brave \\
             --domain nature.com --domain wiley.com
     """
+    # Refuse to dump the whole jar by accident: without a filter this writes
+    # every logged-in session the browser holds, publisher or not.
+    if not domains and not all_domains:
+        click.echo(
+            "Refusing to export every cookie in the browser.\n"
+            "Pass --domain for each publisher you need, e.g.\n"
+            "    perspicacite import-browser-cookies --browser brave \\\n"
+            "        --domain nature.com --domain wiley.com\n"
+            "or --all-domains if you genuinely want your bank and mail "
+            "sessions written to a plaintext file.",
+            err=True,
+        )
+        raise SystemExit(2)
+
     try:
         import browser_cookie3
     except ImportError:

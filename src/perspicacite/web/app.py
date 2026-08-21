@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from perspicacite.llm.embeddings import EmbeddingFailedError
+from perspicacite.web import auth
 from perspicacite.web.routers import (
     chat as chat_router,
 )
@@ -106,6 +107,28 @@ async def _no_cache_for_assets(request, call_next):
     return response
 
 
+@app.middleware("http")
+async def _enforce_api_token(request, call_next):
+    """Require the bearer token on /api/* once one is configured.
+
+    No token configured means an unauthenticated API, which the start-time
+    guard in ``perspicacite.web.auth`` confines to a loopback bind.
+    """
+    config = getattr(app_state, "config", None)
+    token = auth.resolve_token(config) if config is not None else None
+    if (
+        token is not None
+        and auth.requires_token(request.url.path)
+        and not auth.is_authorized(request.headers.get("authorization"), token)
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "error": "missing or invalid API token"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
+
+
 @app.exception_handler(EmbeddingFailedError)
 async def _embedding_failed_handler(request, exc: EmbeddingFailedError):
     """Report a dead embedder as an upstream failure, never as a successful ingest."""
@@ -144,4 +167,4 @@ async def favicon():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("perspicacite.web.app:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("perspicacite.web.app:app", host="127.0.0.1", port=8000, reload=False)

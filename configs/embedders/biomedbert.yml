@@ -18,7 +18,7 @@ version: "2.0.0"
 config_name: "biomedbert-port8006"
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8006
   reload: false
 
@@ -71,7 +71,7 @@ scilex:
 
 mcp:
   enabled: true
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8006
   transport: "streamable-http"
 
