@@ -55,10 +55,11 @@ Known databases: `semantic_scholar`, `openalex`, `pubmed`, `europepmc`,
 | Extract typed claims (Bucur SuperPattern) from passages | `extract_claims_from_passages` |
 | Build then query a reasoning graph of claims across a KB | `build_claim_graph` → `query_claim_graph` (`claim_graph_export` → JSON-LD; `claim_graph_status` to poll) |
 
-The claim tools (`extract_claims_from_passages`, the `*_claim_graph` family, `export_astra`)
-require the private `indicium` package, which is unpublished and therefore maintainer-only;
-they return a clear error when it isn't installed. The claim graph's RDF backend is public
-(`uv sync --extra graph`).
+The claim tools (`extract_claims_from_passages`, the `*_claim_graph` family) require the
+private `indicium` package, which is unpublished and therefore maintainer-only; they return
+a clear error when it isn't installed. `export_astra` does **not** — it projects any claim
+set onto an ASTRA Analysis with no private dependency. The claim graph's RDF backend is
+public (`uv sync --extra graph`).
 
 Use `adaptive=True` on `get_relevant_passages` for terse or jargon-heavy
 queries: the server runs the optimizer once and retries if the first pass

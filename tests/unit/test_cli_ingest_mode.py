@@ -4,6 +4,20 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _allow_fresh_session_db(monkeypatch):
+    """Opt out of the orphaned-registry guard.
+
+    These tests exercise --ingest-mode plumbing, not database placement, but
+    they load config.example.yml, whose home-dir database.path is usually
+    absent. On a machine that also has a populated ./data/perspicacite.db the
+    guard would refuse to start and the CLI would exit before the flag is read.
+    """
+    monkeypatch.setenv("PERSPICACITE_ALLOW_NEW_DB", "1")
+
 
 def _make_bib(tmp_path: Path) -> Path:
     bib = tmp_path / "refs.bib"

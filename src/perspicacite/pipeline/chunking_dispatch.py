@@ -41,6 +41,12 @@ _EXT_TO_LANG: dict[str, str] = {
     ".swift": "swift",
     ".kt": "kotlin",
     ".cs": "csharp",
+    ".c": "cpp",
+    ".cxx": "cpp",
+    # R: chunk_code has a regex backend (_chunk_r_regex); no LangChain Language
+    # for R, so it relies on that backend (splitter fallback = plain text).
+    ".r": "r",
+    ".rmd": "r",
 }
 
 _LANG_TO_LC: dict[str, Language] = {

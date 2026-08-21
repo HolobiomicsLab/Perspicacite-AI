@@ -28,6 +28,22 @@ def test_max_pdf_attach_bytes_zero_disables_cap():
     assert cfg.max_pdf_attach_bytes == 0
 
 
+def test_pmc_supplementary_defaults_on():
+    """PMC-OA supplementary ingestion is ON by default (user request 2026-06-16):
+    SI is the richest evidence and not otherwise programmatically collectable."""
+    cfg = PDFDownloadConfig()
+    assert cfg.ingest_pmc_supplementary is True
+    assert cfg.supplementary_max_files == 12
+    assert cfg.supplementary_max_chars_per_file == 200_000
+    assert cfg.supplementary_max_bytes_per_file == 25 * 1024 * 1024
+
+
+def test_pmc_supplementary_can_disable():
+    cfg = PDFDownloadConfig(ingest_pmc_supplementary=False, supplementary_max_files=0)
+    assert cfg.ingest_pmc_supplementary is False
+    assert cfg.supplementary_max_files == 0
+
+
 class TestConfigSchema:
     """Tests for Config schema validation."""
 

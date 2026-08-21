@@ -20,6 +20,28 @@ def doc_page_content(doc: Any) -> str:
     return str(doc)
 
 
+def doc_source_id(doc: Any) -> str | None:
+    """Identity of the paper a chunk came from, or None when unknown."""
+    if doc is None:
+        return None
+    meta = getattr(getattr(doc, "chunk", None), "metadata", None)
+    for field in ("paper_id", "doi", "citation", "title"):
+        value = getattr(meta, field, None)
+        if value:
+            return str(value)
+    if isinstance(doc, dict):
+        for field in ("paper_id", "doi", "citation"):
+            if doc.get(field):
+                return str(doc[field])
+    return None
+
+
+def from_same_paper(doc: Any, other: Any) -> bool:
+    """True only when both chunks are known to come from the same paper."""
+    source = doc_source_id(doc)
+    return source is not None and source == doc_source_id(other)
+
+
 def merge_three_chunks(before: Any, current: Any, after: Any) -> tuple[str, Any]:
     """Port of core/core.py merge_documents for chunk-level results."""
     merged_text = ""
@@ -86,8 +108,13 @@ def select_wrrf_merged_documents(
             break
 
         doc = documents_info[doc_id]
-        before_doc = sorted_documents[idx - 1] if idx > 0 else None
-        after_doc = sorted_documents[idx + 1] if idx < len(sorted_documents) - 1 else None
+        # Neighbors here are adjacent in WRRF score, not inside the source
+        # document, so merging across papers would put another paper's words
+        # under this paper's citation.
+        previous = sorted_documents[idx - 1] if idx > 0 else None
+        following = sorted_documents[idx + 1] if idx < len(sorted_documents) - 1 else None
+        before_doc = previous if from_same_paper(doc, previous) else None
+        after_doc = following if from_same_paper(doc, following) else None
 
         merged_text, merged_meta = merge_three_chunks(before_doc, doc, after_doc)
 

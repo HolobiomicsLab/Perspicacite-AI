@@ -560,6 +560,8 @@ async def search_literature(
                         )
                     if _prov._last_quota_warning is not None:
                         mcp_warnings.append(_prov._last_quota_warning)
+                    if getattr(_prov, "_last_partial_collection", None) is not None:
+                        mcp_warnings.append(_prov._last_partial_collection)
                     break
         except Exception:
             pass
@@ -6340,25 +6342,21 @@ async def extract_claims_from_passages(
 
 @mcp.tool()
 async def export_astra(claims: list[dict]) -> str:
-    """Project indicium claims onto ASTRA Insights (astra-spec.org).
+    """Project claims onto an ASTRA Analysis (astra-spec.org).
 
-    Returns {success, insights:[{id, claim, evidence:[{doi|artifact, quote:{exact}}]}}]}.
-    Each claim is flattened (5-slot SuperPattern -> a claim string); full typing
-    stays in the claim set. Claims without an 'id' get a positional one.
+    Returns {success, analysis:{id, name, narrative, findings:{<id>: Insight}},
+    skipped:[{id, reason}]}. Each claim is flattened (5-slot SuperPattern -> a
+    claim string); full typing stays in the claim set. A claim with no DOI and no
+    artifact cannot form a schema-valid Insight, so it is listed in 'skipped'
+    rather than emitted without evidence.
     Use to hand a Perspicacité claim set to an ASTRA-consuming analysis tool.
     """
     state = _require_state()
     if isinstance(state, str):
         return state
-    try:
-        from indicium import claim_to_insight
-    except ImportError:
-        return _json_error("indicium is not installed; it is a private, maintainer-only package")
-    insights = []
-    for i, c in enumerate(claims):
-        c = {**c, "id": c.get("id", f"c{i}")}
-        insights.append(claim_to_insight(c))
-    return _json_ok({"insights": insights})
+    from perspicacite.provenance.astra_min import build_analysis
+
+    return _json_ok(build_analysis(claims))
 
 
 @mcp.tool()

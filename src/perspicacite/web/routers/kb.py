@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -373,6 +374,7 @@ async def _dois_ingest_worker(
             if result.full_text:
                 paper.full_text = result.full_text
                 dl["success"] += 1
+                await _augment_with_pmc_supplementary(paper, app_state)
                 status = "embedded"
             else:
                 dl["metadata_only"] += 1
@@ -446,6 +448,122 @@ def _get_pdf_fallback_kwargs(pdf_config) -> dict:
         "rsc_api_key": pdf_config.rsc_api_key,
         "springer_api_key": pdf_config.springer_api_key,
     }
+
+
+# Suffixes/MIME prefixes whose bytes can be ingested as text without a parser.
+_SI_TEXT_SUFFIXES = {".csv", ".tsv", ".txt", ".md", ".json", ".xml", ".rst", ".html", ".htm"}
+_SI_SKIP_MIME = ("image/", "video/", "audio/")
+
+
+async def _si_bytes_to_text(data: bytes, url: str, mime: str, pdf_parser, max_chars: int) -> str | None:
+    """Extract text from one downloaded SI file. Returns None when unextractable."""
+    import tempfile
+
+    suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+    is_pdf = "pdf" in mime or suffix == ".pdf"
+    if is_pdf:
+        if pdf_parser is None:
+            return None
+        tmp = Path(tempfile.mkdtemp(prefix="asb_si_")) / ("si" + (suffix or ".pdf"))
+        try:
+            tmp.write_bytes(data)
+            parsed = await pdf_parser.parse(tmp)
+            text = (parsed.text or "") if parsed else ""
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"si_pdf_parse_failed url={url} error={e}")
+            text = ""
+        finally:
+            try:
+                tmp.unlink()
+                tmp.parent.rmdir()
+            except Exception:  # noqa: BLE001
+                pass
+        return (text[:max_chars] or None) if text else None
+    if suffix in (".xlsx", ".xls"):
+        try:
+            import io
+
+            import openpyxl  # noqa: PLC0415
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            rows: list[str] = []
+            for ws in wb.worksheets:
+                rows.append(f"## sheet: {ws.title}")
+                for row in ws.iter_rows(values_only=True):
+                    cells = ["" if c is None else str(c) for c in row]
+                    if any(cells):
+                        rows.append("\t".join(cells))
+            text = "\n".join(rows)
+            return text[:max_chars] or None
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"si_xlsx_parse_failed url={url} error={e}")
+            return None
+    if mime.startswith("text/") or suffix in _SI_TEXT_SUFFIXES:
+        text = data.decode("utf-8", errors="replace")
+        return text[:max_chars] or None
+    return None  # unknown binary (zip/media/etc.) — skip
+
+
+async def _augment_with_pmc_supplementary(paper, app_state) -> dict:
+    """Best-effort: append PMC-OA supplementary text to ``paper.full_text``.
+
+    No-op for non-PMC papers (``get_supplementary_from_pmc`` returns None) and
+    for papers without full text. Fully fail-soft — never raises into the
+    ingest path. Returns a small stats dict for logging.
+    """
+    stats = {"si_files": 0, "si_chars": 0, "si_skipped": 0}
+    doi = (getattr(paper, "doi", None) or getattr(paper, "id", None) or "").strip()
+    if not doi or not getattr(paper, "full_text", None):
+        return stats
+    cfg = getattr(app_state.config, "pdf_download", None) if app_state.config else None
+    if cfg is not None and not getattr(cfg, "ingest_pmc_supplementary", True):
+        return stats
+    max_files = getattr(cfg, "supplementary_max_files", 12) if cfg else 12
+    max_chars = getattr(cfg, "supplementary_max_chars_per_file", 200_000) if cfg else 200_000
+    max_bytes = getattr(cfg, "supplementary_max_bytes_per_file", 25 * 1024 * 1024) if cfg else 25 * 1024 * 1024
+    if max_files <= 0:
+        return stats
+    try:
+        from perspicacite.pipeline.download.pmc import get_supplementary_from_pmc
+        from perspicacite.pipeline.download.supplementary import fetch_supplementary_file
+        items = await get_supplementary_from_pmc(doi)
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"pmc_si_discover_failed doi={doi} error={e}")
+        return stats
+    if not items:
+        return stats
+    blocks: list[str] = []
+    for it in items[:max_files]:
+        url = it.get("url") or it.get("href")
+        mime = (it.get("mime_type") or "").lower()
+        label = it.get("label") or it.get("id") or "supplementary"
+        if not url or any(mime.startswith(p) for p in _SI_SKIP_MIME):
+            stats["si_skipped"] += 1
+            continue
+        try:
+            data = await fetch_supplementary_file(url, max_bytes=max_bytes)
+        except Exception as e:  # noqa: BLE001
+            logger.info(f"si_fetch_raised url={url} error={e}")
+            data = None
+        if not data:
+            stats["si_skipped"] += 1
+            continue
+        text = await _si_bytes_to_text(data, url, mime, app_state.pdf_parser, max_chars)
+        if not text:
+            stats["si_skipped"] += 1
+            continue
+        caption = (it.get("caption") or "").strip()
+        head = f"\n\n## Supplementary information: {label}\n"
+        if caption:
+            head += f"\n{caption}\n"
+        blocks.append(head + "\n" + text)
+        stats["si_files"] += 1
+        stats["si_chars"] += len(text)
+    if blocks:
+        paper.full_text = (paper.full_text or "") + "\n\n# Supplementary Information (PMC-OA)\n" + "".join(blocks)
+        logger.info(
+            f"pmc_si_appended doi={doi} files={stats['si_files']} "
+            f"chars={stats['si_chars']} skipped={stats['si_skipped']}")
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -709,6 +827,8 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
                 download_stats["failed"] += 1
 
         paper.full_text = full_text
+        if full_text:
+            await _augment_with_pmc_supplementary(paper, app_state)
         papers_to_add.append(paper)
 
     if not papers_to_add:
@@ -1307,6 +1427,7 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
         if result.full_text:
             paper.full_text = result.full_text
             dl["success"] += 1
+            await _augment_with_pmc_supplementary(paper, app_state)
         else:
             dl["metadata_only"] += 1
             attempts = list(getattr(result, "attempts", []) or [])
@@ -1434,6 +1555,146 @@ class AddLocalPathsRequest(BaseModel):
 # separate from `_background_tasks` so the two ingestion flows do not stomp on
 # each other's lifecycle.
 _local_tasks: set[asyncio.Task] = set()
+
+
+class GithubIngestRequest(BaseModel):
+    url: str
+    include: list[str] | None = None
+    exclude: list[str] | None = None
+    focus: str | None = None       # relevance signal for "key code" selection
+    max_files: int | None = None   # cap ingested files on large repos (needs focus)
+
+
+async def _github_ingest_worker(*, name, url, include, exclude, focus, max_files,
+                                job_id, registry):
+    """Background worker: run the (long) GitHub-repo ingest and report via the
+    job registry.
+
+    Mega-repos (e.g. mzmine, 833MB) take far longer than any sane synchronous
+    HTTP/MCP timeout — a blocking call times out client-side while the server
+    keeps ingesting, so the caller wrongly concludes the ingest failed. The
+    async path POSTs /github/async, gets a job_id immediately, and polls
+    /api/jobs/<id>, so true completion is observable regardless of duration.
+    """
+    try:
+        from perspicacite.pipeline.github.bundle import ContentSpec
+        from perspicacite.pipeline.github_kb import ingest_github_repo as _pipeline
+
+        content = None
+        if include or exclude:
+            defaults = ContentSpec()
+            content = ContentSpec(
+                include=list(include) if include else list(defaults.include),
+                exclude=list(exclude) if exclude else list(defaults.exclude),
+            )
+        summary = await _pipeline(
+            url=url, kb_name=name, config=app_state.config,
+            vector_store=app_state.vector_store,
+            embedding_service=app_state.embedding_provider,
+            session_store=app_state.session_store, content=content,
+            focus=focus, max_files=max_files,
+        )
+        await registry.finish(job_id, {
+            "kb_name": summary.kb_name, "url": url,
+            "files_added": summary.files_added,
+            "chunks_added": summary.chunks_added,
+        })
+    except Exception as e:  # noqa: BLE001 — report failure via the job, not a 500
+        logger.error(f"github_ingest_async_failed url={url} error={e}")
+        await registry.fail(job_id, str(e))
+
+
+@router.post("/api/kb/{name}/github/async")
+async def add_github_repo_async(name: str, payload: GithubIngestRequest) -> dict:
+    """Start an async GitHub-repo ingest. Returns {job_id, sse_url} immediately.
+
+    Poll ``GET /api/jobs/<job_id>`` until ``status='done'`` (``result`` has
+    ``files_added`` / ``chunks_added``) or ``status='error'``. The target KB is
+    created by the pipeline if missing. Use this instead of the synchronous MCP
+    ``ingest_github_repo`` tool for large repos that exceed the client timeout.
+    """
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="jobs not configured")
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    job_id = await app_state.job_registry.create(kind="github_ingest", total=0)
+    task = asyncio.create_task(_github_ingest_worker(
+        name=name, url=payload.url, include=payload.include,
+        exclude=payload.exclude, focus=payload.focus, max_files=payload.max_files,
+        job_id=job_id, registry=app_state.job_registry,
+    ))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
+@router.post("/api/kb/{name}/supplementary")
+async def add_pmc_supplementary(name: str, doi: str = Query(...)) -> dict:
+    """Fetch a paper's PMC-OA supplementary info and ingest it into an EXISTING
+    KB as labeled documents — WITHOUT re-ingesting the paper.
+
+    Retrofit for KBs built before PMC-SI ingestion became default: enriches the
+    grounding KB in place (paper chunks untouched). No-op when the paper has no
+    PMC SI, so callers can gate expensive downstream work (e.g. LLM
+    re-validation) on ``si_files > 0``. Idempotent: SI docs are keyed by a
+    stable ``pmc-si:<doi>:<label>`` id and skipped if already present.
+    """
+    if not app_state.session_store:
+        return {"error": "System not initialized"}
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if not kb:
+        return {"error": f"Knowledge base '{name}' not found"}
+    from perspicacite.models.papers import Paper, PaperSource
+    from perspicacite.pipeline.download.pmc import get_supplementary_from_pmc
+    from perspicacite.pipeline.download.supplementary import fetch_supplementary_file
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+
+    cfg = getattr(app_state.config, "pdf_download", None) if app_state.config else None
+    max_files = getattr(cfg, "supplementary_max_files", 12) if cfg else 12
+    max_chars = getattr(cfg, "supplementary_max_chars_per_file", 200_000) if cfg else 200_000
+    max_bytes = getattr(cfg, "supplementary_max_bytes_per_file", 25 * 1024 * 1024) if cfg else 25 * 1024 * 1024
+    try:
+        items = await get_supplementary_from_pmc(doi)
+    except Exception as e:  # noqa: BLE001
+        logger.info(f"pmc_si_lookup_failed doi={doi} error={e}")
+        return {"si_files": 0, "si_chunks": 0, "error": str(e)}
+    if not items:
+        return {"si_files": 0, "si_chunks": 0}
+
+    papers: list = []
+    for it in items[:max_files]:
+        url = it.get("url") or it.get("href")
+        mime = (it.get("mime_type") or "").lower()
+        label = it.get("label") or it.get("id") or "supplementary"
+        if not url or any(mime.startswith(p) for p in _SI_SKIP_MIME):
+            continue
+        pid = f"pmc-si:{doi}:{label}"
+        if await app_state.vector_store.paper_exists(kb.collection_name, pid):
+            continue  # idempotent
+        try:
+            data = await fetch_supplementary_file(url, max_bytes=max_bytes)
+        except Exception:  # noqa: BLE001
+            data = None
+        if not data:
+            continue
+        text = await _si_bytes_to_text(data, url, mime, app_state.pdf_parser, max_chars)
+        if not text:
+            continue
+        papers.append(Paper(
+            id=pid, title=f"Supplementary information: {label}", doi=None,
+            abstract=(it.get("caption") or None), full_text=text,
+            source=PaperSource.USER_UPLOAD,
+        ))
+    if not papers:
+        return {"si_files": 0, "si_chunks": 0}
+    dkb = DynamicKnowledgeBase(app_state.vector_store, app_state.embedding_provider)
+    dkb.collection_name = kb.collection_name
+    dkb._initialized = True
+    added = await dkb.add_papers(papers, include_full_text=True)
+    kb.chunk_count += added
+    await app_state.session_store.save_kb_metadata(kb)
+    logger.info(f"pmc_si_added_to_kb kb={name} doi={doi} si_files={len(papers)} chunks={added}")
+    return {"si_files": len(papers), "si_chunks": added, "kb": name}
 
 
 @router.post("/api/kb/{name}/local-files")

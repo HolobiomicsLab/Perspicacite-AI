@@ -127,6 +127,58 @@ class ProvenanceStore:
             rows = await cur.fetchall()
         return [_row_to_record(r, sidecar_dir=self.sidecar_dir) for r in rows]
 
+    def _sidecar_for(self, conversation_id: str) -> Path | None:
+        """Sidecar path for a conversation, or None if the id is not a safe name.
+
+        The id reaches us from a URL path segment, and this path is deleted, so
+        anything that could escape ``sidecar_dir`` is refused outright.
+        """
+        name = f"{conversation_id}.jsonl"
+        if not conversation_id or Path(name).name != name:
+            logger.warning("provenance_unsafe_conversation_id", conversation_id=conversation_id)
+            return None
+        return self.sidecar_dir / name
+
+    async def purge_conversation(self, conversation_id: str) -> int:
+        """Delete a conversation's provenance rows and its verbatim sidecar.
+
+        Returns the number of rows deleted. Call this whenever a conversation is
+        deleted: the sidecar holds full prompts and responses, so leaving it
+        behind makes the deletion incomplete.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cur = await db.execute(
+                "DELETE FROM provenance WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            await db.commit()
+            deleted = cur.rowcount or 0
+
+        sidecar = self._sidecar_for(conversation_id)
+        if sidecar is not None:
+            sidecar.unlink(missing_ok=True)
+
+        logger.info(
+            "provenance_purged", conversation_id=conversation_id, rows_deleted=deleted
+        )
+        return deleted
+
+    async def purge_all(self) -> int:
+        """Delete every provenance row and every sidecar file.
+
+        Returns the number of rows deleted.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cur = await db.execute("DELETE FROM provenance")
+            await db.commit()
+            deleted = cur.rowcount or 0
+
+        for sidecar in self.sidecar_dir.glob("*.jsonl"):
+            sidecar.unlink(missing_ok=True)
+
+        logger.info("provenance_purged_all", rows_deleted=deleted)
+        return deleted
+
 
 def _row_to_record(row: Any, *, sidecar_dir: Path) -> dict[str, Any]:
     index = json.loads(row["llm_calls_index"] or "[]")

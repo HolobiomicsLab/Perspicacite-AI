@@ -102,7 +102,6 @@ jobs:
             --ignore=tests/unit/test_invalidation.py \
             --ignore=tests/unit/test_jats_figure_extraction.py \
             --ignore=tests/unit/test_mcp_claim_graph_query_export.py \
-            --ignore=tests/unit/test_mcp_export_astra.py \
             --ignore=tests/unit/test_mcp_extract_claims.py \
             --ignore=tests/unit/test_mcp_generate_report_indicia.py \
             --ignore=tests/unit/test_queries.py \

@@ -161,27 +161,25 @@ def test_chunk_producer_notebook_accepts_string_source(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_chunk_producer_extracts_docstrings(tmp_path: Path) -> None:
-    """A .py file → Paper body contains every docstring; function/class
-    body code is omitted (avoids embedding noise per spec v1)."""
+def test_chunk_producer_keeps_python_raw_source(tmp_path: Path) -> None:
+    """A .py file → Paper body is the RAW source (docstrings AND bodies). The
+    KB indexer symbol-chunks it via chunk_code (AST), unified with the
+    local-docs path and with Java/R; the old docstrings-only producer behaviour
+    is gone."""
     src = (
         '"""Module-level docstring describing the module."""\n'
         "\n"
-        "PI = 3.14  # NOT a docstring, must NOT appear\n"
+        "PI = 3.14\n"
         "\n"
         "def foo():\n"
         '    """foo function docstring."""\n'
-        "    return 1 + 2  # body line MUST NOT appear\n"
-        "\n"
-        "def bar():\n"
-        '    """bar function docstring."""\n'
-        '    raise RuntimeError("hidden")  # body line MUST NOT appear\n'
+        "    return 1 + 2\n"
         "\n"
         "class C:\n"
         '    """class C docstring."""\n'
         "    def method(self):\n"
         '        """C.method docstring."""\n'
-        "        return self.x  # body line MUST NOT appear\n"
+        "        return self.x\n"
     )
     (tmp_path / "thing.py").write_text(src)
 
@@ -189,30 +187,28 @@ def test_chunk_producer_extracts_docstrings(tmp_path: Path) -> None:
     papers = papers_from_directory(tmp_path, manifest, commit_sha=None)
     assert len(papers) == 1
     p = papers[0]
-    assert p.metadata["content_kind"] == "github_python"
+    assert p.metadata["content_kind"] == "github_code"
     body = p.full_text or ""
+    # Raw source: both docstrings AND implementation lines are present.
     assert "Module-level docstring" in body
     assert "foo function docstring" in body
-    assert "bar function docstring" in body
-    assert "class C docstring" in body
     assert "C.method docstring" in body
-    # No function bodies / module-level assignments.
-    assert "1 + 2" not in body
-    assert 'raise RuntimeError' not in body
-    assert "PI = 3.14" not in body
-    assert "self.x" not in body
+    assert "1 + 2" in body
+    assert "PI = 3.14" in body
+    assert "self.x" in body
 
 
 def test_chunk_producer_python_no_docstrings_still_emits_paper(
     tmp_path: Path,
 ) -> None:
-    """A .py file with zero docstrings still produces a Paper (empty body),
-    not an error. Caller decides whether to keep it."""
+    """A .py file with no docstrings still produces a Paper carrying its raw
+    source, not an error."""
     (tmp_path / "blank.py").write_text("x = 1\n")
     manifest = _make_manifest()
     papers = papers_from_directory(tmp_path, manifest, commit_sha=None)
     assert len(papers) == 1
-    assert papers[0].metadata["content_kind"] == "github_python"
+    assert papers[0].metadata["content_kind"] == "github_code"
+    assert "x = 1" in (papers[0].full_text or "")
 
 
 # ---------------------------------------------------------------------------

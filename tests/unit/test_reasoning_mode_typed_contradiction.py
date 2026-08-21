@@ -2,8 +2,14 @@
 
 import json
 
+import pytest
+
 from perspicacite.config.schema import Config
 from perspicacite.models.rag import RAGMode, RAGRequest
+
+# The reasoning modes reach perspicacite.indicium_layer.queries, which imports
+# the private, maintainer-only indicium package at module scope.
+pytest.importorskip("indicium", reason="indicium is a private, maintainer-only package")
 
 
 class _FakeLLM:

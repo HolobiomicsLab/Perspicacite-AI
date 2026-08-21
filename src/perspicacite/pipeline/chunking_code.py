@@ -298,16 +298,26 @@ def _chunk_notebook(text: str, paper: Paper, *, file_path: str) -> list[Document
     return chunks
 
 
-# Optional Tree-sitter path. Activates when `tree_sitter_languages` is
-# importable; otherwise _chunk_treesitter returns None and the dispatcher
-# falls back to the LangChain splitter for the same content.
-try:
-    import importlib
+# Optional Tree-sitter path. Activates when a parser-pack is importable;
+# otherwise _chunk_treesitter returns None and the dispatcher falls back to the
+# LangChain splitter for the same content. We prefer `tree_sitter_language_pack`
+# (maintained, ships wheels for current CPython incl. 3.13/3.14); fall back to
+# the legacy `tree_sitter_languages`.
+def _resolve_ts_get_parser():
+    try:
+        from tree_sitter_language_pack import get_parser  # type: ignore
+        return get_parser
+    except Exception:
+        pass
+    try:
+        from tree_sitter_languages import get_parser  # type: ignore
+        return get_parser
+    except Exception:
+        return None
 
-    importlib.import_module("tree_sitter_languages")
-    HAS_TREE_SITTER = True
-except Exception:
-    HAS_TREE_SITTER = False
+
+_TS_GET_PARSER = _resolve_ts_get_parser()
+HAS_TREE_SITTER = _TS_GET_PARSER is not None
 
 
 _TS_NODE_TYPES = {
@@ -333,56 +343,131 @@ def _chunk_treesitter(
     cannot be obtained for ``language``; the caller falls back to the
     splitter. Never raises.
     """
-    if not HAS_TREE_SITTER:
+    if not HAS_TREE_SITTER or _TS_GET_PARSER is None:
         return None
     try:
-        from tree_sitter_languages import get_parser  # type: ignore
+        parser = _TS_GET_PARSER(language)
     except Exception:
         return None
+    # tree-sitter API churn: parse() wants bytes in some builds, str in others;
+    # root_node is a property in py-tree-sitter but a method in some packs.
     try:
-        parser = get_parser(language)
+        try:
+            tree = parser.parse(text.encode("utf-8"))
+        except TypeError:
+            tree = parser.parse(text)
     except Exception:
         return None
-    try:
-        tree = parser.parse(text.encode("utf-8"))
-    except Exception:
-        return None
+    root = tree.root_node
+    if callable(root):
+        root = root()
 
     lines = text.splitlines()
+    src_bytes = text.encode("utf-8")
     chunks: list[DocumentChunk] = []
     idx = 0
 
+    # --- Node-API compatibility shims. py-tree-sitter exposes
+    # type/children/start_point/.text as PROPERTIES; tree-sitter-language-pack's
+    # binding exposes kind/child_count/child(i)/start_position/byte-range as
+    # zero-arg METHODS. `_v` resolves either form.
+    def _v(a: Any):
+        return a() if callable(a) else a
+
+    def _kind(node: Any):
+        k = getattr(node, "type", None)
+        if k is None:
+            k = getattr(node, "kind", None)
+        return _v(k)
+
+    def _children(node: Any) -> list:
+        ch = _v(getattr(node, "children", None))
+        if isinstance(ch, (list, tuple)):
+            return list(ch)
+        cc = _v(getattr(node, "child_count", None))
+        if isinstance(cc, int):
+            return [node.child(i) for i in range(cc)]
+        return []
+
+    def _row(pt: Any):
+        pt = _v(pt)
+        if pt is None:
+            return None
+        if hasattr(pt, "row"):
+            return pt.row
+        try:
+            return pt[0]
+        except Exception:
+            return None
+
+    def _rows(node: Any):
+        sp = getattr(node, "start_point", None) or getattr(node, "start_position", None)
+        ep = getattr(node, "end_point", None) or getattr(node, "end_position", None)
+        return _row(sp), _row(ep)
+
+    def _node_text(node: Any):
+        sb, eb = _v(getattr(node, "start_byte", None)), _v(getattr(node, "end_byte", None))
+        if isinstance(sb, int) and isinstance(eb, int):
+            return src_bytes[sb:eb].decode("utf-8", "replace")
+        t = _v(getattr(node, "text", None))
+        if isinstance(t, bytes):
+            return t.decode("utf-8", "replace")
+        return str(t) if t is not None else None
+
+    def _name(node: Any) -> str | None:
+        getf = getattr(node, "child_by_field_name", None)
+        if callable(getf):
+            try:
+                nm = getf("name")
+                if nm is not None:
+                    return _node_text(nm)
+            except Exception:
+                pass
+        for child in _children(node):
+            if _kind(child) in ("identifier", "type_identifier", "name"):
+                return _node_text(child)
+        for child in _children(node):  # name sometimes nests one level deeper
+            nested = _name(child)
+            if nested:
+                return nested
+        return None
+
     def _walk(node: Any) -> None:
         nonlocal idx
-        for child in node.children:
-            kind = _TS_NODE_TYPES.get(child.type)
+        for child in _children(node):
+            kind = _TS_NODE_TYPES.get(_kind(child))
             if kind is not None:
-                start_row = child.start_point[0] + 1
-                end_row = child.end_point[0] + 1
+                sr, er = _rows(child)
+                if sr is None:
+                    _walk(child)
+                    continue
+                start_row = sr + 1
+                end_row = (er if er is not None else sr) + 1
                 body = "\n".join(lines[start_row - 1 : end_row])
-                name = _ts_extract_name(child) or f"{kind}_{idx}"
+                name = _name(child) or f"{kind}_{idx}"
+                if not body.strip():
+                    continue
                 md = ChunkMetadata(
-                    paper_id=paper.id,
-                    chunk_index=idx,
-                    source=paper.source,
-                    title=paper.title,
-                    content_type="code",
-                    language=language,
-                    source_file_path=file_path,
-                    symbol_name=name,
-                    symbol_kind=kind,
-                    start_line=start_row,
-                    end_line=end_row,
-                    docstring=None,
-                    imports=[],
+                    paper_id=paper.id, chunk_index=idx, source=paper.source,
+                    title=paper.title, content_type="code", language=language,
+                    source_file_path=file_path, symbol_name=name, symbol_kind=kind,
+                    start_line=start_row, end_line=end_row, docstring=None, imports=[],
                 )
                 chunks.append(DocumentChunk(id=f"{paper.id}_code_{idx}",
                                             text=body, metadata=md))
                 idx += 1
+                # Big class/struct → also emit per-method subchunks so a
+                # 2000-line class doesn't collapse into one giant chunk
+                # (mirrors the Python AST path's threshold behaviour).
+                if kind == "class" and len(body) > _METHOD_SUBCHUNK_THRESHOLD_CHARS:
+                    _walk(child)
             else:
                 _walk(child)
 
-    _walk(tree.root_node)
+    try:
+        _walk(root)
+    except Exception:  # any Node-API mismatch -> let caller fall back
+        return None
 
     if not chunks:
         md = ChunkMetadata(
@@ -393,23 +478,6 @@ def _chunk_treesitter(
         )
         return [DocumentChunk(id=f"{paper.id}_code_0", text=text, metadata=md)]
     return chunks
-
-
-def _ts_extract_name(node: Any) -> str | None:
-    """Best-effort name extraction: scan children for an ``identifier`` /
-    ``type_identifier`` / ``name`` node and use its text."""
-    for child in node.children:
-        if child.type in ("identifier", "type_identifier", "name"):
-            try:
-                return child.text.decode("utf-8")
-            except Exception:
-                return None
-    # Some grammars nest the name one level deeper (e.g. function_declarator).
-    for child in node.children:
-        nested = _ts_extract_name(child)
-        if nested:
-            return nested
-    return None
 
 
 def chunk_code(

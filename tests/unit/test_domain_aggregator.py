@@ -234,3 +234,37 @@ async def test_apis_kwarg_not_forwarded_to_non_scilex_provider():
     # Should not raise TypeError even though apis is passed and provider has no **kwargs.
     results = await agg.search("any", apis=["pubmed"])
     assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_deadline_forwarded_to_scilex():
+    """SciLEx gets a soft collection deadline (a fraction of its wait_for
+    budget) so a slow backend returns partial results instead of nothing."""
+    captured: dict = {}
+
+    class CapturingScilex(_Provider):
+        async def search(self, query, max_results=20, year_min=None, year_max=None, **kwargs):
+            captured.update(kwargs)
+            return self._papers
+
+    sx = CapturingScilex("scilex", [_paper("10.1/x")], tier="flaky")
+    agg = DomainAwareAggregator([sx], provider_timeout_s=10.0)
+    await agg.search("any")
+    # flaky tier => 10.0 * 2.25 = 22.5s wait_for; deadline is 0.8 of that.
+    assert captured.get("collect_deadline_s") == pytest.approx(22.5 * 0.8)
+
+
+@pytest.mark.asyncio
+async def test_collect_deadline_not_forwarded_to_non_scilex():
+    """Only SciLEx receives collect_deadline_s; other providers don't."""
+    captured: dict = {}
+
+    class Capturing(_Provider):
+        async def search(self, query, max_results=20, year_min=None, year_max=None, **kwargs):
+            captured.update(kwargs)
+            return self._papers
+
+    other = Capturing("europepmc", [_paper("10.1/x")])
+    agg = DomainAwareAggregator([other], provider_timeout_s=10.0)
+    await agg.search("any")
+    assert "collect_deadline_s" not in captured
