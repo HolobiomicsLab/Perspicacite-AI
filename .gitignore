@@ -215,3 +215,5 @@ tests/audit/results/audit_kb/
 tests/audit/results/*.json
 tests/audit/results/*.md
 .worktrees/
+
+config_openai_large.yml
