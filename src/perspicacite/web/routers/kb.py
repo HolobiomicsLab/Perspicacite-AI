@@ -173,8 +173,8 @@ async def _bibtex_ingest_worker(
             paper.source = PaperSource.BIBTEX
 
             # Local PDF check
-            local_path = Path(paper.pdf_url) if paper.pdf_url else None
-            if local_path and local_path.suffix.lower() == ".pdf" and local_path.exists():
+            local_path = _validated_local_pdf(paper.pdf_url)
+            if local_path:
                 try:
                     parsed = await app_state.pdf_parser.parse(local_path)
                     if parsed.text:
@@ -448,6 +448,32 @@ def _get_pdf_fallback_kwargs(pdf_config) -> dict:
         "rsc_api_key": pdf_config.rsc_api_key,
         "springer_api_key": pdf_config.springer_api_key,
     }
+
+
+def _validated_local_pdf(raw_path: str | None) -> Path | None:
+    """A BibTeX ``file`` path once cleared against the allow-list, else None.
+
+    The path arrives inside an uploaded ``.bib``, so it is caller-controlled: an
+    entry like ``file = {/home/someone/private.pdf}`` would otherwise make the
+    server read that file and store its text as a KB chunk, which whoever
+    uploaded the ``.bib`` can then read back through search.
+
+    Fail-soft by design — a rejected path just skips the local-PDF shortcut and
+    lets the DOI download proceed, rather than failing the whole import.
+    """
+    if not raw_path:
+        return None
+    if Path(raw_path).suffix.lower() != ".pdf":
+        return None
+    local_docs = getattr(app_state.config, "local_docs", None) if app_state.config else None
+    allowed = list(getattr(local_docs, "allowed_roots", []) or [])
+    try:
+        return validate_local_path(str(raw_path), allowed_roots=allowed)
+    except LocalDocsDisabledError:
+        logger.info(f"bibtex_local_pdf_skipped_no_allowed_roots path={raw_path}")
+    except LocalDocsValidationError as exc:
+        logger.warning(f"bibtex_local_pdf_rejected path={raw_path} reason={exc}")
+    return None
 
 
 # Suffixes/MIME prefixes whose bytes can be ingested as text without a parser.
@@ -788,8 +814,8 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
         # Try local PDF first (e.g. from Zotero/Mendeley export)
         full_text = None
         if pd.file:
-            local_path = Path(pd.file)
-            if local_path.suffix.lower() == ".pdf" and local_path.exists():
+            local_path = _validated_local_pdf(pd.file)
+            if local_path:
                 try:
                     parsed = await app_state.pdf_parser.parse(local_path)
                     if parsed.text:
@@ -1185,8 +1211,8 @@ async def add_bibtex_to_kb(name: str, request: Request):
         paper.source = PaperSource.BIBTEX
 
         # Try local PDF first (BibTeX ``file`` field mapped to pdf_url)
-        local_path = Path(paper.pdf_url) if paper.pdf_url else None
-        if local_path and local_path.suffix.lower() == ".pdf" and local_path.exists():
+        local_path = _validated_local_pdf(paper.pdf_url)
+        if local_path:
             try:
                 parsed = await app_state.pdf_parser.parse(local_path)
                 if parsed.text:
