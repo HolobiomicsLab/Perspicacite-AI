@@ -8,6 +8,11 @@ from __future__ import annotations
 import json
 import pytest
 
+# perspicacite.indicium_layer.queries imports the private, maintainer-only
+# indicium package at module scope, so these tests cannot run on a public
+# checkout.
+pytest.importorskip("indicium", reason="indicium is a private, maintainer-only package")
+
 
 def test_claim_link_iri_constants_exist():
     from perspicacite.indicium_layer.queries import (
