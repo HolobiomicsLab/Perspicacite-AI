@@ -189,6 +189,38 @@ Two common causes:
 - **Semantic Scholar's public tier throttles hard** without an API key. Set
   `pdf_download.semantic_scholar_api_key` in `config.yml` to lift it.
 
+## Google Scholar as a fallback database
+
+When OpenAlex is out of credit, Google Scholar still works. It is driven by a
+headless Chromium, so it is slower (~6s/query) than the REST backends, but it
+covers preprints and proceedings the metadata APIs miss:
+
+```bash
+perspicacite -c config.yml search-to-kb \
+  --query "agent benchmark shared computing cluster" \
+  --kb my_kb -d google_scholar --max-results 20 --dry-run
+```
+
+It needs the browser extra, which is **not** part of the default install:
+
+```bash
+uv pip install -e ".[browser]" --inexact
+uv run playwright install chromium
+```
+
+Without it the provider logs `google_scholar_playwright_missing` and returns
+zero hits — another zero that does not mean "no literature".
+
+Scholar returns many results with no DOI in the link. arXiv landing pages are
+recovered automatically (`arxiv.org/abs/<id>` → `10.48550/arXiv.<id>`), but
+aclanthology, OpenReview and proceedings pages still fall to the `no_doi`
+filter and are dropped before ingest.
+
+Note that the default database set is `semantic_scholar, openalex, pubmed` —
+all SciLEx backends. Providers such as `google_scholar`, `europepmc` and
+`core` are only queried when named explicitly with `-d`, even though
+`search.enabled_providers` lists them.
+
 Databases needing paid keys (`ieee`, `springer`, `elsevier`) are `enabled: false`
 in `config.example.yml`. Passing `-d ieee` while it is disabled is a silent
 no-op — the flag is accepted and the backend is never queried.
