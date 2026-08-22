@@ -6,7 +6,10 @@ plain-text query:
 1. :class:`perspicacite.search.scilex_adapter.SciLExAdapter` — multi-DB
    academic search (Semantic Scholar, OpenAlex, PubMed, arXiv, …).
 2. Light client-side filters (year, citations, abstract presence, DOI
-   presence) so we don't waste a PDF fetch on garbage hits.
+   presence) so we don't waste a PDF fetch on garbage hits. Hits that
+   arrive without a DOI can first be sent through
+   :mod:`perspicacite.pipeline.doi_backfill` (opt-in) instead of being
+   dropped outright — that's what makes Google Scholar usable here.
 3. The same DOI → PDF → chunk → embed pipeline that ``add_dois_to_kb``
    already uses.
 
@@ -252,6 +255,7 @@ class IngestReport:
     pdf_download: dict[str, int] = field(default_factory=dict)
     selected_dois: list[str] = field(default_factory=list)
     filter_reasons: dict[str, int] = field(default_factory=dict)
+    doi_backfill: dict[str, int] = field(default_factory=dict)
     screen_scores: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -693,12 +697,22 @@ async def search_filter_and_ingest(
     rephrase: int = 0,
     rephrase_model: str | None = None,
     rephrase_provider: str | None = None,
+    resolve_missing_dois: bool = False,
+    resolve_doi_budget: int = 25,
+    resolve_doi_browser: bool = False,
 ) -> IngestReport:
     """End-to-end: SciLEx search → filter → optionally create KB → ingest.
 
     ``dry_run=True`` runs everything up to but not including PDF fetch —
     useful from the CLI when you want to see which DOIs would be added
     before paying for the download.
+
+    ``resolve_missing_dois=True`` inserts a verified title → DOI lookup
+    before filtering, so providers that don't return DOIs (Google
+    Scholar in particular) can still feed a KB. It costs network
+    round-trips, so it is bounded by ``resolve_doi_budget`` and off by
+    default; ``resolve_doi_browser`` additionally enables the headless
+    Chromium tier. Outcome counts land in ``report.doi_backfill``.
     """
     flt = flt or SearchFilter()
     report = IngestReport(query=query, kb_name=kb_name)
@@ -774,6 +788,19 @@ async def search_filter_and_ingest(
     report.searched = len(papers)
     if not papers:
         return report
+
+    # Scrape-backed providers (Google Scholar above all) hand back a
+    # title and no DOI, and the filter below then drops them as
+    # ``no_doi``. Opt-in: recover a *verified* DOI from the title so
+    # those hits stay ingestable. See pipeline/doi_backfill.py.
+    if resolve_missing_dois:
+        from perspicacite.pipeline.doi_backfill import backfill_missing_dois
+        papers, backfill = await backfill_missing_dois(
+            papers,
+            budget=resolve_doi_budget,
+            enable_browser=resolve_doi_browser,
+        )
+        report.doi_backfill = backfill.to_dict()
 
     kept, reasons = apply_filters(papers, flt)
     report.candidates = len(kept)

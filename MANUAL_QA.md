@@ -288,3 +288,23 @@ Failure modes (each should NOT silently succeed):
 - [ ] Set `cookies_path` to a nonexistent file → server log shows `pdf_cookies_path_missing path=<path>` and PDF fetches still try without cookies (no exception, no crash).
 - [ ] Use a DOI from a publisher NOT in `cookie_domains` (e.g. arxiv) → cookies are not attached (host-substring check) but OA fetch still works.
 - [ ] Empty `cookie_domains: []` → cookies attach to every PDF request; works but logged as the broader path.
+
+## Google Scholar hits with no DOI (`--resolve-missing-dois`, 2026-08-22)
+
+Baseline — the failure this fixes:
+- [ ] `perspicacite -c config.yml search-to-kb -q "non-uniform sampling fast 2D NMR" -k tmp-scholar -d google_scholar --dry-run` reports a non-zero `no_doi=` under "filter reasons".
+- [ ] The same run ends with a `⚠ N hits dropped for having no DOI. Re-run with --resolve-missing-dois …` line. A run that drops hits must never look like an empty result set.
+
+With the flag:
+- [ ] Re-run adding `--resolve-missing-dois`. Output gains a `• DOI backfill: resolved X/Y attempted, Z hits had no DOI` line, `candidates` goes up, and the `⚠` hint is gone.
+- [ ] Every DOI in the dry-run list resolves: `curl -s -o /dev/null -w "%{http_code}" https://api.crossref.org/works/<doi>` returns 200 (or the DOI starts with `10.48550/arXiv.`, which lives at DataCite, not Crossref).
+- [ ] Spot-check two resolved DOIs against their titles on doi.org. A wrong DOI here is worse than a dropped hit — report it rather than shrugging.
+
+Bounding:
+- [ ] `--resolve-doi-budget 2` on a query with more DOI-less hits: output shows `⚠ N not looked up (budget 2 reached)`. Nothing is dropped silently.
+- [ ] Server log shows one `doi_backfill_done` line per run with the same counts.
+- [ ] `--resolve-doi-browser` (needs `.[browser]` + `playwright install chromium`) runs without error; it is slower and may add nothing — that is expected, not a bug.
+
+Ingest (server running, so write through the API — Chroma is single-writer):
+- [ ] `POST /api/kb/<tmp-kb>/dois` with the dry-run DOI list adds papers; `GET /api/kb/<tmp-kb>/stats` shows `paper_count > 0` and `embedding_health.degraded = false`.
+- [ ] Any DOI that fails ingest comes back in `failed` with a reason (e.g. `elsevier:skip no_api_key`) — a paywall miss, not a resolution bug.

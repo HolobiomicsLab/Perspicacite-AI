@@ -43,8 +43,10 @@ calls and keep KBs focused:
 | `--require-abstract` | Drop papers without an abstract |
 | `--article-type TYPE` | Filter by article type (e.g., `journal-article`) |
 
-Papers without a DOI are also filtered out automatically — they cannot be fetched
-through the download pipeline.
+Papers without a DOI are filtered out too — the download pipeline is keyed on DOIs,
+so a hit without one cannot be fetched. That drop is not silent: it shows up as
+`no_doi` in the run's filter reasons, and `--resolve-missing-dois` (below) can
+recover most of those hits instead.
 
 ```bash
 perspicacite -c config.yml search-to-kb \
@@ -211,15 +213,78 @@ uv run playwright install chromium
 Without it the provider logs `google_scholar_playwright_missing` and returns
 zero hits — another zero that does not mean "no literature".
 
-Scholar returns many results with no DOI in the link. arXiv landing pages are
-recovered automatically (`arxiv.org/abs/<id>` → `10.48550/arXiv.<id>`), but
-aclanthology, OpenReview and proceedings pages still fall to the `no_doi`
-filter and are dropped before ingest.
+Scholar returns many results with no DOI in the link. Three recovery steps run
+in order, cheapest first:
+
+1. **From the URL.** doi.org and publisher landing pages give the DOI directly.
+   arXiv pages expose none but imply one (`arxiv.org/abs/<id>` →
+   `10.48550/arXiv.<id>`). bioRxiv/medRxiv version and view tails
+   (`…/10.64898/2025.12.02.691830v1.abstract`) are trimmed, because the DOI
+   with the tail attached resolves nowhere.
+2. **From the title**, with `--resolve-missing-dois` — see the next section.
+3. **Neither works** — aclanthology, OpenReview, proceedings and thesis pages
+   for work that was never registered with a DOI. These are reported under
+   `no_doi` and skipped. That is the correct outcome: there is nothing to fetch.
+
+A live 2026-08-22 measurement on `-d google_scholar`: 10 hits, 5 already carried
+a DOI from step 1, and step 2 resolved 3 of the remaining 5 in 1.9 s — 8 of 10
+hits ingestable, against 5 before.
 
 Note that the default database set is `semantic_scholar, openalex, pubmed` —
 all SciLEx backends. Providers such as `google_scholar`, `europepmc` and
 `core` are only queried when named explicitly with `-d`, even though
 `search.enabled_providers` lists them.
+
+## Recovering DOIs from titles (`--resolve-missing-dois`)
+
+Google Scholar, DBLP and other scrape-backed providers return a title, an author
+line and a link — but often no DOI. Since the ingest path is keyed on DOIs, those
+hits used to be dropped, and a Scholar-only run could report `candidates=0` while
+having found perfectly good papers.
+
+`--resolve-missing-dois` inserts a title → DOI lookup between the search and the
+filter, for the hits that lack a DOI only:
+
+```bash
+perspicacite -c config.yml search-to-kb \
+  --query "non-uniform sampling fast 2D NMR" \
+  --kb nmr_methods -d google_scholar \
+  --resolve-missing-dois --dry-run
+```
+
+```
+  • searched=10 candidates=8 filtered_out=2
+  • DOI backfill: resolved 3/5 attempted, 5 hits had no DOI
+  • filter reasons: no_doi=2
+```
+
+**Every match is verified.** The lookup walks OpenAlex → Crossref → Semantic
+Scholar → arXiv and accepts a candidate only when the author tokens overlap, the
+year is within ±1, and the titles pass a Jaccard similarity floor. The optional
+`--resolve-doi-browser` tier scrapes Google Scholar with headless Chromium and
+additionally confirms each scraped DOI through Crossref. A miss is always
+preferred to a loose match: a wrong DOI in a bibliography is worse than a paper
+that never got ingested.
+
+**It costs network round-trips**, so it is off by default and bounded:
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--resolve-missing-dois` | off | Enable the lookup at all |
+| `--resolve-doi-budget N` | 25 | Max lookups per run; hits beyond it are reported under `over_budget`, never hidden |
+| `--resolve-doi-browser` | off | Add the headless-Chromium Scholar tier (slow; needs the `browser` extra) |
+
+Concurrency is capped at 4, and results — hits *and* misses — are memoised for
+the life of the process, so re-running overlapping queries in one server session
+doesn't re-pay for the same titles.
+
+On the 2026-08-22 NMR sample the four HTTP tiers resolved 3 of 5 in ~2 s, and
+`--resolve-doi-browser` added nothing beyond them for ~1.5 s more. Reach for the
+browser tier only when the HTTP tiers keep missing a paper you know exists.
+
+Over MCP, the same behaviour is `resolve_missing_dois=true` and
+`resolve_doi_budget` on `build_kb_from_search`. Counts come back in the report's
+`doi_backfill` block.
 
 ## SciLEx re-ranks, and that hurts fast-moving topics
 
