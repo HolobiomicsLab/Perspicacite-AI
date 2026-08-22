@@ -221,6 +221,27 @@ all SciLEx backends. Providers such as `google_scholar`, `europepmc` and
 `core` are only queried when named explicitly with `-d`, even though
 `search.enabled_providers` lists them.
 
+## SciLEx re-ranks, and that hurts fast-moving topics
+
+The SciLEx adapter does not preserve the upstream API's own relevance ordering. After
+deduplication it re-sorts the whole pool with SciLEx's composite score
+(`aggregate_collect._apply_relevance_ranking`): **keywords 45%, quality 25%, itemtype
+20%, citations 10%**. The re-rank was added for a good reason — SciLEx collects
+year-by-year, so keeping collection order meant a plain truncation returned only the
+earliest year's block — but it has a consequence worth knowing.
+
+On a topic where the entire relevant literature is one or two years old and uncited,
+the 35% of the score carried by `quality` + `citations`, plus an `itemtype` term that
+favours journal articles over preprints, systematically promotes older, heavily-cited,
+loosely-matching work. A 2026-08-22 sweep on LLM-agent/HPC queries produced a block of
+2002 grid-computing papers through SciLEx, while the *same query against the Semantic
+Scholar API directly* returned on-topic 2025–2026 work in its first three hits.
+
+**For a recent topic, query the API directly and take the top-ranked hits**, or treat
+the SciLEx result as a recall-oriented pool to be screened (`--screen llm`) rather than
+a ranked shortlist. This is a property of the ranking design, not a throttling or key
+problem — it happens with a valid Semantic Scholar key and HTTP 200 responses.
+
 Databases needing paid keys (`ieee`, `springer`, `elsevier`) are `enabled: false`
 in `config.example.yml`. Passing `-d ieee` while it is disabled is a silent
 no-op — the flag is accepted and the backend is never queried.
