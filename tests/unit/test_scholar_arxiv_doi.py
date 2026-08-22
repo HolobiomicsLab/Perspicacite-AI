@@ -59,3 +59,43 @@ def test_slashes_inside_a_real_doi_suffix_are_kept():
 if __name__ == "__main__":
     for u in ("https://arxiv.org/abs/2606.12950", "https://arxiv.org/pdf/2602.03128v2"):
         print(u, "->", _extract_doi_from_url(u))
+
+
+def test_biorxiv_version_and_view_tail_are_stripped():
+    """``…691830v1.abstract`` is a URL, not a DOI — Crossref 404s on it.
+
+    Seen live on 2026-08-22: three of seven DOIs a Google Scholar query
+    selected for ingest carried this tail and would have entered the KB
+    unresolvable.
+    """
+    doi = _extract_doi_from_url(
+        "https://www.biorxiv.org/content/10.64898/2025.12.02.691830v1.abstract"
+    )
+    assert doi == "10.64898/2025.12.02.691830"
+
+
+def test_biorxiv_multi_part_view_tail_is_stripped():
+    doi = _extract_doi_from_url(
+        "https://www.biorxiv.org/content/10.64898/2025.12.02.691830v1.full.pdf"
+    )
+    assert doi == "10.64898/2025.12.02.691830"
+
+
+def test_biorxiv_bare_version_tail_is_stripped():
+    doi = _extract_doi_from_url(
+        "https://www.biorxiv.org/content/10.64898/2025.12.02.691830v1"
+    )
+    assert doi == "10.64898/2025.12.02.691830"
+
+
+def test_medrxiv_eight_digit_id_and_hyphenated_view_are_stripped():
+    doi = _extract_doi_from_url(
+        "https://www.medrxiv.org/content/10.1101/2024.05.05.24306789v2.full-text"
+    )
+    assert doi == "10.1101/2024.05.05.24306789"
+
+
+def test_a_dotted_doi_suffix_that_is_not_a_preprint_id_is_left_alone():
+    """The tail-strip must never touch an ordinary versioned DOI suffix."""
+    doi = _extract_doi_from_url("https://pubs.acs.org/doi/10.1021/acs.jnatprod.3c00468")
+    assert doi == "10.1021/acs.jnatprod.3c00468"

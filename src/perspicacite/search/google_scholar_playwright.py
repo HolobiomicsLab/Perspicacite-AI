@@ -45,6 +45,16 @@ _DOI_ANY_RE = re.compile(r"(10\.\d{4,9}/[^\s\"'<>?#]+)")
 # nowhere. A DOI suffix may legitimately contain slashes, so strip only
 # these known view segments, never a trailing segment in general.
 _URL_VIEW_SUFFIXES = ("/meta", "/full", "/abstract", "/pdf", "/html", "/epdf")
+# bioRxiv / medRxiv landing pages inline the DOI, then append a version
+# segment and a *dot*-separated view suffix that _URL_VIEW_SUFFIXES (which
+# only knows slash-separated ones) leaves attached:
+#   /content/10.64898/2025.12.02.691830v1.abstract
+# Crossref knows ``10.64898/2025.12.02.691830`` and 404s on anything
+# longer, so the tail has to go. The date-shaped preprint id is anchored
+# in the pattern, so this can never trim a normal DOI suffix.
+_PREPRINT_VIEW_TAIL_RE = re.compile(
+    r"^(\d{4}\.\d{2}\.\d{2}\.\d{5,9})(?:v\d+)?(?:\.[A-Za-z][A-Za-z-]*)*$"
+)
 # arXiv landing pages carry no DOI in the URL, but every arXiv id has a
 # registered DataCite DOI of the form 10.48550/arXiv.<id>. Deriving it is a
 # pure string transform — no network call — and it matches the form
@@ -112,6 +122,20 @@ def _parse_meta_line(meta: str) -> tuple[str, str, int | None]:
     return authors, venue, year
 
 
+def _strip_preprint_view_tail(doi: str) -> str:
+    """Drop a bioRxiv/medRxiv ``vN`` + view tail from an extracted DOI.
+
+    ``10.64898/2025.12.02.691830v1.abstract`` becomes
+    ``10.64898/2025.12.02.691830``. Returns ``doi`` unchanged when the
+    suffix isn't a date-shaped preprint id.
+    """
+    prefix, slash, rest = doi.partition("/")
+    if not slash:
+        return doi
+    m = _PREPRINT_VIEW_TAIL_RE.match(rest)
+    return f"{prefix}/{m.group(1)}" if m else doi
+
+
 def _extract_doi_from_url(url: str) -> str | None:
     """Extract a bare DOI from a doi.org URL or publisher landing page.
 
@@ -127,6 +151,10 @@ def _extract_doi_from_url(url: str) -> str | None:
     this, every arXiv preprint Scholar returns is dropped downstream by
     the ``no_doi`` filter — which in preprint-heavy fields is most of
     the result set.
+
+    bioRxiv/medRxiv version and view tails are trimmed as well, so the
+    result is a DOI Crossref actually resolves rather than one that
+    404s on ingest.
     """
     if not url:
         return None
@@ -148,7 +176,7 @@ def _extract_doi_from_url(url: str) -> str | None:
             if doi.lower().endswith(suffix):
                 doi = doi[: -len(suffix)]
                 break
-        return doi
+        return _strip_preprint_view_tail(doi)
     return None
 
 
