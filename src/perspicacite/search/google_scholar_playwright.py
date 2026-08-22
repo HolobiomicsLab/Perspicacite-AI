@@ -39,6 +39,12 @@ _DOI_RE = re.compile(r"https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[^\s\"'>]+)")
 # https://onlinelibrary.wiley.com/doi/abs/10.1002/anie.202012345
 # https://pubs.acs.org/doi/10.1021/acs.jnatprod.3c00468
 _DOI_ANY_RE = re.compile(r"(10\.\d{4,9}/[^\s\"'<>?#]+)")
+# Publisher landing pages append a view segment after the DOI — IOP's
+# ``/iopscience.iop.org/article/10.1088/1742-6596/513/3/032027/meta`` being
+# the common case. _DOI_ANY_RE swallows it, yielding a DOI that resolves
+# nowhere. A DOI suffix may legitimately contain slashes, so strip only
+# these known view segments, never a trailing segment in general.
+_URL_VIEW_SUFFIXES = ("/meta", "/full", "/abstract", "/pdf", "/html", "/epdf")
 # arXiv landing pages carry no DOI in the URL, but every arXiv id has a
 # registered DataCite DOI of the form 10.48550/arXiv.<id>. Deriving it is a
 # pure string transform — no network call — and it matches the form
@@ -138,6 +144,10 @@ def _extract_doi_from_url(url: str) -> str | None:
         doi = m.group(1)
         # Trim trailing punctuation that's clearly not part of a DOI.
         doi = doi.rstrip(").,;")
+        for suffix in _URL_VIEW_SUFFIXES:
+            if doi.lower().endswith(suffix):
+                doi = doi[: -len(suffix)]
+                break
         return doi
     return None
 

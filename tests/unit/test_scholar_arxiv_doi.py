@@ -41,6 +41,21 @@ def test_non_arxiv_url_without_a_doi_returns_none():
     assert _extract_doi_from_url("https://openreview.net/forum?id=372FjQy1cF") is None
 
 
+def test_iop_view_suffix_is_not_glued_onto_the_doi():
+    """IOP landing pages append /meta after the DOI; it must not survive."""
+    doi = _extract_doi_from_url(
+        "https://iopscience.iop.org/article/10.1088/1742-6596/513/3/032027/meta"
+    )
+    assert doi == "10.1088/1742-6596/513/3/032027"
+
+
+def test_slashes_inside_a_real_doi_suffix_are_kept():
+    doi = _extract_doi_from_url(
+        "https://www.techrxiv.org/doi/10.36227/techrxiv.176689868.81376258/v1"
+    )
+    assert doi == "10.36227/techrxiv.176689868.81376258/v1"
+
+
 if __name__ == "__main__":
     for u in ("https://arxiv.org/abs/2606.12950", "https://arxiv.org/pdf/2602.03128v2"):
         print(u, "->", _extract_doi_from_url(u))
