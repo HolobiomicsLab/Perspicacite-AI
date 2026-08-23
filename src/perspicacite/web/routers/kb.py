@@ -436,6 +436,10 @@ async def _dois_ingest_worker(
         await registry.fail(job_id, str(exc))
 
 
+# ASB keys off this exact token when deciding how to read a web source.
+MARKDOWN_MEDIA_TYPE = "text/markdown; charset=utf-8"
+
+
 def _get_pdf_fallback_kwargs(pdf_config) -> dict:
     """Build keyword args for retrieve_paper_content from PDFDownloadConfig.
 
@@ -1578,6 +1582,49 @@ async def get_paper_detail(doi: str):
         "has_full_text": bool(result.full_text),
         "references_count": len(result.references) if result.references else 0,
     }
+
+
+@router.get("/api/paper/markdown/{doi:path}")
+async def get_paper_markdown(doi: str, refresh: bool = False):
+    """Serve a paper's full text as ``text/markdown``.
+
+    Exists so a builder that can only consume markdown or HTML can still
+    build from a paper whose publisher refuses it directly — ASB's web
+    source path raises on a PDF content-type. The content comes from the
+    retrieval pipeline (structured XML, or text extracted from the PDF),
+    not from knowledge-base chunks.
+
+    Renders once and serves the cached copy afterwards; ``?refresh=true``
+    forces a re-fetch.
+    """
+    from perspicacite.pipeline.download import retrieve_paper_content
+    from perspicacite.pipeline.download.pdf_cache import (
+        get_cached_markdown,
+        store_markdown,
+    )
+    from perspicacite.pipeline.paper_markdown import render_paper_markdown
+
+    doi = (doi or "").strip().replace("https://doi.org/", "")
+    if not doi:
+        raise HTTPException(status_code=400, detail="doi required")
+
+    pdf_config = app_state.config.pdf_download if app_state.config else None
+    cache_dir = pdf_config.cache_dir if (pdf_config and pdf_config.cache_pdfs) else None
+    if cache_dir and not refresh:
+        cached = get_cached_markdown(doi, cache_dir)
+        if cached:
+            return Response(content=cached, media_type=MARKDOWN_MEDIA_TYPE)
+
+    result = await retrieve_paper_content(
+        doi, pdf_parser=app_state.pdf_parser, **_get_pdf_fallback_kwargs(pdf_config)
+    )
+    try:
+        markdown = render_paper_markdown(doi, result)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if cache_dir:
+        store_markdown(doi, markdown, cache_dir)
+    return Response(content=markdown, media_type=MARKDOWN_MEDIA_TYPE)
 
 
 # ---------------------------------------------------------------------------
