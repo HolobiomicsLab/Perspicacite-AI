@@ -437,17 +437,30 @@ async def _dois_ingest_worker(
 
 
 def _get_pdf_fallback_kwargs(pdf_config) -> dict:
-    """Build keyword args for retrieve_paper_content from PDFDownloadConfig."""
+    """Build keyword args for retrieve_paper_content from PDFDownloadConfig.
+
+    Carries the same set the search-to-KB path passes. Dropping any of
+    them degrades ingestion silently: without the cookie jar the
+    publisher routes cannot authenticate, and without ``pdf_cache_dir``
+    a downloaded PDF is parsed and then discarded, leaving nothing on
+    disk for Zotero push or export-kb to attach.
+    """
     if not pdf_config:
         return {}
-    return {
+    kwargs = {
         "alternative_endpoint": pdf_config.alternative_endpoint,
         "unpaywall_email": pdf_config.unpaywall_email,
         "wiley_tdm_token": pdf_config.wiley_tdm_token,
+        "elsevier_api_key": pdf_config.elsevier_api_key,
         "aaas_api_key": pdf_config.aaas_api_key,
         "rsc_api_key": pdf_config.rsc_api_key,
         "springer_api_key": pdf_config.springer_api_key,
+        "cookies_path": pdf_config.cookies_path,
+        "cookie_domains": list(pdf_config.cookie_domains or []),
     }
+    if pdf_config.cache_pdfs:
+        kwargs["pdf_cache_dir"] = pdf_config.cache_dir
+    return kwargs
 
 
 def _validated_local_pdf(raw_path: str | None) -> Path | None:
