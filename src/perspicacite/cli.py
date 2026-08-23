@@ -1722,12 +1722,32 @@ def export_kb_cmd(
     default=False,
     help="Emit JSON instead of a formatted report.",
 )
+@click.option(
+    "--live",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also fetch each configured probe URL with the jar attached. "
+        "Expiry dates cannot tell you a session was revoked; this can."
+    ),
+)
+@click.option(
+    "--probe-url", "extra_probes",
+    multiple=True,
+    metavar="DOMAIN=URL",
+    help=(
+        "Live probe target, repeatable. URL must be a PDF the publisher "
+        "refuses anonymously — an open-access article always passes."
+    ),
+)
 @click.pass_context
 def check_cookies_cmd(
     ctx: click.Context,
     cookies_path: str | None,
     extra_domains: tuple[str, ...],
     as_json: bool,
+    live: bool,
+    extra_probes: tuple[str, ...],
 ) -> None:
     """Inspect cookies.txt freshness for institutional PDF access.
 
@@ -1804,6 +1824,12 @@ def check_cookies_cmd(
             f"  {w.domain:<{name_w}}  {gl} {w.status:<13}  "
             f"{w.matched_hosts:>5}  {expires}"
         )
+    live_failed = False
+    if live:
+        probes = dict(getattr(pdf_cfg, "cookie_probe_urls", {}) or {})
+        probes.update(_parse_probe_options(extra_probes))
+        live_failed = _echo_live_probe_report(str(p), probes)
+
     if needs_refresh:
         click.echo("")
         click.echo("Refresh stale cookies with:")
@@ -1811,7 +1837,70 @@ def check_cookies_cmd(
             "  perspicacite import-browser-cookies --browser brave "
             + " ".join(f"--domain {w.domain}" for w in needs_refresh)
         )
+    if needs_refresh or live_failed:
         sys.exit(1)
+
+
+def _parse_probe_options(pairs: tuple[str, ...]) -> dict[str, str]:
+    """Turn repeated ``DOMAIN=URL`` options into a mapping."""
+    out: dict[str, str] = {}
+    for raw in pairs:
+        domain, _, url = raw.partition("=")
+        if not domain or not url:
+            raise click.BadParameter(f"expected DOMAIN=URL, got {raw!r}")
+        out[domain.strip()] = url.strip()
+    return out
+
+
+def _echo_live_probe_report(cookies_path: str, probes: dict[str, str]) -> bool:
+    """Print the live probe table. True when any domain is not authenticated."""
+    import asyncio
+
+    from perspicacite.pipeline.download.cookies import probe_cookie_urls
+
+    click.echo("")
+    if not probes:
+        click.echo(
+            "🔌 No probe URLs configured. Set pdf_download.cookie_probe_urls "
+            "or pass --probe-url DOMAIN=URL (use a paywalled article)."
+        )
+        return False
+    results = asyncio.run(probe_cookie_urls(
+        cookies_path=cookies_path, probe_urls=probes,
+    ))
+    glyph = {"authenticated": "✓", "paywalled": "✗", "blocked": "✗",
+             "no_cookies": "✗", "error": "?"}
+    width = max(6, max(len(r.domain) for r in results))
+    click.echo("🔌 Live access check")
+    click.echo(f"  {'DOMAIN':<{width}}  RESULT           DETAIL")
+    for r in results:
+        click.echo(
+            f"  {r.domain:<{width}}  {glyph.get(r.status, '?')} "
+            f"{r.status:<14} {r.detail or f'{r.bytes_received:,} bytes'}"
+        )
+    _echo_probe_advice(results)
+    return any(r.status != "authenticated" for r in results)
+
+
+def _echo_probe_advice(results: list) -> None:
+    """Say what each failure actually means — the fixes are different.
+
+    A revoked session and an edge block look identical in a fetch log but
+    call for opposite responses: one is fixed by re-importing cookies, the
+    other cannot be fixed by cookies at all.
+    """
+    stale = [r.domain for r in results if r.status in ("paywalled", "no_cookies")]
+    blocked = [r.domain for r in results if r.status == "blocked"]
+    if stale:
+        click.echo("")
+        click.echo("  Session dead or missing — re-import cookies for:")
+        click.echo("    perspicacite import-browser-cookies --browser brave "
+                   + " ".join(f"--domain {d}" for d in stale))
+    if blocked:
+        click.echo("")
+        click.echo(f"  Refusing automated access outright: {', '.join(blocked)}.")
+        click.echo("  Fresh cookies will not change this — the request is "
+                   "rejected at the edge before any session is read.")
 
 
 async def _build_app_state_for_cli(config: Any) -> Any:

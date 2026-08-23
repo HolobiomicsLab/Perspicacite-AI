@@ -251,3 +251,108 @@ def looks_like_paywall_html(content: bytes, *, head: int = 2048) -> bool:
         return False
     head_b = content[:head].lower()
     return b"<html" in head_b or b"<!doctype html" in head_b
+
+
+# ---------------------------------------------------------------------------
+# Live validation
+# ---------------------------------------------------------------------------
+# An unexpired cookie is not a working cookie. A session can be revoked
+# server-side, or the institution's proxy can drop the entitlement, while
+# the jar still reports months of remaining life. The only way to know is
+# to ask a publisher for something it refuses anonymously.
+
+
+@dataclass
+class CookieProbeResult:
+    """Outcome of one live fetch against a publisher.
+
+    ``status`` is one of: ``"authenticated"``, ``"paywalled"``,
+    ``"no_cookies"``, ``"blocked"``, ``"error"``.
+    """
+
+    domain: str
+    status: str
+    http_status: int | None = None
+    content_type: str | None = None
+    bytes_received: int = 0
+    detail: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def jar_has_live_cookie(jar: Iterable[Any], domain: str) -> bool:
+    """True when the jar holds at least one unexpired cookie for ``domain``."""
+    now = int(time.time())
+    for cookie in jar:
+        host = (getattr(cookie, "domain", "") or "").lower()
+        if domain.lower() not in host:
+            continue
+        expires = getattr(cookie, "expires", None)
+        if expires is None or int(expires) > now:
+            return True
+    return False
+
+
+def classify_probe_response(
+    status_code: int, content_type: str | None, body: bytes,
+) -> tuple[str, str | None]:
+    """Map a publisher's response to a probe status and a reason.
+
+    PDF bytes mean the session was accepted. HTML means the publisher
+    served its paywall or login page instead, which is what a dead
+    session looks like from the outside.
+    """
+    if status_code in (401, 403):
+        return "blocked", f"HTTP {status_code}"
+    if status_code >= 400:
+        return "error", f"HTTP {status_code}"
+    if body.startswith(b"%PDF"):
+        return "authenticated", None
+    if looks_like_paywall_html(body) or "html" in (content_type or "").lower():
+        return "paywalled", "publisher returned HTML, not a PDF"
+    return "error", f"unexpected content-type {content_type!r}"
+
+
+async def _probe_one(client: Any, domain: str, url: str) -> CookieProbeResult:
+    """One authenticated fetch, classified. Never raises."""
+    try:
+        resp = await client.get(url)
+    except Exception as exc:
+        return CookieProbeResult(domain=domain, status="error", detail=str(exc)[:200])
+    body = resp.content or b""
+    ctype = resp.headers.get("content-type")
+    status, detail = classify_probe_response(resp.status_code, ctype, body)
+    return CookieProbeResult(
+        domain=domain, status=status, http_status=resp.status_code,
+        content_type=ctype, bytes_received=len(body), detail=detail,
+    )
+
+
+async def probe_cookie_urls(
+    *,
+    cookies_path: str | None,
+    probe_urls: dict[str, str],
+    timeout: float = 30.0,
+) -> list[CookieProbeResult]:
+    """Fetch one known **paywalled** article PDF per domain, with the jar.
+
+    ``probe_urls`` maps a cookie domain to a direct PDF URL for an article
+    that publisher refuses anonymously. Pointing an entry at an open-access
+    article makes that probe pass whatever the jar contains, so the report
+    would state the opposite of the truth — pick closed articles.
+    """
+    if not probe_urls:
+        return []
+    jar = build_cookie_jar(cookies_path) if cookies_path else None
+    results: list[CookieProbeResult] = []
+    async with build_authenticated_client(cookies_path=cookies_path, timeout=timeout) as client:
+        for domain, url in sorted(probe_urls.items()):
+            if jar is None or not jar_has_live_cookie(jar, domain):
+                results.append(CookieProbeResult(
+                    domain=domain, status="no_cookies",
+                    detail="no unexpired cookie for this domain",
+                ))
+                continue
+            results.append(await _probe_one(client, domain, url))
+    return results

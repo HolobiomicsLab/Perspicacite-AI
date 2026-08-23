@@ -1110,6 +1110,17 @@ class PDFDownloadConfig(BaseModel):
             "third-party hosts in the redirect chain)."
         ),
     )
+    cookie_probe_urls: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Live cookie validation targets: cookie domain -> direct PDF URL "
+            "for an article that publisher refuses anonymously. Used by "
+            "`check-cookies --live`, which fetches each one with the jar "
+            "attached and reports whether a PDF or a paywall page came back. "
+            "Point an entry at an OPEN-ACCESS article and that probe passes "
+            "no matter what the jar holds, so choose closed articles."
+        ),
+    )
 
     # PDF byte cache. When enabled, every successfully-downloaded PDF
     # is written to ``cache_dir`` keyed by DOI, and subsequent fetches
