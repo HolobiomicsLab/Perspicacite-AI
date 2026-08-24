@@ -236,8 +236,12 @@ _TOOL_ENTRIES: list[dict] = [
     {
         "name": "build_kb_from_search",
         "purpose": "Build a KB directly from a literature search.",
-        "when_to_use": "One-shot: search a topic and populate a new KB.",
-        "key_knobs": ["databases", "max_results"],
+        "when_to_use": (
+            "One-shot: search a topic and populate a new KB. With "
+            "databases=['google_scholar'] set resolve_missing_dois=True, or most "
+            "hits are dropped as no_doi and the run looks like it found nothing."
+        ),
+        "key_knobs": ["databases", "max_results", "resolve_missing_dois"],
     },
     {
         "name": "build_kbs_from_zotero",

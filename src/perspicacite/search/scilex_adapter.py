@@ -65,6 +65,14 @@ _PARTIAL_RESULTS_ADVICE = (
     "add an API key, or query fewer databases for complete coverage."
 )
 
+_THROTTLE_ADVICE = (
+    "One or more databases answered 429 and returned nothing, so this result "
+    "count understates the literature — it is not evidence that the query has "
+    "no matches. OpenAlex meters a daily credit budget that resets at midnight "
+    "UTC; Semantic Scholar's public tier throttles hard without an API key. "
+    "Wait for the reset, add a key, or query different databases."
+)
+
 
 def _remaining_budget(expires_at: float | None) -> float | None:
     """Seconds left before ``expires_at``, or None when there is no deadline."""
@@ -154,29 +162,53 @@ def _ss_key_is_valid(api_key: str) -> bool:
 
 
 class _QuotaLogCapture(_stdlib_logging.Handler):
-    """Captures SciLEx's stdlib-logger PubMed quota warnings.
+    """Captures SciLEx's stdlib-logger quota and throttle warnings.
 
-    SciLEx logs ``"PubMed API: Only N requests remaining in current period!"``
-    via the root logger; we attach this handler for the duration of a
-    SciLEx call, scan emitted messages for the quota pattern, and
-    surface the remaining-count as a structured warning to the caller.
+    Two distinct signals, both logged by SciLEx via the root logger:
+
+    * ``"PubMed API: Only N requests remaining in current period!"`` — a
+      soft warning that a quota is running low. Recorded in
+      ``last_remaining``.
+    * ``"<Provider> API throttled (429)"`` — the backend refused the
+      request outright, optionally with ``"Server Retry-After: Ns"``.
+      Recorded in ``throttled_providers`` as ``{provider: retry_after_s}``
+      (``None`` when the backend gave no Retry-After).
+
+    The throttle signal matters because a throttled backend returns no
+    records, and a search where *every* backend was throttled is
+    otherwise indistinguishable from a query that genuinely matched
+    nothing.
     """
 
     _QUOTA_RE = re.compile(r"Only (\d+) requests remaining")
+    _THROTTLE_RE = re.compile(r"(\w+) API[: ].*throttled \(429\)", re.IGNORECASE)
+    _RETRY_AFTER_RE = re.compile(r"Retry-After: (\d+)s")
 
     def __init__(self) -> None:
         super().__init__(level=_stdlib_logging.WARNING)
         self.last_remaining: int | None = None
         self.provider = "pubmed"
+        self.throttled_providers: dict[str, int | None] = {}
 
     def emit(self, record: _stdlib_logging.LogRecord) -> None:
         try:
             msg = record.getMessage()
-            m = self._QUOTA_RE.search(msg)
-            if m:
-                self.last_remaining = int(m.group(1))
+            quota = self._QUOTA_RE.search(msg)
+            if quota:
+                self.last_remaining = int(quota.group(1))
+            throttle = self._THROTTLE_RE.search(msg)
+            if throttle:
+                self._record_throttle(throttle.group(1), msg)
         except Exception:
             pass
+
+    def _record_throttle(self, provider: str, msg: str) -> None:
+        """Record a throttled backend, keeping the longest Retry-After seen."""
+        retry_after = self._RETRY_AFTER_RE.search(msg)
+        seconds = int(retry_after.group(1)) if retry_after else None
+        previous = self.throttled_providers.get(provider)
+        if previous is None or (seconds is not None and seconds > previous):
+            self.throttled_providers[provider] = seconds
 
 
 @dataclass
@@ -221,6 +253,10 @@ class SciLExAdapter:
         self.last_errors_by_database: dict[str, str] = {}
         self._last_dropped_apis: list[str] = []
         self._last_quota_warning: dict | None = None
+        # Populated when one or more backends answered 429 during the last
+        # call. ``None`` means nothing was throttled — so a zero-result
+        # search really was a zero-result query.
+        self._last_rate_limit_block: dict | None = None
         # Populated when a collection deadline forced us to abandon one or
         # more slow backends and return partial results. ``None`` means the
         # last call collected from every requested backend to completion.
@@ -742,6 +778,42 @@ class SciLExAdapter:
                             "Without a key, SciLEx is throttled aggressively."
                         ),
                     }
+                if _quota.throttled_providers:
+                    self._last_rate_limit_block = self._build_throttle_warning(
+                        _quota.throttled_providers
+                    )
+                    logger.warning(
+                        "scilex_backends_throttled",
+                        providers=sorted(_quota.throttled_providers),
+                        note=(
+                            "These backends returned 429 and contributed no "
+                            "records. A low or zero result count reflects the "
+                            "throttling, not an empty literature."
+                        ),
+                    )
+
+    @staticmethod
+    def _build_throttle_warning(throttled: dict[str, int | None]) -> dict:
+        """Shape throttled-backend data into a caller-facing warning.
+
+        Args:
+            throttled: ``{provider: retry_after_seconds_or_None}`` as
+                collected by :class:`_QuotaLogCapture`.
+
+        Returns:
+            A warning dict in the same shape as the other entries in
+            ``SciLExSearchResult.warnings``.
+        """
+        longest_wait = max(
+            (seconds for seconds in throttled.values() if seconds is not None),
+            default=None,
+        )
+        return {
+            "kind": "rate_limit_blocked",
+            "providers": sorted(throttled),
+            "retry_after_s": longest_wait,
+            "advice": _THROTTLE_ADVICE,
+        }
 
     def _collect_all_backends(
         self,
@@ -1209,6 +1281,7 @@ class SciLExAdapter:
             apis = databases
         self._last_dropped_apis = []
         self._last_quota_warning = None
+        self._last_rate_limit_block = None
         self._last_partial_collection = None
         papers = await self.search(
             query=query,
@@ -1222,6 +1295,8 @@ class SciLExAdapter:
         extra_warnings: list[dict] = []
         if self._last_quota_warning is not None:
             extra_warnings.append(self._last_quota_warning)
+        if self._last_rate_limit_block is not None:
+            extra_warnings.append(self._last_rate_limit_block)
         if self._last_partial_collection is not None:
             extra_warnings.append(self._last_partial_collection)
         return SciLExSearchResult(

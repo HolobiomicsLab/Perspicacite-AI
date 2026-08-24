@@ -1224,6 +1224,20 @@ def import_browser_cookies_cmd(
               help="Generate N LLM-rephrased query variants for "
                    "coverage. Each variant runs its own SciLEx search; "
                    "hits are deduped by DOI. 0 = single query only.")
+@click.option("--resolve-missing-dois", is_flag=True, default=False,
+              help="Recover DOIs for hits that arrive without one "
+                   "(Google Scholar, DBLP, …) by looking the title up "
+                   "in OpenAlex/Crossref/Semantic Scholar/arXiv. Every "
+                   "match is verified on author, year and title before "
+                   "it is used. Without this, such hits are dropped as "
+                   "'no_doi'.")
+@click.option("--resolve-doi-budget", type=int, default=25, show_default=True,
+              help="Max title→DOI lookups per run. Hits beyond the "
+                   "budget keep no DOI and are reported, not hidden.")
+@click.option("--resolve-doi-browser", is_flag=True, default=False,
+              help="Add the headless-Chromium Google Scholar tier to "
+                   "title→DOI resolution. Slower; needs the 'browser' "
+                   "extra and 'playwright install chromium'.")
 @click.pass_context
 def search_to_kb_cmd(
     ctx: click.Context,
@@ -1244,6 +1258,9 @@ def search_to_kb_cmd(
     kb_aware: bool,
     kb_aware_terms: int,
     rephrase: int,
+    resolve_missing_dois: bool,
+    resolve_doi_budget: int,
+    resolve_doi_browser: bool,
 ) -> None:
     """Build or enrich a KB from a SciLEx multi-database search.
 
@@ -1256,6 +1273,9 @@ def search_to_kb_cmd(
 
         perspicacite search-to-kb -q "metabolomics LLM annotation" \\
             -k metabolomics_llm --dry-run
+
+        perspicacite search-to-kb -q "fast 2D NMR" -d google_scholar \\
+            -k nmr_methods --resolve-missing-dois
     """
     from perspicacite.pipeline.search_to_kb import (
         SearchFilter,
@@ -1289,6 +1309,9 @@ def search_to_kb_cmd(
             kb_aware=kb_aware,
             kb_aware_terms=kb_aware_terms,
             rephrase=rephrase,
+            resolve_missing_dois=resolve_missing_dois,
+            resolve_doi_budget=resolve_doi_budget,
+            resolve_doi_browser=resolve_doi_browser,
         )
         if as_json:
             import json as _json
@@ -1311,9 +1334,28 @@ def search_to_kb_cmd(
             f"  • searched={report.searched} candidates={report.candidates} "
             f"filtered_out={report.filtered_out}"
         )
+        if report.doi_backfill:
+            bf = report.doi_backfill
+            click.echo(
+                f"  • DOI backfill: resolved {bf.get('resolved', 0)}/"
+                f"{bf.get('attempted', 0)} attempted, "
+                f"{bf.get('missing_doi', 0)} hits had no DOI"
+            )
+            if bf.get("over_budget"):
+                click.echo(
+                    f"      ⚠ {bf['over_budget']} not looked up "
+                    f"(budget {resolve_doi_budget} reached)"
+                )
         if report.filter_reasons:
             reasons = ", ".join(f"{k}={v}" for k, v in report.filter_reasons.items())
             click.echo(f"  • filter reasons: {reasons}")
+        no_doi_dropped = report.filter_reasons.get("no_doi", 0)
+        if no_doi_dropped and not resolve_missing_dois:
+            click.echo(
+                f"  ⚠ {no_doi_dropped} hits dropped for having no DOI. "
+                "Re-run with --resolve-missing-dois to recover them "
+                "via a verified title lookup."
+            )
         if report.screen_scores:
             click.echo(
                 f"  • screened ({screen_method}, threshold={screen_threshold}): "

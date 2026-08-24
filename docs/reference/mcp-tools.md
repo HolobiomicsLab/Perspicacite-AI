@@ -164,6 +164,13 @@ Search SciLEx, filter, screen, fetch PDFs, and ingest into a KB in one call.
 - `min_citations` (int, optional)
 - `screen_method` (str, optional) — `"bm25"` or `"llm"`
 - `screen_threshold` (float, default 0.3)
+- `resolve_missing_dois` (bool, default false) — recover a verified DOI from the
+  title for hits that arrive without one (Google Scholar and other scraped
+  providers). Without it those hits are dropped; check `filter_reasons.no_doi`
+  in the report.
+- `resolve_doi_budget` (int, default 25) — max title lookups per run
+
+Counts for the lookup come back under `doi_backfill` in the report.
 
 ---
 

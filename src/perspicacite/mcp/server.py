@@ -4241,6 +4241,8 @@ async def build_kb_from_search(
     kb_aware: bool = False,
     kb_aware_terms: int = 8,
     rephrase: int = 0,
+    resolve_missing_dois: bool = False,
+    resolve_doi_budget: int = 25,
     ctx: Context | None = None,
 ) -> str:
     """Build or enrich a KB from a SciLEx multi-database search.
@@ -4270,10 +4272,17 @@ async def build_kb_from_search(
         create_if_missing: When False, error if KB doesn't already exist.
         description: KB description (used only when creating).
         dry_run: Return the filtered DOI list without fetching PDFs.
+        resolve_missing_dois: Look up a DOI from the title for hits
+            that arrive without one (Google Scholar and other scraped
+            providers). Matches are verified on author, year and title
+            before use. Without this, such hits are dropped as
+            ``no_doi`` — check ``filter_reasons`` in the report.
+        resolve_doi_budget: Max title-to-DOI lookups per run (1-100).
 
     Returns:
         JSON :class:`IngestReport` — search counts, filter reasons,
-        added papers/chunks, PDF stats, list of selected DOIs.
+        DOI-backfill counts, added papers/chunks, PDF stats, list of
+        selected DOIs.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -4281,6 +4290,8 @@ async def build_kb_from_search(
 
     if max_results < 1 or max_results > 100:
         return _json_error("max_results must be 1..100")
+    if resolve_doi_budget < 1 or resolve_doi_budget > 100:
+        return _json_error("resolve_doi_budget must be 1..100")
 
     try:
         from perspicacite.llm.mcp_sampling import use_mcp_context
@@ -4313,6 +4324,8 @@ async def build_kb_from_search(
                 kb_aware=kb_aware,
                 kb_aware_terms=kb_aware_terms,
                 rephrase=rephrase,
+                resolve_missing_dois=resolve_missing_dois,
+                resolve_doi_budget=resolve_doi_budget,
             )
         logger.info(
             "mcp_build_kb_from_search",
@@ -4321,6 +4334,7 @@ async def build_kb_from_search(
             searched=report.searched,
             candidates=report.candidates,
             added=report.added_papers,
+            doi_backfill=report.doi_backfill or None,
         )
         return _json_ok(report.to_dict())
     except Exception as e:

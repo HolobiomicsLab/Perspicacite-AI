@@ -64,9 +64,21 @@ def test_extract_doi_from_doi_url_http():
 
 
 def test_extract_doi_from_non_doi_url_returns_none():
-    assert _extract_doi_from_url("https://arxiv.org/abs/2204.12345") is None
     assert _extract_doi_from_url("https://www.nature.com/articles/s41587") is None
     assert _extract_doi_from_url("") is None
+
+
+def test_arxiv_url_now_yields_its_datacite_doi():
+    """Deliberate reversal: arXiv URLs used to return None.
+
+    They carry no DOI in the path, so every arXiv preprint Scholar
+    returned was dropped downstream by the ``no_doi`` ingest filter.
+    ``10.48550/arXiv.<id>`` is derivable from the id alone. See
+    tests/unit/test_scholar_arxiv_doi.py.
+    """
+    assert _extract_doi_from_url("https://arxiv.org/abs/2204.12345") == (
+        "10.48550/arXiv.2204.12345"
+    )
 
 
 # ── Provider behaviour tests (mock _render_and_extract_cards) ────────────────

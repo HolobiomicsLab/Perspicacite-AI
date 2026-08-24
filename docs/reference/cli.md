@@ -227,8 +227,15 @@ perspicacite -c config.yml search-to-kb \
   [--screen-threshold FLOAT] \
   [--kb-aware] \
   [--rephrase N] \
+  [--resolve-missing-dois] \
+  [--resolve-doi-budget N] \
+  [--resolve-doi-browser] \
   [--dry-run]
 ```
+
+`--resolve-missing-dois` recovers a verified DOI from the title for hits that
+arrive without one (Google Scholar above all), which would otherwise be dropped
+as `no_doi`. Bounded by `--resolve-doi-budget` (default 25).
 
 Requires SciLEx: `uv pip install -e ".[scilex]"`. See
 [guides/search-to-kb.md](../guides/search-to-kb.md).

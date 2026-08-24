@@ -155,3 +155,33 @@ def read_cache_meta(doi: str, cache_dir: str | Path) -> dict[str, Any] | None:
         return json.loads(meta_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Rendered-markdown cache
+# ---------------------------------------------------------------------------
+# Re-rendering means re-downloading and re-parsing a PDF, which is the
+# expensive half of ingestion. A builder that fetches the same paper on
+# every run should pay that once.
+
+
+def cached_markdown_path(doi: str, cache_dir: str | Path) -> Path:
+    """Where the rendered markdown for ``doi`` lives. May not exist yet."""
+    key = _sanitize_doi(doi)
+    return Path(cache_dir).expanduser() / f"{key}.paper.md"
+
+
+def get_cached_markdown(doi: str, cache_dir: str | Path) -> str | None:
+    """Previously rendered markdown for ``doi``, or ``None``."""
+    path = cached_markdown_path(doi, cache_dir)
+    if path.exists() and path.stat().st_size > 0:
+        return path.read_text(encoding="utf-8")
+    return None
+
+
+def store_markdown(doi: str, markdown: str, cache_dir: str | Path) -> Path:
+    """Persist rendered markdown and return its path."""
+    path = cached_markdown_path(doi, cache_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(markdown, encoding="utf-8")
+    return path
