@@ -448,6 +448,13 @@ def _get_pdf_fallback_kwargs(pdf_config) -> dict:
     publisher routes cannot authenticate, and without ``pdf_cache_dir``
     a downloaded PDF is parsed and then discarded, leaving nothing on
     disk for Zotero push or export-kb to attach.
+
+    Args:
+        pdf_config: The ``pdf_download`` config section, or None.
+
+    Returns:
+        Keyword args to splat into ``retrieve_paper_content``; empty when
+        ``pdf_config`` is None.
     """
     if not pdf_config:
         return {}
@@ -461,6 +468,9 @@ def _get_pdf_fallback_kwargs(pdf_config) -> dict:
         "springer_api_key": pdf_config.springer_api_key,
         "cookies_path": pdf_config.cookies_path,
         "cookie_domains": list(pdf_config.cookie_domains or []),
+        # Landing capture replays the user's own browser session, so it is
+        # only meaningful once a cookie jar is configured.
+        "enable_landing_capture": bool(pdf_config.cookies_path),
     }
     if pdf_config.cache_pdfs:
         kwargs["pdf_cache_dir"] = pdf_config.cache_dir

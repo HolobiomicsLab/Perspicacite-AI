@@ -472,6 +472,59 @@ async def _create_kb_if_missing(
     return kb, True
 
 
+# Checkpoint outcome reason for a DOI whose retrieval was throttled. The
+# "failed" prefix that CheckpointState.record() prepends is load-bearing:
+# remaining_ids() only re-offers ids whose stored outcome starts with it.
+RATE_LIMITED_REASON = "rate limited by {hosts}; no full text retrieved"
+# Separator for the host list inside RATE_LIMITED_REASON.
+HOST_LIST_SEPARATOR = ", "
+
+
+def _build_pdf_download_kwargs(pdf_config: Any) -> dict[str, Any]:
+    """Keyword args for ``retrieve_paper_content`` from the PDF config.
+
+    Args:
+        pdf_config: The ``pdf_download`` config section, or None when the
+            deployment configures no PDF download settings.
+
+    Returns:
+        Keyword args to splat into ``retrieve_paper_content``; empty when
+        ``pdf_config`` is None.
+    """
+    if not pdf_config:
+        return {}
+    kwargs: dict[str, Any] = {
+        "unpaywall_email": pdf_config.unpaywall_email,
+        "alternative_endpoint": pdf_config.alternative_endpoint,
+        "wiley_tdm_token": pdf_config.wiley_tdm_token,
+        "elsevier_api_key": pdf_config.elsevier_api_key,
+        "aaas_api_key": pdf_config.aaas_api_key,
+        "rsc_api_key": pdf_config.rsc_api_key,
+        "springer_api_key": pdf_config.springer_api_key,
+        # Landing capture replays the user's own browser session, so it is
+        # only meaningful once a cookie jar is configured.
+        "enable_landing_capture": bool(pdf_config.cookies_path),
+    }
+    if pdf_config.cache_pdfs:
+        kwargs["pdf_cache_dir"] = pdf_config.cache_dir
+    return kwargs
+
+
+def _throttled_without_full_text(result: Any) -> list[str]:
+    """Hosts that throttled a retrieval which returned no full text.
+
+    Args:
+        result: A ``PaperContent`` from ``retrieve_paper_content``.
+
+    Returns:
+        The throttling hosts, or an empty list when the outcome is not a
+        throttling artefact (no host answered 429, or full text landed).
+    """
+    if getattr(result, "full_text", None):
+        return []
+    return list(getattr(result, "rate_limited_hosts", None) or [])
+
+
 async def ingest_dois_into_kb(
     app_state: Any,
     kb_name: str,
@@ -536,20 +589,8 @@ async def ingest_dois_into_kb(
     collection_name = chroma_collection_name_for_kb(kb_name)
 
     pdf_config = app_state.config.pdf_download
-    pdf_kwargs: dict[str, Any] = {}
-    cookies_path: str | None = None
-    if pdf_config:
-        pdf_kwargs = {
-            "unpaywall_email": pdf_config.unpaywall_email,
-            "alternative_endpoint": pdf_config.alternative_endpoint,
-            "wiley_tdm_token": pdf_config.wiley_tdm_token,
-            "aaas_api_key": pdf_config.aaas_api_key,
-            "rsc_api_key": pdf_config.rsc_api_key,
-            "springer_api_key": pdf_config.springer_api_key,
-        }
-        if pdf_config.cache_pdfs:
-            pdf_kwargs["pdf_cache_dir"] = pdf_config.cache_dir
-        cookies_path = pdf_config.cookies_path
+    pdf_kwargs: dict[str, Any] = _build_pdf_download_kwargs(pdf_config)
+    cookies_path: str | None = pdf_config.cookies_path if pdf_config else None
 
     papers_to_add: list[Paper] = []
     # DOIs marked "added" on retrieval but not yet embedded. The checkpoint never
@@ -608,6 +649,22 @@ async def ingest_dois_into_kb(
                 kb_log.append(KBEvent(
                     event="paper_failed", kb_name=kb_name, paper_id=doi,
                     reason="no content", source_command="ingest_dois_into_kb",
+                ))
+                continue
+            throttled_hosts = _throttled_without_full_text(result)
+            if throttled_hosts:
+                # A 429 means "come back later", not "this paper has no full
+                # text": record it as failed so a resume re-offers the DOI.
+                reason = RATE_LIMITED_REASON.format(
+                    hosts=HOST_LIST_SEPARATOR.join(throttled_hosts),
+                )
+                failed.append({"doi": doi, "reason": reason})
+                dl["failed"] += 1
+                ck_state.record(doi, "failed", reason=reason)
+                ckpt.save(ck_state)
+                kb_log.append(KBEvent(
+                    event="paper_failed", kb_name=kb_name, paper_id=doi,
+                    reason=reason, source_command="ingest_dois_into_kb",
                 ))
                 continue
             md = result.metadata or {}
@@ -856,3 +913,30 @@ async def search_filter_and_ingest(
         added=report.added_papers, chunks=report.added_chunks,
     )
     return report
+
+
+if __name__ == "__main__":
+    # Offline smoke check: pure helpers only, no client, no vector store.
+    from types import SimpleNamespace
+
+    assert _build_pdf_download_kwargs(None) == {}
+    _cfg = SimpleNamespace(
+        unpaywall_email="a@b.c", alternative_endpoint=None, wiley_tdm_token=None,
+        elsevier_api_key="EK", aaas_api_key=None, rsc_api_key=None,
+        springer_api_key=None, cookies_path="/tmp/cookies.txt",
+        cache_pdfs=False, cache_dir="/tmp/pdfs",
+    )
+    _kw = _build_pdf_download_kwargs(_cfg)
+    assert _kw["elsevier_api_key"] == "EK"
+    assert _kw["enable_landing_capture"] is True
+    assert _throttled_without_full_text(
+        SimpleNamespace(full_text=None, rate_limited_hosts=["api.example.org"]),
+    ) == ["api.example.org"]
+    assert _throttled_without_full_text(
+        SimpleNamespace(full_text="body", rate_limited_hosts=["api.example.org"]),
+    ) == []
+    assert _throttled_without_full_text(
+        SimpleNamespace(full_text=None, rate_limited_hosts=[]),
+    ) == []
+    assert RATE_LIMITED_REASON.format(hosts="h").startswith("rate limited")
+    print("search_to_kb smoke ok")

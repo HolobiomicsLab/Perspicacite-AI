@@ -3,6 +3,10 @@ from pathlib import Path
 
 from perspicacite.pipeline.checkpoint import CheckpointStore
 
+# The ingest loop composes this reason for a throttled DOI; record()
+# prepends the "failed" prefix that remaining_ids() keys the retry on.
+from perspicacite.pipeline.search_to_kb import RATE_LIMITED_REASON
+
 
 def _store(tmp_path: Path) -> CheckpointStore:
     return CheckpointStore(
@@ -92,3 +96,26 @@ def test_record_failed_reason_truncated_to_200_chars(tmp_path):
     state.record("a", "failed", reason=long_reason)
     assert len(state.processed["a"]) <= 220   # "failed: " + 200 chars + slack
     assert "failed:" in state.processed["a"]
+
+
+def test_rate_limited_reason_keeps_the_failed_prefix(tmp_path):
+    s = _store(tmp_path)
+    state = s.load_or_create(planned_ids=["throttled", "clean"])
+    state.record("clean", "added")
+    state.record(
+        "throttled", "failed",
+        reason=RATE_LIMITED_REASON.format(hosts="api.publisher.example"),
+    )
+
+    assert state.processed["throttled"].startswith("failed")
+    assert "api.publisher.example" in state.processed["throttled"]
+    assert list(state.remaining_ids(retry_failed=True)) == ["throttled"]
+
+
+def test_added_outcome_is_never_reoffered(tmp_path):
+    """Negative case: an abstract-only paper recorded as added must stay done."""
+    s = _store(tmp_path)
+    state = s.load_or_create(planned_ids=["abstract_only"])
+    state.record("abstract_only", "added")
+
+    assert list(state.remaining_ids(retry_failed=True)) == []
