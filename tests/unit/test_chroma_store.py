@@ -127,6 +127,44 @@ class TestChromaVectorStore:
         assert stats["name"] == "test_kb"
         assert stats["count"] == 2
 
+    @pytest.mark.asyncio
+    async def test_all_collection_stats_agrees_with_per_collection(self, store, sample_chunks):
+        """The bulk index read must report what the Chroma API reports."""
+        await store.create_collection("bulk_a", embedding_dim=384)
+        await store.add_documents("bulk_a", sample_chunks)
+        await store.create_collection("bulk_b", embedding_dim=384)
+
+        bulk = await store.all_collection_stats()
+
+        for name in ("bulk_a", "bulk_b"):
+            single = await store.get_collection_stats(name)
+            assert bulk[name]["count"] == single["count"], name
+            assert bulk[name]["unique_papers"] == single["unique_papers"], name
+
+    @pytest.mark.asyncio
+    async def test_all_collection_stats_counts_empty_collection_as_zero(self, store):
+        """An empty collection must appear with zero counts, not be missing."""
+        await store.create_collection("bulk_empty", embedding_dim=384)
+
+        bulk = await store.all_collection_stats()
+
+        assert bulk["bulk_empty"] == {"count": 0, "unique_papers": 0}
+
+    @pytest.mark.asyncio
+    async def test_all_collection_stats_returns_empty_when_index_missing(
+        self, tmp_path, mock_embedding_provider
+    ):
+        """A missing index degrades to no stats, so callers fall back to stored counts."""
+        from perspicacite.retrieval.chroma_store import ChromaVectorStore
+
+        store = ChromaVectorStore(
+            persist_dir=str(tmp_path / "never_created"),
+            embedding_provider=mock_embedding_provider,
+        )
+        (tmp_path / "never_created" / "chroma.sqlite3").unlink(missing_ok=True)
+
+        assert await store.all_collection_stats() == {}
+
 
 class TestMetadataConversion:
     """Tests for metadata conversion functions."""

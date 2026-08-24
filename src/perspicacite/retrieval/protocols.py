@@ -43,6 +43,10 @@ class VectorStore(Protocol):
         """Get collection statistics."""
         ...
 
+    async def all_collection_stats(self) -> dict[str, dict[str, int]]:
+        """Get every collection's chunk and unique-paper counts at once."""
+        ...
+
     async def delete_documents(self, collection: str, ids: list[str]) -> int:
         """Delete documents by ID."""
         ...

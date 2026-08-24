@@ -1,5 +1,8 @@
 """ChromaDB vector store implementation."""
 
+import asyncio
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 import chromadb
@@ -16,6 +19,18 @@ from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.models.search import RetrievedChunk, SearchFilters
 
 logger = get_logger("perspicacite.retrieval.chroma")
+
+SQLITE_READ_TIMEOUT_S = 60
+
+# Chroma keeps one METADATA segment per collection; chunks hang off it.
+_BULK_STATS_SQL = """
+SELECT col.name, COUNT(e.id), COUNT(DISTINCT em.string_value)
+FROM collections col
+JOIN segments s ON s.collection = col.id AND s.scope = 'METADATA'
+LEFT JOIN embeddings e ON e.segment_id = s.id
+LEFT JOIN embedding_metadata em ON em.id = e.id AND em.key = 'paper_id'
+GROUP BY col.id
+"""
 
 
 def _reject_degenerate_embeddings(
@@ -370,6 +385,39 @@ class ChromaVectorStore:
                 error=str(e),
             )
             raise
+
+    async def all_collection_stats(self) -> dict[str, dict[str, int]]:
+        """
+        Chunk and unique-paper counts for every collection, in one query.
+
+        Reads Chroma's sqlite index directly. The per-collection API loads
+        every chunk's metadata into memory, which costs minutes once a
+        corpus holds thousands of collections.
+
+        Returns:
+            Mapping of collection name to its "count" and "unique_papers",
+            or an empty mapping if the index cannot be read.
+        """
+        return await asyncio.to_thread(self._read_all_collection_stats)
+
+    def _read_all_collection_stats(self) -> dict[str, dict[str, int]]:
+        """Run the bulk stats query read-only, so live writers are never blocked."""
+        index = Path(self.persist_dir).resolve() / "chroma.sqlite3"
+        try:
+            conn = sqlite3.connect(
+                f"{index.as_uri()}?mode=ro", uri=True, timeout=SQLITE_READ_TIMEOUT_S
+            )
+        except sqlite3.Error as e:
+            logger.warning("chroma_bulk_stats_unavailable", error=str(e))
+            return {}
+        try:
+            rows = conn.execute(_BULK_STATS_SQL).fetchall()
+        except sqlite3.Error as e:
+            logger.warning("chroma_bulk_stats_failed", error=str(e))
+            return {}
+        finally:
+            conn.close()
+        return {name: {"count": chunks, "unique_papers": papers} for name, chunks, papers in rows}
 
     async def get_collection_stats(self, collection: str) -> dict[str, Any]:
         """Get collection statistics."""

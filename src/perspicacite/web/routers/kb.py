@@ -614,25 +614,25 @@ async def _augment_with_pmc_supplementary(paper, app_state) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _kb_listing_entry(kb: KnowledgeBase, stats: dict[str, int]) -> dict[str, Any]:
+    """Shape one knowledge base for the listing response."""
+    return {
+        "name": kb.name,
+        "description": kb.description,
+        "paper_count": stats.get("unique_papers", kb.paper_count),
+        "chunk_count": stats.get("count", 0),
+        "created_at": kb.created_at.isoformat() if kb.created_at else None,
+    }
+
+
 @router.get("/api/kb")
 async def list_knowledge_bases():
-    """List all knowledge bases."""
+    """List all knowledge bases with their chunk and paper counts."""
     if not app_state.session_store:
         return []
     kbs = await app_state.session_store.list_kbs()
-    results = []
-    for kb in kbs:
-        stats = await app_state.vector_store.get_collection_stats(kb.collection_name)
-        results.append(
-            {
-                "name": kb.name,
-                "description": kb.description,
-                "paper_count": stats.get("unique_papers", kb.paper_count),
-                "chunk_count": stats.get("count", 0),
-                "created_at": kb.created_at.isoformat() if kb.created_at else None,
-            }
-        )
-    return results
+    stats = await app_state.vector_store.all_collection_stats()
+    return [_kb_listing_entry(kb, stats.get(kb.collection_name, {})) for kb in kbs]
 
 
 @router.post("/api/kb")
