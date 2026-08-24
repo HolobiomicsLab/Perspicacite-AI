@@ -909,6 +909,11 @@ async def get_paper_content(
     import httpx
 
     from perspicacite.pipeline.download import retrieve_paper_content
+    from perspicacite.pipeline.download.base import (
+        CONTENT_TYPE_ABSTRACT,
+        has_full_text,
+        is_abstract_only,
+    )
 
     try:
         pdf_config = state.config.pdf_download
@@ -931,7 +936,7 @@ async def get_paper_content(
                 **pdf_kwargs,
             )
 
-        if result.success and result.content_type in ("structured", "full_text"):
+        if result.success and has_full_text(result.content_type):
             # F-26 (audit 2026-05-17): include the full text body so callers
             # can actually consume the content. The previous shape only
             # exposed full_text_length, which let consumers see "the paper
@@ -952,11 +957,11 @@ async def get_paper_content(
                 resp["references"] = result.references
             return _json_ok(resp)
 
-        if result.content_type == "abstract":
+        if is_abstract_only(result.content_type):
             return _json_ok(
                 {
                     "doi": doi,
-                    "content_type": "abstract",
+                    "content_type": CONTENT_TYPE_ABSTRACT,
                     "content_source": result.content_source,
                     "abstract": result.abstract,
                     "attempts": list(result.attempts),

@@ -27,28 +27,131 @@ from .arxiv import (
     is_arxiv_doi,
     is_arxiv_url,
 )
-from .base import PaperContent, PaperDiscovery, PDFDownloader
+from .base import (
+    CONTENT_TYPE_ABSTRACT,
+    CONTENT_TYPE_FULL_TEXT,
+    CONTENT_TYPE_NONE,
+    CONTENT_TYPE_STRUCTURED,
+    MIN_EXTRACTED_TEXT_CHARS,
+    MIN_PLAUSIBLE_PDF_BYTES,
+    PaperContent,
+    PaperDiscovery,
+    PDFDownloader,
+    is_abstract_only,
+)
 from .biorxiv import get_content_from_biorxiv, is_biorxiv_doi
+from .cookies import looks_like_paywall_html
 from .discovery import discover_paper_sources
 from .elsevier import get_content_from_elsevier
 from .europepmc import get_content_from_europepmc
 from .html_capture import capture_landing_html
-from .openalex_oa import download_pdf_from_openalex_oa
+from .interstitial import PDF_MAGIC, interstitial_marker
 from .pmc import get_fulltext_from_pmc
+from .rate_limit import RateLimited
 from .rsc import download_from_rsc, is_rsc_doi
 from .springer import download_from_springer, is_springer_doi
 from .wiley import download_from_wiley_direct, download_from_wiley_tdm
 
 logger = get_logger("perspicacite.pipeline.download.unified")
 
+# Timeout for a client this module owns; the value the pipeline used
+# inline before it was named.
+OWNED_CLIENT_TIMEOUT_S = 60.0
+# Below this an abstract is a stub ("n/a", a copyright line), not content.
+MIN_PLAUSIBLE_ABSTRACT_CHARS = 20
+# _parse_pdf_bytes inspects bytes with no request context, so the
+# interstitial host check is skipped and only the body is matched.
+NO_RESPONSE_URL = ""
+NO_RESPONSE_CONTENT_TYPE = ""
+
+# ``attempts`` statuses. "miss" means we asked and there was nothing;
+# "rate_limited" means the host refused to answer, which is not evidence
+# of absence and is the one status worth retrying later.
+STATUS_MISS = "miss"
+STATUS_SKIP = "skip"
+STATUS_ERROR = "error"
+STATUS_RATE_LIMITED = "rate_limited"
+
 
 def _none_result(doi: str) -> PaperContent:
+    """Empty PaperContent for a DOI nothing could be retrieved for."""
     return PaperContent(
         success=False,
         doi=doi,
-        content_type="none",
+        content_type=CONTENT_TYPE_NONE,
         content_source="none",
     )
+
+
+def _merge_hosts(existing: list[str], extra: list[str]) -> list[str]:
+    """Union of two host lists, preserving first-seen order."""
+    merged = list(existing)
+    for host in extra:
+        if host not in merged:
+            merged.append(host)
+    return merged
+
+
+def _throttled_hosts(attempts: list[dict[str, Any]]) -> list[str]:
+    """Hosts an `attempts` trail recorded as throttled, first-seen order."""
+    named = [
+        str(a["host"])
+        for a in attempts
+        if a.get("status") == STATUS_RATE_LIMITED and a.get("host")
+    ]
+    return _merge_hosts([], named)
+
+
+def _finalize(
+    pc: PaperContent,
+    attempts: list[dict[str, Any]],
+    extra_hosts: list[str],
+) -> PaperContent:
+    """Attach the audit trail and throttling signal to `pc`, then return it.
+
+    Inputs: the PaperContent about to be returned, the per-tier `attempts`
+    trail, and `extra_hosts` observed throttling us outside that trail.
+    Returns the same object, so callers can ``return _finalize(...)``.
+    """
+    pc.attempts.extend(attempts)
+    hosts = _merge_hosts(_throttled_hosts(attempts), extra_hosts)
+    pc.rate_limited_hosts = _merge_hosts(pc.rate_limited_hosts, hosts)
+    return pc
+
+
+def _record_biorxiv_throttling(
+    br: PaperContent, attempts: list[dict[str, Any]]
+) -> list[str]:
+    """Add the bioRxiv result's throttled hosts to `attempts`; return them.
+
+    Inputs: the PaperContent bioRxiv produced and the audit trail to append
+    to. Returns the host list so the caller can carry it onto its own
+    result — an empty list means bioRxiv was not throttled.
+    """
+    for host in br.rate_limited_hosts:
+        attempts.append(
+            {"source": br.content_source, "status": STATUS_RATE_LIMITED, "host": host}
+        )
+    return list(br.rate_limited_hosts)
+
+
+def _build_owned_client(cookies_path: str | None) -> httpx.AsyncClient:
+    """Build a client this module owns, carrying the configured cookie jar.
+
+    Inputs: `cookies_path` to a Netscape cookies.txt, or None. Returns a
+    client the caller must close. Caller-supplied clients are responsible
+    for their own cookies (see build_authenticated_client).
+    """
+    client_kwargs: dict[str, Any] = {
+        "timeout": OWNED_CLIENT_TIMEOUT_S,
+        "follow_redirects": True,
+    }
+    if cookies_path:
+        from perspicacite.pipeline.download.cookies import build_cookie_jar
+        jar = build_cookie_jar(cookies_path)
+        if jar is not None:
+            client_kwargs["cookies"] = jar
+    return httpx.AsyncClient(**client_kwargs)
 
 
 def _metadata_from_discovery(
@@ -81,19 +184,44 @@ def _metadata_from_discovery(
     return md
 
 
+def _is_non_document_body(body: bytes) -> bool:
+    """Whether `body` is a bot wall or a paywall page rather than a document.
+
+    Inputs: the raw bytes a downloader returned. Returns True only when a
+    signal actually fired; the PDF magic number settles the question first,
+    so a real PDF is never rejected by an HTML token in its metadata.
+    """
+    if body.startswith(PDF_MAGIC):
+        return False
+    marker = interstitial_marker(NO_RESPONSE_URL, NO_RESPONSE_CONTENT_TYPE, body)
+    if marker:
+        logger.warning("parse_body_interstitial", marker=marker, size_bytes=len(body))
+        return True
+    if looks_like_paywall_html(body):
+        logger.warning("parse_body_is_html", size_bytes=len(body))
+        return True
+    return False
+
+
 async def _parse_pdf_bytes(pdf_bytes: bytes, pdf_parser: Any) -> str | None:
-    """Extract text from PDF bytes using the provided parser."""
-    if not pdf_bytes or len(pdf_bytes) < 1000:
+    """Extract text from downloaded bytes using the provided parser.
+
+    Inputs: `pdf_bytes` as returned by a downloader and a `pdf_parser`
+    exposing ``parse``. Returns the extracted text, or None when the body
+    is implausibly small, a bot wall, a paywall page, or yields too few
+    characters to be body text.
+    """
+    if not pdf_bytes or len(pdf_bytes) < MIN_PLAUSIBLE_PDF_BYTES:
         return None
-    if not pdf_bytes[:4] == b"%PDF":
+    if _is_non_document_body(pdf_bytes):
+        return None
+    if not pdf_bytes.startswith(PDF_MAGIC):
         # Non-PDF bytes (e.g. text encoded as bytes)
         text = pdf_bytes.decode("utf-8", errors="replace")
-        return text if len(text.strip()) > 200 else None
+        return text if len(text.strip()) > MIN_EXTRACTED_TEXT_CHARS else None
     parsed = await pdf_parser.parse(pdf_bytes)
     text = parsed.text if parsed else None
-    if text and len(text.strip()) > 200:
-        return text
-    return None
+    return text if text and len(text.strip()) > MIN_EXTRACTED_TEXT_CHARS else None
 
 
 async def retrieve_paper_content(
@@ -139,7 +267,12 @@ async def retrieve_paper_content(
         springer_api_key: Springer API key.
 
     Returns:
-        PaperContent with the best available content.
+        PaperContent with the best available content. ``success`` reports
+        that *something* was retrieved, not that full text was: use
+        has_full_text(content_type) / is_abstract_only(content_type) to
+        tell an abstract-only degradation from a full-text hit. A
+        non-empty ``rate_limited_hosts`` means the outcome is a throttling
+        artefact and the DOI is worth re-offering later.
     """
     clean = doi.replace("https://doi.org/", "").replace("http://doi.org/", "").strip()
     if not clean:
@@ -150,24 +283,21 @@ async def retrieve_paper_content(
     # the caller can tell *why* the pipeline produced no content (vs.
     # the previous silent "no content" reason).
     attempts: list[dict[str, Any]] = []
+    # Hosts that throttled us outside the PDF-tier attempts trail.
+    throttled_hosts: list[str] = []
 
-    if http_client is not None:
-        client = http_client
-        should_close = False
-    else:
-        # When we own the client we can attach the cookie jar. Caller-supplied
-        # clients are responsible for their own cookies (see
-        # build_authenticated_client below).
-        client_kwargs: dict[str, Any] = {"timeout": 60.0, "follow_redirects": True}
-        if cookies_path:
-            from perspicacite.pipeline.download.cookies import build_cookie_jar
-            jar = build_cookie_jar(cookies_path)
-            if jar is not None:
-                client_kwargs["cookies"] = jar
-        client = httpx.AsyncClient(**client_kwargs)
-        should_close = True
+    # Bound before the try so the finally can never reference an unbound
+    # name when client construction itself fails.
+    client: httpx.AsyncClient | None = None
+    should_close = False
 
     try:
+        if http_client is not None:
+            client = http_client
+        else:
+            client = _build_owned_client(cookies_path)
+            should_close = True
+
         # ── STEP 1: DISCOVERY ──────────────────────────────────────────
         disc = await discover_paper_sources(clean, client, unpaywall_email)
         logger.info(
@@ -213,10 +343,13 @@ async def retrieve_paper_content(
         # ── ABSTRACT-ONLY FAST PATH ────────────────────────────────────────
         if abstract_only:
             if disc.abstract:
+                # success=True means "the abstract was retrieved", never
+                # "full text was retrieved": callers separate the two with
+                # is_abstract_only(content_type), not with success.
                 return PaperContent(
                     success=True,
                     doi=clean,
-                    content_type="abstract",
+                    content_type=CONTENT_TYPE_ABSTRACT,
                     full_text=None,
                     abstract=disc.abstract,
                     content_source="discovery",
@@ -232,12 +365,12 @@ async def retrieve_paper_content(
         # PMCID OpenAlex/Unpaywall discovery did not surface. It short-circuits
         # cheaply when the DOI is not in PMC.
         text, sections = await get_fulltext_from_pmc(clean, client)
-        if text and len(text.strip()) > 200:
+        if text and len(text.strip()) > MIN_EXTRACTED_TEXT_CHARS:
             refs = _load_cached_references(clean)
             return PaperContent(
                 success=True,
                 doi=clean,
-                content_type="structured",
+                content_type=CONTENT_TYPE_STRUCTURED,
                 full_text=text,
                 sections=sections,
                 references=refs,
@@ -254,12 +387,12 @@ async def retrieve_paper_content(
             http_client=client,
         )
         epmc_text = (epmc.full_text or "") if epmc is not None else ""
-        if epmc is not None and epmc.success and len(epmc_text.strip()) > 200:
+        if epmc is not None and epmc.success and len(epmc_text.strip()) > MIN_EXTRACTED_TEXT_CHARS:
             # Preserve discovery-derived metadata
             return PaperContent(
                 success=True,
                 doi=clean,
-                content_type="structured",
+                content_type=CONTENT_TYPE_STRUCTURED,
                 full_text=epmc.full_text,
                 sections=epmc.sections,
                 references=epmc.references,
@@ -277,11 +410,13 @@ async def retrieve_paper_content(
 
         if arxiv_id:
             html_text, html_sections, _html_title = await fetch_arxiv_html(arxiv_id, client)
-            if html_text and len(html_text.strip()) > 200:
+            if html_text and len(html_text.strip()) > MIN_EXTRACTED_TEXT_CHARS:
                 return PaperContent(
                     success=True,
                     doi=clean,
-                    content_type="structured" if html_sections else "full_text",
+                    content_type=(
+                        CONTENT_TYPE_STRUCTURED if html_sections else CONTENT_TYPE_FULL_TEXT
+                    ),
                     full_text=html_text,
                     sections=html_sections,
                     abstract=disc.abstract,
@@ -293,9 +428,12 @@ async def retrieve_paper_content(
         if is_biorxiv_doi(clean):
             br = await get_content_from_biorxiv(clean, http_client=client)
             if br is not None and br.success:
-                if br.content_type == "structured":
+                throttled_hosts = _merge_hosts(
+                    throttled_hosts, _record_biorxiv_throttling(br, attempts)
+                )
+                if br.content_type == CONTENT_TYPE_STRUCTURED:
                     return br
-                if br.content_type == "abstract":
+                if is_abstract_only(br.content_type):
                     biorxiv_abstract_fallback = br
 
         # ── STEP 3: PDF FULL TEXT ───────────────────────────────────────
@@ -337,14 +475,18 @@ async def retrieve_paper_content(
                 pdf_bytes, source_label = pdf_result
                 text = await _parse_pdf_bytes(pdf_bytes, pdf_parser)
                 if text:
-                    return PaperContent(
-                        success=True,
-                        doi=clean,
-                        content_type="full_text",
-                        full_text=text,
-                        abstract=disc.abstract,
-                        content_source=source_label,
-                        metadata=_metadata_from_discovery(disc, clean),
+                    return _finalize(
+                        PaperContent(
+                            success=True,
+                            doi=clean,
+                            content_type=CONTENT_TYPE_FULL_TEXT,
+                            full_text=text,
+                            abstract=disc.abstract,
+                            content_source=source_label,
+                            metadata=_metadata_from_discovery(disc, clean),
+                        ),
+                        attempts,
+                        throttled_hosts,
                     )
 
         # Elsevier API (structured text, not PDF)
@@ -354,21 +496,22 @@ async def retrieve_paper_content(
                 pc = PaperContent(
                     success=True,
                     doi=clean,
-                    content_type="full_text",
+                    content_type=CONTENT_TYPE_FULL_TEXT,
                     full_text=result.content,
                     abstract=disc.abstract,
                     content_source="elsevier",
                     metadata=_metadata_from_discovery(disc, clean),
                 )
-                pc.attempts.extend(attempts)
-                return pc
+                return _finalize(pc, attempts, throttled_hosts)
             attempts.append({
                 "source": "elsevier",
-                "status": "error" if result.error else "miss",
+                "status": STATUS_ERROR if result.error else STATUS_MISS,
                 **({"error": result.error} if result.error else {}),
             })
         elif clean.lower().startswith(("10.1016/", "10.1006/", "10.1053/")):
-            attempts.append({"source": "elsevier", "status": "skip", "reason": "no_api_key"})
+            attempts.append(
+                {"source": "elsevier", "status": STATUS_SKIP, "reason": "no_api_key"}
+            )
 
         # ── STEP 3b: ALTERNATIVE ENDPOINT (last-resort PDF fallback) ────
         # User-configured private/institutional repository. Demoted to
@@ -384,14 +527,18 @@ async def retrieve_paper_content(
             if alt_pdf:
                 text = await _parse_pdf_bytes(alt_pdf, pdf_parser)
                 if text:
-                    return PaperContent(
-                        success=True,
-                        doi=clean,
-                        content_type="full_text",
-                        full_text=text,
-                        abstract=disc.abstract,
-                        content_source="alternative",
-                        metadata=_metadata_from_discovery(disc, clean),
+                    return _finalize(
+                        PaperContent(
+                            success=True,
+                            doi=clean,
+                            content_type=CONTENT_TYPE_FULL_TEXT,
+                            full_text=text,
+                            abstract=disc.abstract,
+                            content_source="alternative",
+                            metadata=_metadata_from_discovery(disc, clean),
+                        ),
+                        attempts,
+                        throttled_hosts,
                     )
 
         # ── STEP 3c: COOKIE-AUTHENTICATED LANDING CAPTURE ───────────────
@@ -418,21 +565,23 @@ async def retrieve_paper_content(
                 pc = PaperContent(
                     success=True,
                     doi=clean,
-                    content_type="full_text",
+                    content_type=CONTENT_TYPE_FULL_TEXT,
                     full_text=cap.extracted_text,
                     abstract=disc.abstract,
                     content_source="landing_html",
                     metadata=_metadata_from_discovery(disc, clean),
                 )
-                pc.attempts.extend(attempts)
-                return pc
+                return _finalize(pc, attempts, throttled_hosts)
 
         # ── STEP 4: ABSTRACT ONLY ───────────────────────────────────────
-        if disc.abstract and len(disc.abstract.strip()) > 20:
+        if disc.abstract and len(disc.abstract.strip()) > MIN_PLAUSIBLE_ABSTRACT_CHARS:
+            # success=True reports a successful *abstract* retrieval. Callers
+            # that need body text must ask has_full_text(content_type); the
+            # abstract tier is a degradation, not a full-text hit.
             pc = PaperContent(
                 success=True,
                 doi=clean,
-                content_type="abstract",
+                content_type=CONTENT_TYPE_ABSTRACT,
                 abstract=disc.abstract,
                 content_source="openalex" if disc.title else "unknown",
                 metadata=_metadata_from_discovery(disc, clean),
@@ -440,33 +589,29 @@ async def retrieve_paper_content(
             # F-30: surface the per-tier attempts trail even on successful
             # abstract-only degradation so operators can see which publisher
             # paths were skipped or missed before we settled for the abstract.
-            pc.attempts.extend(attempts)
-            return pc
+            return _finalize(pc, attempts, throttled_hosts)
 
         # ── STEP 4b: bioRxiv abstract fallback (when discovery had none) ──
         if biorxiv_abstract_fallback is not None:
             # Same F-30 fix for the bioRxiv-only fallback path
-            if hasattr(biorxiv_abstract_fallback, "attempts"):
-                biorxiv_abstract_fallback.attempts.extend(attempts)
-            return biorxiv_abstract_fallback
+            return _finalize(biorxiv_abstract_fallback, attempts, throttled_hosts)
 
         # ── STEP 5: DISCARD ─────────────────────────────────────────────
         logger.warning("unified_no_content", doi=clean, attempts=len(attempts))
         pc = PaperContent(
             success=False,
             doi=clean,
-            content_type="none",
+            content_type=CONTENT_TYPE_NONE,
             content_source="none",
             metadata=_metadata_from_discovery(disc, clean),
         )
-        pc.attempts.extend(attempts)
-        return pc
+        return _finalize(pc, attempts, throttled_hosts)
 
     except Exception as e:
         logger.error("unified_pipeline_error", doi=clean, error=str(e))
         return _none_result(clean)
     finally:
-        if should_close:
+        if should_close and client is not None:
             await client.aclose()
 
 
@@ -486,7 +631,9 @@ async def _try_pdf_sources(
     """Try PDF sources in priority order. Returns (bytes, source_label) or None.
 
     When ``attempts`` is provided, each tier appends a {source,status,...}
-    record so the caller can surface why nothing worked.
+    record so the caller can surface why nothing worked. A tier whose host
+    throttled us is recorded with STATUS_RATE_LIMITED and its host, which
+    is how the caller learns the miss is not evidence of absence.
     """
 
     def _record(src: str, status: str, **extra: Any) -> None:
@@ -496,81 +643,87 @@ async def _try_pdf_sources(
         rec.update(extra)
         attempts.append(rec)
 
-    # 3a. Publisher OA PDF via discovery OA URL
-    if disc.oa_url:
-        downloader = PDFDownloader()
-        data = await downloader.download(disc.oa_url, http_client=client)
-        if data and len(data) > 1000:
+    async def _fetch(src: str, pdf_url: str) -> bytes | None:
+        """Download `pdf_url` for tier `src`; record a miss or throttling."""
+        try:
+            data = await PDFDownloader().download(pdf_url, http_client=client)
+        except RateLimited as exc:
+            _record(src, STATUS_RATE_LIMITED, url=pdf_url, host=exc.host)
+            return None
+        if data and len(data) >= MIN_PLAUSIBLE_PDF_BYTES:
+            return data
+        _record(src, STATUS_MISS, url=pdf_url)
+        return None
+
+    # 3a. Publisher OA PDFs from discovery, best candidate first. The
+    # single oa_url is the fallback for a discovery that predates the
+    # ranked list, so no route regresses.
+    for oa_url in disc.oa_candidates or ([disc.oa_url] if disc.oa_url else []):
+        data = await _fetch("publisher_oa_pdf", oa_url)
+        if data:
             return data, "publisher_oa_pdf"
-        _record("publisher_oa_pdf", "miss", url=disc.oa_url)
 
     # 3b. arXiv PDF
     if disc.arxiv_id or is_arxiv_doi(doi) or (url and is_arxiv_url(url)):
         pdf = await download_from_arxiv(doi=doi, url=url, http_client=client)
         if pdf:
             return pdf, "arxiv_pdf"
-        _record("arxiv_pdf", "miss")
+        _record("arxiv_pdf", STATUS_MISS)
 
     # 3c. Unpaywall PDF URL
     if disc.unpaywall_pdf_url:
-        downloader = PDFDownloader()
-        data = await downloader.download(disc.unpaywall_pdf_url, http_client=client)
-        if data and len(data) > 1000:
+        data = await _fetch("unpaywall_pdf", disc.unpaywall_pdf_url)
+        if data:
             return data, "unpaywall_pdf"
-        _record("unpaywall_pdf", "miss", url=disc.unpaywall_pdf_url)
 
-    # 3d. OpenAlex OA PDF
-    pdf = await download_pdf_from_openalex_oa(doi, client)
-    if pdf:
-        return pdf, "openalex_oa_pdf"
-    _record("openalex_oa_pdf", "miss")
-
-    # 3e. Publisher-specific APIs
+    # 3d. Publisher-specific APIs. The former OpenAlex OA tier is gone:
+    # discovery already ranks OpenAlex's OA urls into oa_candidates, so
+    # re-fetching the same work here only cost a second API round trip.
     if is_acs_doi(doi):
         pdf = await download_from_acs(doi, client)
         if pdf:
             return pdf, "acs_pdf"
-        _record("acs_pdf", "miss")
+        _record("acs_pdf", STATUS_MISS)
 
     if is_rsc_doi(doi):
         if not rsc_api_key:
-            _record("rsc_pdf", "skip", reason="no_api_key")
+            _record("rsc_pdf", STATUS_SKIP, reason="no_api_key")
         else:
             pdf = await download_from_rsc(doi, rsc_api_key, client)
             if pdf:
                 return pdf, "rsc_pdf"
-            _record("rsc_pdf", "miss")
+            _record("rsc_pdf", STATUS_MISS)
 
     if is_aaas_doi(doi):
         if not aaas_api_key:
-            _record("aaas_pdf", "skip", reason="no_api_key")
+            _record("aaas_pdf", STATUS_SKIP, reason="no_api_key")
         else:
             pdf = await download_from_aaas(doi, aaas_api_key, client)
             if pdf:
                 return pdf, "aaas_pdf"
-            _record("aaas_pdf", "miss")
+            _record("aaas_pdf", STATUS_MISS)
 
     if is_springer_doi(doi):
         if not springer_api_key:
-            _record("springer_pdf", "skip", reason="no_api_key")
+            _record("springer_pdf", STATUS_SKIP, reason="no_api_key")
         else:
             pdf = await download_from_springer(doi, springer_api_key, client)
             if pdf:
                 return pdf, "springer_pdf"
-            _record("springer_pdf", "miss",
+            _record("springer_pdf", STATUS_MISS,
                     hint="API key present but no PDF returned — check entitlement or DOI type")
 
     if doi.lower().startswith("10.1002/"):
         pdf = await download_from_wiley_direct(doi, client)
         if pdf:
             return pdf, "wiley_pdf"
-        _record("wiley_pdf", "miss")
+        _record("wiley_pdf", STATUS_MISS)
 
     if wiley_tdm_token:
         pdf = await download_from_wiley_tdm(doi, wiley_tdm_token, client)
         if pdf:
             return pdf, "wiley_tdm_pdf"
-        _record("wiley_tdm_pdf", "miss")
+        _record("wiley_tdm_pdf", STATUS_MISS)
 
     return None
 
@@ -662,3 +815,50 @@ def _load_cached_references(doi: str) -> list[dict] | None:
         except (json.JSONDecodeError, ValueError):
             pass
     return None
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    # Offline smoke checks: no network, no client, no chroma_db.
+    SMOKE_PDF = b"%PDF-1.7 " + b"x" * MIN_PLAUSIBLE_PDF_BYTES
+    SMOKE_HTML = b"<!DOCTYPE html><html><body>Access options</body></html>" + b" " * 4096
+    SMOKE_WALL = b"<html>cloudPMC-viewer-pow</html>" + b" " * 4096
+    SMOKE_TEXT = ("word " * MIN_PLAUSIBLE_PDF_BYTES).encode()
+
+    class _StubParser:
+        """Parser stub returning a fixed text, so no PDF engine is loaded."""
+
+        class _Parsed:
+            text = "body " * MIN_EXTRACTED_TEXT_CHARS
+
+        async def parse(self, _data: bytes) -> _StubParser._Parsed:
+            """Return the fixed parse result for any bytes."""
+            return self._Parsed()
+
+    async def _check_parse() -> None:
+        """A real PDF parses; a paywall page and a bot wall do not."""
+        parser = _StubParser()
+        assert await _parse_pdf_bytes(SMOKE_PDF, parser)
+        assert await _parse_pdf_bytes(SMOKE_HTML, parser) is None
+        assert await _parse_pdf_bytes(SMOKE_WALL, parser) is None
+        assert await _parse_pdf_bytes(SMOKE_TEXT, parser)
+        assert await _parse_pdf_bytes(b"%PDF-tiny", parser) is None
+
+    assert not _is_non_document_body(SMOKE_PDF)
+    assert _is_non_document_body(SMOKE_HTML)
+    assert _is_non_document_body(SMOKE_WALL)
+    assert not _is_non_document_body(SMOKE_TEXT)
+    assert _merge_hosts(["a"], ["a", "b"]) == ["a", "b"]
+    assert _throttled_hosts([{"status": STATUS_MISS, "host": "a.org"}]) == []
+    assert _throttled_hosts([{"status": STATUS_RATE_LIMITED, "host": "a.org"}]) == ["a.org"]
+    smoke_pc = _finalize(
+        _none_result("10.0/x"),
+        [{"source": "s", "status": STATUS_RATE_LIMITED, "host": "a.org"}],
+        ["b.org"],
+    )
+    assert smoke_pc.rate_limited_hosts == ["a.org", "b.org"]
+    assert len(smoke_pc.attempts) == 1
+    assert smoke_pc.content_type == CONTENT_TYPE_NONE
+    asyncio.run(_check_parse())
+    print("unified.py smoke checks passed")

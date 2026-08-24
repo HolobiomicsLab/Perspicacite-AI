@@ -2,10 +2,16 @@
 
 import asyncio
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
 import chromadb
+
+try:
+    import resource
+except ImportError:  # Windows ships no resource module
+    resource = None
 
 # Note: IncludeEnum was removed in ChromaDB 0.6.0+, use Include type instead
 try:
@@ -21,6 +27,24 @@ from perspicacite.models.search import RetrievedChunk, SearchFilters
 logger = get_logger("perspicacite.retrieval.chroma")
 
 SQLITE_READ_TIMEOUT_S = 60
+
+# FDs chroma may spend on open HNSW indices.
+CHROMA_HNSW_FD_BUDGET = 2048
+# 4 data files + 1 metadata, mirrors chromadb/api/rust.py.
+CHROMA_FDS_PER_HNSW_INDEX = 5
+# Chroma's rust runtime panics with EMFILE below ~500 FDs (measured, 1.5.9).
+CHROMA_MIN_SOFT_FD_LIMIT = 1024
+# Spare FDs above those already open, so construction cannot starve.
+CHROMA_FD_HEADROOM = 256
+# Kernel descriptor directories, Linux first then BSD/macOS.
+FD_DIRS = ("/proc/self/fd", "/dev/fd")
+# Sentinel: platform exposes no descriptor directory.
+FD_COUNT_UNAVAILABLE = -1
+
+# One lowering per directory; chroma caches a System per path string.
+_budgeted_persist_dirs: set[str] = set()
+_budget_lock = threading.Lock()
+
 
 # Chroma keeps one METADATA segment per collection; chunks hang off it.
 _BULK_STATS_SQL = """
@@ -69,6 +93,91 @@ def _reject_degenerate_embeddings(
     )
 
 
+def open_fd_count() -> int:
+    """Count the file descriptors this process currently holds open.
+
+    Returns:
+        Number of open descriptors, or FD_COUNT_UNAVAILABLE when the platform
+        exposes no descriptor directory.
+    """
+    for fd_dir in FD_DIRS:
+        listing = Path(fd_dir)
+        if listing.is_dir():
+            return len(list(listing.iterdir()))
+    return FD_COUNT_UNAVAILABLE
+
+
+def _hnsw_index_budget() -> int:
+    """Report how many HNSW indices chroma may hold open at once.
+
+    Mirrors chromadb/api/rust.py, which divides the soft RLIMIT_NOFILE it
+    observes at client construction by the file count of a single index.
+
+    Returns:
+        Maximum number of simultaneously cached HNSW indices.
+    """
+    return CHROMA_HNSW_FD_BUDGET // CHROMA_FDS_PER_HNSW_INDEX
+
+
+def _claim_budget_for(persist_dir: str) -> bool:
+    """Claim the one-shot descriptor budgeting for a persist directory.
+
+    Args:
+        persist_dir: Normalised absolute path chroma keys its System on.
+
+    Returns:
+        True on the first claim, False once the directory is already budgeted.
+    """
+    with _budget_lock:
+        if persist_dir in _budgeted_persist_dirs:
+            return False
+        # Claimed before building: chroma caches the System even if start fails.
+        _budgeted_persist_dirs.add(persist_dir)
+        return True
+
+
+def _bounded_soft_limit(ambient_soft: int) -> int:
+    """Pick the soft descriptor limit to construct chroma under.
+
+    Never raises the operator's own limit, and never drops below the
+    descriptors already open plus headroom, which would make chroma's rust
+    runtime abort with EMFILE instead of merely bounding its cache.
+
+    Args:
+        ambient_soft: The process's current soft RLIMIT_NOFILE.
+
+    Returns:
+        Soft limit to apply for the construction window.
+    """
+    counted = open_fd_count()
+    in_use = counted if counted != FD_COUNT_UNAVAILABLE else 0
+    floor = max(CHROMA_MIN_SOFT_FD_LIMIT, in_use + CHROMA_FD_HEADROOM)
+    return min(ambient_soft, max(CHROMA_HNSW_FD_BUDGET, floor))
+
+
+def _bounded_chroma_client(persist_dir: str):
+    """Build a PersistentClient whose HNSW index cache is bounded.
+
+    Chroma sizes that cache once, from the soft RLIMIT_NOFILE visible while the
+    client is built, so the limit is lowered only for that window and always
+    restored afterwards.
+
+    Args:
+        persist_dir: Normalised absolute path for persistent storage.
+
+    Returns:
+        A chromadb PersistentClient rooted at persist_dir.
+    """
+    if resource is None or not _claim_budget_for(persist_dir):
+        return chromadb.PersistentClient(path=persist_dir)
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (_bounded_soft_limit(soft), hard))
+    try:
+        return chromadb.PersistentClient(path=persist_dir)
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
 class ChromaVectorStore:
     """
     ChromaDB-backed vector store.
@@ -89,12 +198,14 @@ class ChromaVectorStore:
             persist_dir: Directory for persistent storage
             embedding_provider: Provider for generating embeddings
         """
-        self.persist_dir = persist_dir
+        # Normalised: chroma caches one System per persist-path string.
+        self.persist_dir = str(Path(persist_dir).expanduser().resolve())
         self.embedding_provider = embedding_provider
-        self.client = chromadb.PersistentClient(path=persist_dir)
+        self.client = _bounded_chroma_client(self.persist_dir)
         logger.info(
             "chroma_store_initialized",
-            persist_dir=persist_dir,
+            persist_dir=self.persist_dir,
+            hnsw_index_budget=_hnsw_index_budget(),
         )
 
     async def create_collection(
@@ -873,3 +984,14 @@ def _filters_to_where(filters: SearchFilters) -> dict[str, Any] | None:
         return conditions[0]
 
     return {"$and": conditions}
+
+
+if __name__ == "__main__":
+    # Offline smoke check: no client, no chroma_db/ access.
+    print(f"hnsw_index_budget={_hnsw_index_budget()}")
+    print(f"open_fd_count={open_fd_count()}")
+    assert _hnsw_index_budget() == CHROMA_HNSW_FD_BUDGET // CHROMA_FDS_PER_HNSW_INDEX
+    assert open_fd_count() == FD_COUNT_UNAVAILABLE or open_fd_count() > 0
+    assert _claim_budget_for("/smoke/only") is True
+    assert _claim_budget_for("/smoke/only") is False
+    print("chroma_store smoke ok")

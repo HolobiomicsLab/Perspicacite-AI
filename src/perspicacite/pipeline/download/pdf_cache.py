@@ -32,6 +32,7 @@ upcoming ``export-kb`` flow expect.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import time
@@ -39,6 +40,8 @@ from pathlib import Path
 from typing import Any
 
 from perspicacite.logging import get_logger
+
+from .base import MIN_PLAUSIBLE_PDF_BYTES
 
 logger = get_logger("perspicacite.pipeline.download.pdf_cache")
 
@@ -65,14 +68,15 @@ def get_cached_pdf(doi: str, cache_dir: str | Path) -> bytes | None:
     Cheap path: stat → open → read. Doesn't validate that the bytes
     still start with ``%PDF`` — if the cache file is corrupted, the
     PDF parser downstream will reject it the same way it rejects a
-    bad live download.
+    bad live download. The size floor is the downloader's, so a body
+    the downloader would reject can never be re-served as a cache hit.
     """
     cache_dir = Path(cache_dir).expanduser()
     if not cache_dir.exists():
         return None
     pdf_path, _ = _paths(doi, cache_dir)
     try:
-        if pdf_path.exists() and pdf_path.stat().st_size > 1024:
+        if pdf_path.exists() and pdf_path.stat().st_size >= MIN_PLAUSIBLE_PDF_BYTES:
             data = pdf_path.read_bytes()
             logger.info(
                 "pdf_cache_hit", doi=doi, size_bytes=len(data),
@@ -99,7 +103,7 @@ def store_pdf(
     is preserved in the sidecar so callers can later report "this PDF
     came from Unpaywall in 2026-05".
     """
-    if not content or len(content) < 1024:
+    if not content or len(content) < MIN_PLAUSIBLE_PDF_BYTES:
         return None
     cache_dir = Path(cache_dir).expanduser()
     try:
@@ -127,10 +131,8 @@ def store_pdf(
         logger.warning("pdf_cache_write_failed", doi=doi, error=str(exc))
         # Best-effort cleanup so a partial write doesn't poison future reads
         for p in (pdf_path, meta_path):
-            try:
+            with contextlib.suppress(OSError):
                 p.unlink(missing_ok=True)
-            except OSError:
-                pass
         return None
 
 
@@ -141,7 +143,7 @@ def cached_pdf_path(doi: str, cache_dir: str | Path) -> Path | None:
     that need the actual file rather than the bytes.
     """
     pdf_path, _ = _paths(doi, Path(cache_dir).expanduser())
-    if pdf_path.exists() and pdf_path.stat().st_size > 1024:
+    if pdf_path.exists() and pdf_path.stat().st_size >= MIN_PLAUSIBLE_PDF_BYTES:
         return pdf_path
     return None
 
@@ -185,3 +187,26 @@ def store_markdown(doi: str, markdown: str, cache_dir: str | Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(markdown, encoding="utf-8")
     return path
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    # Offline smoke checks: a temp dir only, never the real cache.
+    SMOKE_DOI = "10.1234/smoke-check"
+    SMOKE_PDF = b"%PDF-1.7 " + b"z" * MIN_PLAUSIBLE_PDF_BYTES
+    SMOKE_TOO_SMALL = b"%PDF-1.7 tiny"
+
+    with tempfile.TemporaryDirectory() as smoke_dir:
+        assert get_cached_pdf(SMOKE_DOI, smoke_dir) is None
+        assert store_pdf(SMOKE_DOI, SMOKE_TOO_SMALL, smoke_dir) is None
+        assert get_cached_pdf(SMOKE_DOI, smoke_dir) is None
+        assert store_pdf(SMOKE_DOI, SMOKE_PDF, smoke_dir, source="smoke") is not None
+        assert get_cached_pdf(SMOKE_DOI, smoke_dir) == SMOKE_PDF
+        assert cached_pdf_path(SMOKE_DOI, smoke_dir) is not None
+        assert (read_cache_meta(SMOKE_DOI, smoke_dir) or {})["source"] == "smoke"
+        assert _sanitize_doi("https://doi.org/10.1002/anie.1") == "10.1002_anie.1"
+        assert get_cached_markdown(SMOKE_DOI, smoke_dir) is None
+        store_markdown(SMOKE_DOI, "# smoke", smoke_dir)
+        assert get_cached_markdown(SMOKE_DOI, smoke_dir) == "# smoke"
+    print("pdf_cache.py smoke checks passed")

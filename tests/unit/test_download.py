@@ -11,8 +11,15 @@ from perspicacite.pipeline.download import (
     get_pdf_from_alternative_endpoint,
     retrieve_paper_content,
 )
-from perspicacite.pipeline.download.base import PaperDiscovery
+from perspicacite.pipeline.download.base import (
+    MIN_PLAUSIBLE_PDF_BYTES,
+    PaperDiscovery,
+)
 from perspicacite.pipeline.download.discovery import discover_paper_sources
+from perspicacite.pipeline.download.rate_limit import (
+    DEFAULT_MAX_ATTEMPTS,
+    RateLimited,
+)
 
 
 class TestPDFDownloader:
@@ -26,7 +33,7 @@ class TestPDFDownloader:
     async def test_download_success(self, downloader):
         """Test successful PDF download."""
         mock_response = Mock()
-        mock_response.content = b"PDF content here"
+        mock_response.content = b"%PDF-1.7 content here" + b"x" * 4096
         mock_response.headers = {"content-type": "application/pdf"}
         mock_response.raise_for_status = Mock()
 
@@ -38,7 +45,7 @@ class TestPDFDownloader:
             http_client=mock_client,
         )
 
-        assert result == b"PDF content here"
+        assert result == mock_response.content
         mock_client.get.assert_called_once()
 
     @pytest.mark.asyncio
@@ -861,3 +868,117 @@ class TestDownloadPaperPDF:
         pdf_bytes, source = result
         assert pdf_bytes.startswith(b"%PDF")
         assert source == "pdf_cache"
+
+
+# ── PDFDownloader hardening: throttling, bot walls, implausible bodies ──
+
+# A body that is a real PDF and clears the plausibility floor.
+VALID_PDF_BODY = b"%PDF-1.7\n" + b"0" * MIN_PLAUSIBLE_PDF_BYTES
+# Padding for a body that starts like a PDF but stays under the floor.
+UNDERSIZED_PADDING_BYTES = 1000
+UNDERSIZED_PDF_BODY = b"%PDF-1.7\n" + b"0" * UNDERSIZED_PADDING_BYTES
+# A PMC proof-of-work page, padded so only the marker can reject it.
+INTERSTITIAL_BODY = (
+    b"<html>cloudPMC-viewer-pow</html>" + b" " * MIN_PLAUSIBLE_PDF_BYTES
+)
+
+
+def _http_response(
+    status: int, url: str, body: bytes = b"", content_type: str = "application/pdf",
+) -> httpx.Response:
+    """Build a real httpx.Response for `url` carrying `status` and `body`.
+
+    Retry-After is always 0 so a throttled case retries without waiting.
+    """
+    return httpx.Response(
+        status,
+        headers={"content-type": content_type, "retry-after": "0"},
+        content=body,
+        request=httpx.Request("GET", url),
+    )
+
+
+def _client_returning(*responses: httpx.Response) -> AsyncMock:
+    """Async client stub whose get() yields `responses` in order."""
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=list(responses))
+    return client
+
+
+class TestPDFDownloaderHardening:
+    """Throttling, interstitial and body-size behaviour of download()."""
+
+    @pytest.mark.asyncio
+    async def test_retries_after_429_then_succeeds(self):
+        """A 429 followed by a 200 yields the PDF, not the throttled body."""
+        url = "https://throttled-once.test/paper.pdf"
+        client = _client_returning(
+            _http_response(429, url, b"slow down", content_type="text/plain"),
+            _http_response(200, url, VALID_PDF_BODY),
+        )
+
+        result = await PDFDownloader().download(url, http_client=client)
+
+        assert result == VALID_PDF_BODY
+        assert client.get.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_persistent_429_raises_rate_limited(self):
+        """A host that never stops throttling raises instead of returning None."""
+        url = "https://always-throttled.test/paper.pdf"
+        client = _client_returning(
+            *[
+                _http_response(429, url, b"slow down", content_type="text/plain")
+                for _ in range(DEFAULT_MAX_ATTEMPTS)
+            ]
+        )
+
+        with pytest.raises(RateLimited) as excinfo:
+            await PDFDownloader().download(url, http_client=client)
+
+        assert excinfo.value.host == "always-throttled.test"
+        assert excinfo.value.attempts == DEFAULT_MAX_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_404_is_not_retried(self):
+        """A missing document is a final answer: one request, None returned."""
+        url = "https://missing-paper.test/paper.pdf"
+        client = _client_returning(
+            _http_response(404, url, b"not found", content_type="text/html"),
+        )
+
+        result = await PDFDownloader().download(url, http_client=client)
+
+        assert result is None
+        assert client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_interstitial_served_as_pdf_returns_none(self):
+        """A proof-of-work page declared application/pdf never reaches a parser."""
+        url = "https://bot-walled.test/article.pdf"
+        client = _client_returning(_http_response(200, url, INTERSTITIAL_BODY))
+
+        result = await PDFDownloader().download(url, http_client=client)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_undersized_body_is_rejected(self):
+        """A ~1 KB body is below the plausibility floor even with PDF magic bytes."""
+        url = "https://stub-server.test/paper.pdf"
+        client = _client_returning(_http_response(200, url, UNDERSIZED_PDF_BODY))
+
+        result = await PDFDownloader().download(url, http_client=client)
+
+        assert result is None
+        assert len(UNDERSIZED_PDF_BODY) < MIN_PLAUSIBLE_PDF_BYTES
+
+    @pytest.mark.asyncio
+    async def test_small_but_valid_pdf_passes(self):
+        """The negative control: a short real PDF over the floor still downloads."""
+        url = "https://bot-walled.test/article.pdf"
+        client = _client_returning(_http_response(200, url, VALID_PDF_BODY))
+
+        result = await PDFDownloader().download(url, http_client=client)
+
+        assert result == VALID_PDF_BODY
