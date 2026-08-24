@@ -48,6 +48,8 @@ venv.bak/
 # ChromaDB data
 chroma_data/
 chroma_db/
+# Local snapshots taken before a destructive chroma operation.
+chroma_db*.localbak/
 
 # Logs
 *.log
@@ -68,9 +70,13 @@ data/capsules/
 data/provenance/
 data/contextual_cache/
 data/kb_logs/
+# Cloned repositories fetched during ingest; 3.4 GB and growing.
+data/github_cache/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+# Snapshots taken before a destructive migration.
+data/*.localbak
 
 # Test outputs
 test_output.txt
