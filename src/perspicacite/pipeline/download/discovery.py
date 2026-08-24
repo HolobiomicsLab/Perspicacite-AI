@@ -16,6 +16,7 @@ import httpx
 from perspicacite.logging import get_logger
 
 from .base import PaperDiscovery
+from .openalex_oa import _collect_pdf_candidate_urls
 
 logger = get_logger("perspicacite.pipeline.download.discovery")
 
@@ -25,6 +26,31 @@ _CACHE_DIR = Path("./data/papers")
 _ARXIV_ATOM_NS = {
     "atom": "http://www.w3.org/2005/Atom",
 }
+
+# arXiv puts the id in the url path: /abs/2310.11511v1, /pdf/2310.11511, and
+# the pre-2007 form /abs/math.GT/0309136. Source: arxiv.org identifier scheme.
+ARXIV_URL_ID_PATTERN = re.compile(
+    r"arxiv\.org/(?:abs|pdf|html)/"
+    r"(?P<arxiv_id>\d{4}\.\d{4,5}(?:v\d+)?|[a-z-]+(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)",
+    re.IGNORECASE,
+)
+
+# PMC article urls, both hosts and both id spellings. The current form is
+# .../articles/PMC6940144; the legacy form drops the prefix
+# (.../pmc/articles/6940144). Sources: NCBI and Europe PMC url schemes.
+PMC_ARTICLE_URL_PATTERN = re.compile(
+    r"(?:ncbi\.nlm\.nih\.gov|europepmc\.org)/[^\s?]*articles/(?:PMC)?(?P<digits>\d+)",
+    re.IGNORECASE,
+)
+
+# Unpaywall location url fields, pdf first. url_for_landing_page never points
+# at a file, so it is only consulted when mining ids out of a url.
+UNPAYWALL_PDF_URL_KEYS = ("url_for_pdf", "url")
+UNPAYWALL_ALL_URL_KEYS = ("url_for_pdf", "url", "url_for_landing_page")
+
+# OpenAlex location objects and the url fields they carry.
+OPENALEX_NAMED_LOCATION_KEYS = ("best_oa_location", "primary_location")
+OPENALEX_URL_KEYS = ("pdf_url", "landing_page_url")
 
 
 async def _enrich_from_arxiv_atom(
@@ -173,6 +199,7 @@ def _write_discovery_cache(disc: PaperDiscovery) -> None:
                 "pmcid": disc.pmcid,
                 "arxiv_id": disc.arxiv_id,
                 "oa_url": disc.oa_url,
+                "oa_candidates": disc.oa_candidates,
                 "abstract": disc.abstract,
                 "title": disc.title,
                 "is_oa": disc.is_oa,
@@ -197,36 +224,129 @@ def _invert_abstract(inv_idx: dict) -> str | None:
     return " ".join(w for _, w in word_positions) if word_positions else None
 
 
-def _extract_arxiv_id_from_openalex(work: dict) -> str | None:
-    """Try to find an arXiv ID in OpenAlex work data."""
-    sids = work.get("ids") or {}
-    # OpenAlex may store arXiv ID directly
-    for key in ("arxiv", "arxiv_id"):
-        val = sids.get(key)
-        if val:
-            # Strip URL prefix if present
-            return val.rsplit("/", 1)[-1] if "/" in val else val
+def _location_urls(loc: object, keys: tuple[str, ...]) -> list[str]:
+    """Return one location's non-empty urls, in `keys` order.
 
-    # Check if DOI itself is an arXiv DOI
+    `loc` is an untrusted payload fragment; a non-dict yields an empty list
+    rather than raising.
+    """
+    if not isinstance(loc, dict):
+        return []
+    return [str(loc[key]) for key in keys if loc.get(key)]
+
+
+def _dedupe_urls(urls: list[str]) -> list[str]:
+    """Return `urls` without duplicates or non-http entries, order preserved."""
+    seen: set[str] = set()
+    ranked: list[str] = []
+    for url in urls:
+        if not url.startswith("http") or url in seen:
+            continue
+        seen.add(url)
+        ranked.append(url)
+    return ranked
+
+
+def _openalex_locations(work: dict) -> list[dict]:
+    """Return every location object an OpenAlex work carries.
+
+    The `locations` array comes first, then best_oa_location and
+    primary_location. Non-dict entries are dropped.
+    """
+    listed = [loc for loc in (work.get("locations") or []) if isinstance(loc, dict)]
+    named = [work.get(key) for key in OPENALEX_NAMED_LOCATION_KEYS]
+    return listed + [loc for loc in named if isinstance(loc, dict)]
+
+
+def _openalex_location_urls(work: dict) -> list[str]:
+    """Return every pdf and landing-page url named by a work's locations."""
+    return [
+        url
+        for loc in _openalex_locations(work)
+        for url in _location_urls(loc, OPENALEX_URL_KEYS)
+    ]
+
+
+def _arxiv_id_from_openalex_ids(ids: dict) -> str | None:
+    """Return the arXiv id stored directly in an OpenAlex `ids` block.
+
+    None means the block named no arXiv id, not that the work has none.
+    """
+    for key in ("arxiv", "arxiv_id"):
+        val = ids.get(key)
+        if val:
+            return str(val).rsplit("/", 1)[-1] if "/" in str(val) else str(val)
+    return None
+
+
+def _arxiv_id_from_location_urls(work: dict) -> str | None:
+    """Return the arXiv id named by any of a work's location urls, else None."""
+    for url in _openalex_location_urls(work):
+        match = ARXIV_URL_ID_PATTERN.search(url)
+        if match:
+            return match.group("arxiv_id")
+    return None
+
+
+def _extract_arxiv_id_from_openalex(work: dict) -> str | None:
+    """Return an arXiv id for an OpenAlex work, or None when it names none.
+
+    Looks in `ids` first, then the DOI, then every location url — OpenAlex
+    frequently carries the arXiv record only as a location, with no arxiv
+    key at all. None is "no arXiv id found", never "not an arXiv paper".
+    """
+    direct = _arxiv_id_from_openalex_ids(work.get("ids") or {})
+    if direct:
+        return direct
     doi = work.get("doi") or ""
     if "arxiv" in doi.lower():
         from .arxiv import get_arxiv_id_from_doi
 
         return get_arxiv_id_from_doi(doi)
-    return None
+    return _arxiv_id_from_location_urls(work)
 
 
 def _extract_pmcid_from_unpaywall_locations(
-    oa_locations: list[dict],
+    oa_locations: list[dict] | None,
 ) -> str | None:
-    """Extract PMCID from Unpaywall OA locations that point to PMC."""
+    """Return the PMCID named by any Unpaywall OA location, else None.
+
+    Scans url_for_pdf, url and url_for_landing_page of every location and
+    accepts both the PMC-prefixed and the legacy bare-digit article path, on
+    either PMC host. The id is always returned PMC-prefixed. None means no
+    location pointed at PMC, not that the paper has no PMCID.
+    """
     for loc in oa_locations or []:
-        url = loc.get("url") or loc.get("url_for_landing_page") or ""
-        # Match patterns like pmc.ncbi.nlm.nih.gov/articles/PMC12345
-        m = re.search(r"PMC\d+", url)
-        if m:
-            return m.group(0)
+        for url in _location_urls(loc, UNPAYWALL_ALL_URL_KEYS):
+            match = PMC_ARTICLE_URL_PATTERN.search(url)
+            if match:
+                return f"PMC{match.group('digits')}"
     return None
+
+
+def _collect_openalex_oa_candidates(work: dict) -> list[str]:
+    """Return an OpenAlex work's OA pdf urls, best first, deduped.
+
+    Ranking: locations[].pdf_url, then best_oa_location.pdf_url, then
+    primary_location.pdf_url, then open_access.oa_url gated on is_oa.
+    Delegates to openalex_oa._collect_pdf_candidate_urls — imported, not
+    mirrored, so discovery and the downloader can never rank differently.
+    An empty list means the payload named no OA url.
+    """
+    return _collect_pdf_candidate_urls(work)
+
+
+def _collect_unpaywall_oa_candidates(data: dict) -> list[str]:
+    """Return an Unpaywall response's OA urls, best first, deduped.
+
+    Ranking: best_oa_location.url_for_pdf, best_oa_location.url, then each
+    remaining oa_locations entry's url_for_pdf then url. Empty and non-http
+    values are skipped. An empty list means the payload named no OA url.
+    """
+    ordered = _location_urls(data.get("best_oa_location"), UNPAYWALL_PDF_URL_KEYS)
+    for loc in data.get("oa_locations") or []:
+        ordered.extend(_location_urls(loc, UNPAYWALL_PDF_URL_KEYS))
+    return _dedupe_urls(ordered)
 
 
 async def discover_paper_sources(
@@ -331,6 +451,7 @@ async def discover_paper_sources(
             # OA URL
             oa_info = work.get("open_access") or {}
             disc.oa_url = oa_info.get("oa_url")
+            disc.oa_candidates = _collect_openalex_oa_candidates(work)
             disc.license = oa_info.get("license")
 
             # Reconstruct abstract from inverted index
@@ -392,6 +513,9 @@ async def discover_paper_sources(
                 if pdf_url and not disc.oa_url:
                     disc.oa_url = pdf_url
                 disc.unpaywall_pdf_url = pdf_url
+                disc.oa_candidates = _dedupe_urls(
+                    disc.oa_candidates + _collect_unpaywall_oa_candidates(data)
+                )
                 if not disc.license:
                     disc.license = best.get("license")
         except Exception as e:
@@ -402,3 +526,32 @@ async def discover_paper_sources(
         _write_discovery_cache(disc)
 
     return disc
+
+
+if __name__ == "__main__":
+    # Offline smoke check: pure payload parsing, no network, no clients.
+    _work = {
+        "locations": [{"landing_page_url": "https://arxiv.org/abs/2310.11511v1"}],
+        "open_access": {"is_oa": True, "oa_url": "https://arxiv.org/pdf/2310.11511"},
+    }
+    assert _extract_arxiv_id_from_openalex(_work) == "2310.11511v1"
+    assert _collect_openalex_oa_candidates(_work) == [
+        "https://arxiv.org/pdf/2310.11511"
+    ]
+    assert _extract_arxiv_id_from_openalex({"ids": {}}) is None
+
+    _legacy = [{"url": "https://www.ncbi.nlm.nih.gov/pmc/articles/6940144/"}]
+    assert _extract_pmcid_from_unpaywall_locations(_legacy) == "PMC6940144"
+    _elsewhere = [{"url": "https://example.org/articles/6940144"}]
+    assert _extract_pmcid_from_unpaywall_locations(_elsewhere) is None
+
+    _unpaywall = {
+        "best_oa_location": {"url": "https://repo.example.org/landing"},
+        "oa_locations": [{"url_for_pdf": "https://repo.example.org/file.pdf"}],
+    }
+    assert _collect_unpaywall_oa_candidates(_unpaywall) == [
+        "https://repo.example.org/landing",
+        "https://repo.example.org/file.pdf",
+    ]
+    assert _collect_unpaywall_oa_candidates({}) == []
+    print("discovery smoke ok")
