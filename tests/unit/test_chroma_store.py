@@ -1,5 +1,7 @@
 """Tests for Chroma vector store."""
 
+from pathlib import Path
+
 import pytest
 
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
@@ -188,3 +190,202 @@ class TestMetadataConversion:
         assert result["section"] == "Abstract"
         assert result["year"] == 2024
         assert result["source"] == "bibtex"
+
+
+class TestHnswFdBudget:
+    """Tests for the bounded HNSW segment cache."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_budget_registry(self):
+        """Keep each test's budget claims out of the other tests."""
+        from perspicacite.retrieval import chroma_store
+
+        claimed = set(chroma_store._budgeted_persist_dirs)
+        yield
+        chroma_store._budgeted_persist_dirs.clear()
+        chroma_store._budgeted_persist_dirs.update(claimed)
+
+    def test_budget_derives_from_the_constants(self, monkeypatch):
+        """The index budget is computed, not a hardcoded number."""
+        from perspicacite.retrieval import chroma_store
+
+        monkeypatch.setattr(chroma_store, "CHROMA_HNSW_FD_BUDGET", 100)
+        monkeypatch.setattr(chroma_store, "CHROMA_FDS_PER_HNSW_INDEX", 5)
+
+        assert chroma_store._hnsw_index_budget() == 20
+
+    def test_budget_is_far_below_the_ambient_file_limit(self):
+        """The whole point: chroma must not size its cache off ulimit -n."""
+        import resource
+
+        from perspicacite.retrieval import chroma_store
+
+        ambient_soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+
+        assert chroma_store._hnsw_index_budget() < ambient_soft
+
+    def test_soft_limit_is_lowered_during_construction(self, monkeypatch, tmp_path):
+        """Chroma reads RLIMIT_NOFILE while it builds, so it must be low then."""
+        import resource
+
+        from perspicacite.retrieval import chroma_store
+
+        seen = []
+
+        def _record(path):
+            seen.append(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+            return object()
+
+        monkeypatch.setattr(chroma_store.chromadb, "PersistentClient", _record)
+        ambient_soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+        chroma_store._bounded_chroma_client(str(tmp_path))
+
+        assert seen == [chroma_store._bounded_soft_limit(ambient_soft)]
+        assert seen[0] < ambient_soft
+
+    def test_soft_limit_is_restored_when_construction_raises(self, monkeypatch, tmp_path):
+        """A failed client must not leave the process on a lowered limit."""
+        import resource
+
+        from perspicacite.retrieval import chroma_store
+
+        before = resource.getrlimit(resource.RLIMIT_NOFILE)
+
+        def _boom(path):
+            raise RuntimeError("chroma refused to start")
+
+        monkeypatch.setattr(chroma_store.chromadb, "PersistentClient", _boom)
+        with pytest.raises(RuntimeError):
+            chroma_store._bounded_chroma_client(str(tmp_path))
+
+        assert resource.getrlimit(resource.RLIMIT_NOFILE) == before
+
+    def test_second_store_on_same_path_does_not_relower(self, monkeypatch, tmp_path):
+        """Negative side: a repeat build cannot rebuild chroma's cached System."""
+        import resource
+
+        from perspicacite.retrieval import chroma_store
+
+        ambient_soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+        seen = []
+
+        def _record(path):
+            seen.append(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+            return object()
+
+        monkeypatch.setattr(chroma_store.chromadb, "PersistentClient", _record)
+        chroma_store._bounded_chroma_client(str(tmp_path))
+        chroma_store._bounded_chroma_client(str(tmp_path))
+
+        assert seen == [chroma_store._bounded_soft_limit(ambient_soft), ambient_soft]
+
+    def test_a_different_path_is_still_budgeted(self, monkeypatch, tmp_path):
+        """The claim is per directory, not a global one-shot latch."""
+        import resource
+
+        from perspicacite.retrieval import chroma_store
+
+        seen = []
+
+        def _record(path):
+            seen.append(resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+            return object()
+
+        monkeypatch.setattr(chroma_store.chromadb, "PersistentClient", _record)
+        ambient_soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+        chroma_store._bounded_chroma_client(str(tmp_path / "one"))
+        chroma_store._bounded_chroma_client(str(tmp_path / "two"))
+
+        assert seen == [chroma_store._bounded_soft_limit(ambient_soft)] * 2
+
+    def test_relative_and_absolute_paths_normalise_together(
+        self, monkeypatch, tmp_path, mock_embedding_provider
+    ):
+        """Two spellings of one directory must not build two HNSW caches."""
+        from perspicacite.retrieval.chroma_store import ChromaVectorStore
+
+        (tmp_path / "kb").mkdir()
+        absolute = ChromaVectorStore(
+            persist_dir=str(tmp_path / "kb"),
+            embedding_provider=mock_embedding_provider,
+        )
+        monkeypatch.chdir(tmp_path)
+        relative = ChromaVectorStore(
+            persist_dir="kb",
+            embedding_provider=mock_embedding_provider,
+        )
+
+        assert relative.persist_dir == absolute.persist_dir
+
+    def test_persist_dir_is_absolute(self, tmp_path, mock_embedding_provider):
+        """Callers and chroma both key on the resolved path."""
+        from perspicacite.retrieval.chroma_store import ChromaVectorStore
+
+        store = ChromaVectorStore(
+            persist_dir=str(tmp_path / "kb"),
+            embedding_provider=mock_embedding_provider,
+        )
+
+        assert Path(store.persist_dir).is_absolute()
+
+
+class TestOpenFdCount:
+    """Tests for the descriptor counter."""
+
+    def test_counts_descriptors_on_this_platform(self):
+        """macOS exposes /dev/fd, Linux /proc/self/fd."""
+        from perspicacite.retrieval.chroma_store import open_fd_count
+
+        assert open_fd_count() > 0
+
+    def test_reports_unavailable_rather_than_zero(self, monkeypatch):
+        """Unknown must be distinguishable from 'checked and found none'."""
+        from perspicacite.retrieval import chroma_store
+
+        monkeypatch.setattr(chroma_store, "FD_DIRS", ("/no/such/fd/dir",))
+
+        assert chroma_store.open_fd_count() == chroma_store.FD_COUNT_UNAVAILABLE
+
+
+class TestBoundedSoftLimit:
+    """Tests for choosing the construction-window descriptor limit."""
+
+    def test_uses_the_budget_when_few_descriptors_are_open(self, monkeypatch):
+        """The common case: the budget alone decides the cache size."""
+        from perspicacite.retrieval import chroma_store
+
+        monkeypatch.setattr(chroma_store, "open_fd_count", lambda: 10)
+
+        assert chroma_store._bounded_soft_limit(1_000_000) == (
+            chroma_store.CHROMA_HNSW_FD_BUDGET
+        )
+
+    def test_never_starves_a_process_already_holding_descriptors(self, monkeypatch):
+        """Below open FDs + headroom chroma's rust runtime aborts with EMFILE."""
+        from perspicacite.retrieval import chroma_store
+
+        monkeypatch.setattr(chroma_store, "open_fd_count", lambda: 9_000)
+
+        limit = chroma_store._bounded_soft_limit(1_000_000)
+
+        assert limit == 9_000 + chroma_store.CHROMA_FD_HEADROOM
+
+    def test_never_raises_the_operators_limit(self, monkeypatch):
+        """A deliberately low ulimit must be respected, not overridden."""
+        from perspicacite.retrieval import chroma_store
+
+        monkeypatch.setattr(chroma_store, "open_fd_count", lambda: 10)
+
+        assert chroma_store._bounded_soft_limit(64) == 64
+
+    def test_unknown_descriptor_count_still_keeps_a_floor(self, monkeypatch):
+        """An unavailable count must not be mistaken for zero open."""
+        from perspicacite.retrieval import chroma_store
+
+        monkeypatch.setattr(
+            chroma_store, "open_fd_count", lambda: chroma_store.FD_COUNT_UNAVAILABLE
+        )
+
+        assert chroma_store._bounded_soft_limit(1_000_000) >= (
+            chroma_store.CHROMA_MIN_SOFT_FD_LIMIT
+        )
