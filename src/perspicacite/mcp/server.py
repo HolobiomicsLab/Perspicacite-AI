@@ -51,6 +51,7 @@ from perspicacite.pipeline.asb.collection_ingest import (
 )
 from perspicacite.pipeline.asb.edam_filter import edam_pre_filter
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
+from perspicacite.retrieval.passage_chunks import PassageCollectionError
 
 logger = get_logger("perspicacite.mcp.server")
 
@@ -5715,6 +5716,33 @@ async def cancel_task(task_id: str) -> str:
 # =============================================================================
 
 
+async def _build_passage_retriever(state: Any, names: list[str]) -> Any:
+    """Build an explicit chunk retriever using persisted KB embedding metadata."""
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
+    from perspicacite.retrieval.multi_kb import MultiKBRetriever
+    from perspicacite.retrieval.passage_search import PassageRetriever
+
+    names = list(dict.fromkeys(names))
+    metas = [await state.session_store.get_kb_metadata(name) for name in names]
+    for name, meta in zip(names, metas, strict=True):
+        if meta is None:
+            raise ValueError(f"Knowledge base '{name}' not found")
+    if len(names) > 1:
+        return PassageRetriever(
+            MultiKBRetriever(state.vector_store, state.embedding_provider, metas)
+        )
+    retriever = DynamicKnowledgeBase(
+        state.vector_store,
+        state.embedding_provider,
+        KnowledgeBaseConfig(vector_size=state.embedding_provider.dimension),
+    )
+    retriever.collection_name = metas[0].collection_name
+    retriever.kb_name = names[0]
+    retriever.expected_embedding_model = getattr(metas[0], "embedding_model", None)
+    retriever._initialized = True
+    return PassageRetriever(retriever)
+
+
 @mcp.tool()
 async def search_by_passage(
     text: str,
@@ -5752,8 +5780,11 @@ async def search_by_passage(
     Returns:
         A JSON string. On success: {"success": True, "results": [{chunk_id,
         chunk_text, score, source: {doi, title, authors, year, bibkey,
-        source_url, license_id}, kb_name}, ...]}. On failure:
-        {"success": False, "error": "..."}.
+        source_url, license_id}, kb_name, collection_name, content_sha256}, ...]}.
+        Each result is a distinct chunk, including multiple chunks per article.
+        On failure: {"success": False, "error": "..."}; collection failures also
+        carry collection_errors. Ambiguous/mismatched embedding metadata and
+        provider wrappers without query identity are refused before retrieval.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -5762,46 +5793,7 @@ async def search_by_passage(
     try:
         from perspicacite.retrieval.passage_search import search_passages
 
-        # Multi-KB path
-        if kb_names and len(kb_names) > 1:
-            from perspicacite.retrieval.multi_kb import (
-                MultiKBRetriever,
-                check_embedding_compat,
-            )
-
-            metas = [await state.session_store.get_kb_metadata(n) for n in kb_names]
-            for i, meta in enumerate(metas):
-                if meta is None:
-                    return _json_error(f"Knowledge base not found: {kb_names[i]}")
-            compat_msg = check_embedding_compat(metas)
-            if compat_msg:
-                return _json_error(compat_msg)
-
-            retriever = MultiKBRetriever(
-                vector_store=state.vector_store,
-                embedding_service=state.embedding_provider,
-                kb_metas=metas,
-            )
-        else:
-            from perspicacite.models.kb import chroma_collection_name_for_kb
-            from perspicacite.rag.dynamic_kb import (
-                DynamicKnowledgeBase,
-                KnowledgeBaseConfig,
-            )
-
-            effective_kb = kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
-            kb_meta = await state.session_store.get_kb_metadata(effective_kb)
-            if not kb_meta:
-                return _json_error(f"Knowledge base '{effective_kb}' not found")
-            retriever = DynamicKnowledgeBase(
-                state.vector_store,
-                state.embedding_provider,
-                config=KnowledgeBaseConfig(
-                    vector_size=state.embedding_provider.dimension,
-                ),
-            )
-            retriever.collection_name = chroma_collection_name_for_kb(effective_kb)
-            retriever._initialized = True
+        retriever = await _build_passage_retriever(state, kb_names or [kb_name])
 
         matches = await search_passages(retriever, text=text, k=k, min_score=min_score)
 
@@ -5822,12 +5814,16 @@ async def search_by_passage(
                             "license_id": m.source.license_id,
                         },
                         "kb_name": m.kb_name,
+                        "collection_name": m.collection_name,
+                        "content_sha256": m.content_sha256,
                     }
                     for m in matches
                 ]
             }
         )
 
+    except PassageCollectionError as e:
+        return _json_error(str(e), collection_errors=e.collection_errors)
     except ValueError as e:
         return _json_error(str(e))
     except Exception as e:
@@ -5912,9 +5908,12 @@ async def get_relevant_passages(
 
     Returns:
         A JSON string. On success: {"success": True, "passages": [{text,
-        source_doi, source_url, license_id, score, kb_name}, ...], "attempts":
+        chunk_id, source_doi, source_url, license_id, score, kb_name,
+        collection_name, content_sha256}, ...], "attempts":
         [{query, hit_count}, ...], "refined_query": "..." | None}. On failure:
-        {"success": False, "error": "..."}.
+        {"success": False, "error": "..."}. Failed collections also carry
+        collection_errors and never trigger the adaptive retry. Embedding
+        compatibility follows the same strict contract as search_by_passage.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -5923,45 +5922,7 @@ async def get_relevant_passages(
     try:
         from perspicacite.retrieval.passage_search import search_passages
 
-        # Build retriever (same pattern as search_by_passage).
-        if kb_names and len(kb_names) > 1:
-            from perspicacite.retrieval.multi_kb import (
-                MultiKBRetriever,
-                check_embedding_compat,
-            )
-
-            metas = [await state.session_store.get_kb_metadata(n) for n in kb_names]
-            for i, meta in enumerate(metas):
-                if meta is None:
-                    return _json_error(f"Knowledge base not found: {kb_names[i]}")
-            compat_msg = check_embedding_compat(metas)
-            if compat_msg:
-                return _json_error(compat_msg)
-            retriever = MultiKBRetriever(
-                vector_store=state.vector_store,
-                embedding_service=state.embedding_provider,
-                kb_metas=metas,
-            )
-        else:
-            from perspicacite.models.kb import chroma_collection_name_for_kb
-            from perspicacite.rag.dynamic_kb import (
-                DynamicKnowledgeBase,
-                KnowledgeBaseConfig,
-            )
-
-            effective_kb = kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
-            kb_meta = await state.session_store.get_kb_metadata(effective_kb)
-            if not kb_meta:
-                return _json_error(f"Knowledge base '{effective_kb}' not found")
-            retriever = DynamicKnowledgeBase(
-                state.vector_store,
-                state.embedding_provider,
-                config=KnowledgeBaseConfig(
-                    vector_size=state.embedding_provider.dimension,
-                ),
-            )
-            retriever.collection_name = chroma_collection_name_for_kb(effective_kb)
-            retriever._initialized = True
+        retriever = await _build_passage_retriever(state, kb_names or [kb_name])
 
         attempts: list[dict] = []
         matches = await search_passages(retriever, text=query, k=k)
@@ -5979,12 +5940,15 @@ async def get_relevant_passages(
                 "passage_count": len(matches),
                 "passages": [
                     {
+                        "chunk_id": m.chunk_id,
                         "text": m.chunk_text,
                         "source_doi": m.source.doi,
                         "source_url": m.source.source_url,
                         "license_id": m.source.license_id,
                         "score": m.score,
                         "kb_name": m.kb_name,
+                        "collection_name": m.collection_name,
+                        "content_sha256": m.content_sha256,
                     }
                     for m in matches
                 ],
@@ -5993,6 +5957,8 @@ async def get_relevant_passages(
             }
         )
 
+    except PassageCollectionError as e:
+        return _json_error(str(e), collection_errors=e.collection_errors)
     except ValueError as e:
         return _json_error(str(e))
     except Exception as e:
