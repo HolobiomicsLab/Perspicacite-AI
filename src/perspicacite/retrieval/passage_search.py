@@ -22,6 +22,19 @@ class _AsyncRetriever(Protocol):
         ...
 
 
+class PassageRetriever:
+    """Adapt an explicit chunk-capable retriever to the passage search protocol."""
+
+    def __init__(self, retriever: Any) -> None:
+        self.retriever = retriever
+
+    async def search(
+        self, query: str, top_k: int = 10, filters: Any | None = None
+    ) -> list[dict[str, Any]]:
+        """Request chunk results; never fall back to paper-level deduplication."""
+        return await self.retriever.search_chunks(query, top_k=top_k, filters=filters)
+
+
 @dataclass(frozen=True)
 class PassageSource:
     doi: str | None
@@ -40,6 +53,8 @@ class PassageMatch:
     score: float
     source: PassageSource
     kb_name: str | None
+    collection_name: str | None = None
+    content_sha256: str | None = None
 
 
 def _validate_text(text: str) -> None:
@@ -66,9 +81,7 @@ def _to_match(raw: dict[str, Any]) -> PassageMatch:
     meta = _coerce_metadata(raw.get("metadata"))
     paper_id = raw.get("paper_id") or meta.get("paper_id") or meta.get("doi") or ""
     kb = raw.get("kb_name") or meta.get("kb_name")
-    text_hash = hashlib.blake2b(
-        (raw.get("text") or "").encode("utf-8"), digest_size=8
-    ).hexdigest()
+    text_hash = hashlib.blake2b((raw.get("text") or "").encode("utf-8"), digest_size=8).hexdigest()
     chunk_id = raw.get("chunk_id") or f"{kb}:{paper_id}:{text_hash}"
     source = PassageSource(
         doi=meta.get("doi"),
@@ -85,6 +98,8 @@ def _to_match(raw: dict[str, Any]) -> PassageMatch:
         score=float(raw.get("score") or 0.0),
         source=source,
         kb_name=kb,
+        collection_name=raw.get("collection_name"),
+        content_sha256=hashlib.sha256(str(raw.get("text", "")).encode("utf-8")).hexdigest(),
     )
 
 

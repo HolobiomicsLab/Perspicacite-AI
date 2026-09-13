@@ -400,6 +400,8 @@ class ChromaVectorStore:
         query_embedding: list[float],
         top_k: int = 10,
         filters: SearchFilters | None = None,
+        *,
+        require_collection: bool = False,
     ) -> list[RetrievedChunk]:
         """
         Search for similar documents.
@@ -409,6 +411,7 @@ class ChromaVectorStore:
             query_embedding: Query embedding vector
             top_k: Number of results
             filters: Optional metadata filters
+            require_collection: Raise if the collection cannot be opened.
 
         Returns:
             List of retrieved chunks with scores
@@ -428,6 +431,8 @@ class ChromaVectorStore:
         try:
             coll = self.client.get_collection(name=collection)
         except Exception as e:
+            if require_collection:
+                raise
             # Benign on first-run / no-KB queries — callers fall back to web
             # search. Emit at WARNING so it doesn't pollute error dashboards.
             logger.warning(
@@ -496,6 +501,18 @@ class ChromaVectorStore:
                 error=str(e),
             )
             raise
+
+    async def search_strict(
+        self,
+        collection: str,
+        query_embedding: list[float],
+        top_k: int = 10,
+        filters: SearchFilters | None = None,
+    ) -> list[RetrievedChunk]:
+        """Search a required collection, preserving errors for passage grounding."""
+        return await self.search(
+            collection, query_embedding, top_k=top_k, filters=filters, require_collection=True
+        )
 
     async def all_collection_stats(self) -> dict[str, dict[str, int]]:
         """

@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 from perspicacite.llm.embeddings import EmbeddingFailedError
 from perspicacite.logging import get_logger
+from perspicacite.retrieval.passage_chunks import (
+    PassageQuery,
+    PassageScope,
+    retrieve_passage_chunks,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -87,9 +92,27 @@ class MultiKBRetriever:
         query: str,
         top_k: int | None = None,
         min_score: float | None = None,
+        filters: Any | None = None,
+        *,
+        result_unit: str = "paper",
     ) -> list[dict[str, Any]]:
+        """Return best hits per paper, or explicit chunks with strict passage checks."""
         top_k = top_k or self.default_top_k
         min_score = self.default_min_score if min_score is None else min_score
+        if result_unit == "chunk":
+            scopes = [
+                PassageScope(
+                    getattr(m, "collection_name", None),
+                    getattr(m, "name", None),
+                    getattr(m, "embedding_model", None),
+                )
+                for m in self.kb_metas
+            ]
+            return await retrieve_passage_chunks(
+                self, scopes, PassageQuery(query, top_k, min_score, filters)
+            )
+        if result_unit != "paper":
+            raise ValueError("result_unit must be paper or chunk")
         query_embeddings = await self.embedding_service.embed_query([query])
         query_embedding = query_embeddings[0]
         merged: dict[str, dict[str, Any]] = {}  # paper_id -> best dict
@@ -103,6 +126,7 @@ class MultiKBRetriever:
                     collection=coll,
                     query_embedding=query_embedding,
                     top_k=top_k * 2,
+                    filters=filters,
                 )
             except EmbeddingFailedError:
                 # A degenerate query fails against every collection, so skipping
@@ -141,6 +165,18 @@ class MultiKBRetriever:
             hits=len(result),
         )
         return result
+
+    async def search_chunks(
+        self,
+        query: str,
+        top_k: int | None = None,
+        min_score: float | None = None,
+        filters: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return distinct passages across KBs; fail if any collection cannot be queried."""
+        return await self.search(
+            query, top_k=top_k, min_score=min_score, filters=filters, result_unit="chunk"
+        )
 
     async def search_two_pass(
         self,

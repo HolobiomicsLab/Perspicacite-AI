@@ -14,6 +14,11 @@ from perspicacite.logging import get_logger
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 from perspicacite.rag.query_scope import PaperScopeResult, merge_scope_with_candidates
 from perspicacite.retrieval.chroma_store import _metadata_to_chunk
+from perspicacite.retrieval.passage_chunks import (
+    PassageQuery,
+    PassageScope,
+    retrieve_passage_chunks,
+)
 
 if TYPE_CHECKING:
     from perspicacite.models.papers import Paper
@@ -66,6 +71,7 @@ class DynamicKnowledgeBase:
         self.collection_name = f"{self.config.collection_prefix}{self.session_id}"
         self._initialized = False
         self._paper_ids: set[str] = set()
+        self.expected_embedding_model: str | None = None
 
     async def initialize(self) -> None:
         """Create the session collection."""
@@ -353,6 +359,8 @@ DOI: {paper.doi or 'Unknown'}"""
         top_k: int | None = None,
         min_score: float | None = None,
         filters: "SearchFilters | None" = None,
+        *,
+        result_unit: str = "paper",
     ) -> list[dict[str, Any]]:
         """
         Search the knowledge base.
@@ -364,6 +372,8 @@ DOI: {paper.doi or 'Unknown'}"""
             filters: Optional ``SearchFilters`` (year_min/year_max/...).
                 Translated to Chroma where-clauses inside the vector
                 store. See Wave 4.2.
+            result_unit: "paper" (default) or "chunk". Chunk mode requires
+                expected_embedding_model from persisted KB metadata.
 
         Returns:
             List of search results with text and metadata
@@ -372,7 +382,16 @@ DOI: {paper.doi or 'Unknown'}"""
             raise RuntimeError("Knowledge base not initialized")
 
         top_k = top_k or self.config.top_k
-        min_score = min_score or self.config.min_relevance_score
+        min_score = self.config.min_relevance_score if min_score is None else min_score
+        if result_unit == "chunk":
+            scope = PassageScope(
+                self.collection_name, getattr(self, "kb_name", None), self.expected_embedding_model
+            )
+            return await retrieve_passage_chunks(
+                self, [scope], PassageQuery(query, top_k, min_score, filters)
+            )
+        if result_unit != "paper":
+            raise ValueError("result_unit must be paper or chunk")
 
         # Embed query with query-specific prompt when available (instruct models such as
         # stella_en_1.5B_v5 require a task prefix for query encoding; embed_query() handles
@@ -404,21 +423,35 @@ DOI: {paper.doi or 'Unknown'}"""
                 continue
 
             seen_papers.add(paper_id)
-            filtered.append({
-                "text": r.chunk.text,
-                "score": score,
-                "paper_id": paper_id,
-                "metadata": r.chunk.metadata,
-                # F-15: propagate kb_name when the retriever was tagged by
-                # BaseRAGMode._build_kb_retriever (single-KB path). The
-                # MultiKBRetriever sets this per chunk already.
-                "kb_name": getattr(self, "kb_name", None),
-            })
+            filtered.append(
+                {
+                    "text": r.chunk.text,
+                    "score": score,
+                    "paper_id": paper_id,
+                    "metadata": r.chunk.metadata,
+                    # F-15: propagate kb_name when the retriever was tagged by
+                    # BaseRAGMode._build_kb_retriever (single-KB path). The
+                    # MultiKBRetriever sets this per chunk already.
+                    "kb_name": getattr(self, "kb_name", None),
+                }
+            )
 
             if len(filtered) >= top_k:
                 break
 
         return filtered
+
+    async def search_chunks(
+        self,
+        query: str,
+        top_k: int | None = None,
+        min_score: float | None = None,
+        filters: "SearchFilters | None" = None,
+    ) -> list[dict[str, Any]]:
+        """Return distinct passages with collection and embedding compatibility checks."""
+        return await self.search(
+            query, top_k=top_k, min_score=min_score, filters=filters, result_unit="chunk"
+        )
 
     async def search_two_pass(
         self,
