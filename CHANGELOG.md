@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- DOI retrieval now accepts full-text HTML captures without requiring cookies, refreshes
+  expired or unversioned discovery caches, follows one repository landing-page PDF link,
+  and records Cloudflare challenges as blocked before trying another open route.
 - Ingest and retrieval no longer degrade silently when the embedding provider fails (for
   example on an exhausted API quota). A zero vector is never stored or queried: `add_documents`
   rejects a zero-norm vector produced for a non-empty chunk, `search` rejects a zero-norm query,

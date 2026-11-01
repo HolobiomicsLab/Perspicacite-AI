@@ -26,10 +26,13 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from perspicacite.logging import get_logger
+
+from .interstitial import interstitial_marker
 
 logger = get_logger("perspicacite.pipeline.download.html_capture")
 
@@ -40,6 +43,7 @@ logger = get_logger("perspicacite.pipeline.download.html_capture")
 # (PMC full-text HTML).
 _TIER_FULLTEXT_MIN_CHARS = 8_000
 _TIER_ABSTRACT_MIN_CHARS = 1_500
+FULL_TEXT_HTML_TIER = "full_text_html"
 
 
 @dataclass(frozen=True)
@@ -99,7 +103,7 @@ class _TextExtractor(HTMLParser):
 
 def _classify_tier(char_count: int) -> str:
     if char_count >= _TIER_FULLTEXT_MIN_CHARS:
-        return "full_text_html"
+        return FULL_TEXT_HTML_TIER
     if char_count >= _TIER_ABSTRACT_MIN_CHARS:
         return "extended_abstract"
     return "bibliographic_stub"
@@ -184,23 +188,24 @@ async def capture_landing_html(
     http_client: httpx.AsyncClient,
     cache_dir: str | Path | None,
     timeout_s: float = 15.0,
+    attempts: list[dict[str, Any]] | None = None,
 ) -> HtmlCapture | None:
-    """Capture the publisher landing page as an HTML snapshot.
+    """Capture an article landing page as an HTML snapshot.
 
     Used as a Priority 3b fallback when the PDF route fails. The captured
     snapshot is written to ``<cache_dir>/html/<doi-slug>.html`` and
     classified into one of three tiers by extracted body length.
 
-    When the live publisher page is unreachable (4xx, network error,
+    Detected bot challenges are never saved. Their marker is appended to
+    ``attempts`` when supplied, and the capture returns None.
+
+    When the live publisher page is unreachable (other 4xx, network error,
     non-HTML response) but the caller supplied at least a ``title`` or
     ``abstract`` from upstream discovery, a synthesized
-    ``bibliographic_stub`` is written instead. This is the
-    "worse than HTML, better than nothing" tier — gives the user a
-    Zotero attachment with whatever metadata we could gather, even when
-    Cloudflare blocks the live fetch.
+    ``bibliographic_stub`` is written instead, preserving available
+    metadata as a Zotero attachment.
 
-    Returns ``None`` only when nothing usable is available — no URL, no
-    title, and no abstract.
+    Returns ``None`` for a bot challenge or when nothing usable is available.
     """
     out_dir = (
         Path(cache_dir).expanduser() / "html"
@@ -213,13 +218,6 @@ async def capture_landing_html(
         logger.debug("html_capture_no_url_and_no_meta", doi=doi)
         return None
 
-    # Publisher landing pages (preprints.org, royalsocietypublishing.org,
-    # nature.com, doi.org redirect targets) gate non-browser UAs with
-    # HTTP 403. Send a realistic Chrome/Mac UA — matches what the rest
-    # of the pipeline uses (see pipeline/download/supplementary.py).
-    # Even with a browser UA + cookie jar, Cloudflare-protected publishers
-    # (ACS, AAAS, RSC) return 403 to non-browser clients — we still fall
-    # back to a synthesized stub from upstream metadata in that case.
     fetch_failure_reason: str | None = None
     body_html = ""
     if url:
@@ -227,21 +225,24 @@ async def capture_landing_html(
             r = await http_client.get(
                 url, timeout=timeout_s, follow_redirects=True,
                 headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/131.0.0.0 Safari/537.36"
-                    ),
-                    "Accept": (
-                        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                        "image/avif,image/webp,*/*;q=0.8"
-                    ),
+                    "User-Agent": "Perspicacite/2.0",
+                    "Accept": "text/html,application/xhtml+xml",
                 },
             )
         except httpx.HTTPError as exc:
             logger.warning("html_capture_fetch_error", url=url, error=str(exc))
             fetch_failure_reason = f"network error: {exc.__class__.__name__}"
         else:
+            marker = interstitial_marker(
+                str(r.url), r.headers.get("content-type", ""), r.content,
+            )
+            if marker:
+                if attempts is not None:
+                    attempts.append({
+                        "source": "landing_html", "status": "blocked",
+                        "url": url, "final_url": str(r.url), "marker": marker,
+                    })
+                return None
             if r.status_code >= 400:
                 logger.info("html_capture_status_error", url=url, status=r.status_code)
                 fetch_failure_reason = f"HTTP {r.status_code}"

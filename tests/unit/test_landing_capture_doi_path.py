@@ -1,18 +1,9 @@
-"""Cookie-authenticated landing-capture fallback in the DOI pipeline.
-
-The URL/GUI ingest path (ingest_url) already fetches publisher landing pages
-through the cookie-authenticated client via capture_landing_html. The DOI path
-(retrieve_paper_content, used by add_dois_to_kb) historically stopped at PDF
-sources, so a paywalled-Nature DOI failed where pasting its URL succeeded.
-
-This wires the same landing capture in as an opt-in last-resort fallback,
-enabled only when cookies are configured (so default behaviour and the
-abstract-only path are unchanged).
-"""
+"""Public HTML full-text capture and its quality gate in the DOI pipeline."""
 
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from perspicacite.pipeline.download import unified
@@ -26,19 +17,25 @@ def _disc() -> PaperDiscovery:
         doi="10.1038/paywalled",
         title="A Paywalled Nature Paper",
         abstract="A short abstract from discovery.",
+        authors=["A. Researcher"],
+        year=2026,
         is_oa=False,
     )
 
 
 @pytest.mark.asyncio
 async def test_landing_capture_used_when_enabled_and_pdf_missed(tmp_path):
-    cap = HtmlCapture(
-        path=Path(tmp_path) / "x.html",
-        tier="full_text",
-        char_count=12000,
-        extracted_title="A Paywalled Nature Paper",
-        extracted_text="Full body text recovered from the publisher page. " * 50,
-    )
+    """A real 9,000-character HTML capture must reach the full-text tier."""
+    body_text = "Research results. " * 500
+    assert len(body_text) == 9_000
+    requests = []
+
+    def respond(request):
+        requests.append(str(request.url))
+        return httpx.Response(
+            200, text=f"<html><body><p>{body_text}</p></body></html>",
+            headers={"content-type": "text/html"},
+        )
     with (
         patch(
             "perspicacite.pipeline.download.unified.discover_paper_sources",
@@ -60,25 +57,23 @@ async def test_landing_capture_used_when_enabled_and_pdf_missed(tmp_path):
             new_callable=AsyncMock,
             return_value=None,
         ),
-        patch(
-            "perspicacite.pipeline.download.unified.capture_landing_html",
-            new_callable=AsyncMock,
-            return_value=cap,
-        ) as mock_cap,
         patch("perspicacite.pipeline.download.discovery._CACHE_DIR", tmp_path),
     ):
-        result = await unified.retrieve_paper_content(
-            "10.1038/paywalled",
-            http_client=AsyncMock(),
-            pdf_parser=object(),
-            enable_landing_capture=True,
-        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            result = await unified.retrieve_paper_content(
+                "10.1038/paywalled",
+                http_client=client,
+                pdf_parser=object(),
+                pdf_cache_dir=str(tmp_path),
+                enable_landing_capture=True,
+            )
 
-    mock_cap.assert_awaited_once()
+    assert requests == ["https://doi.org/10.1038/paywalled"]
     assert result.success is True
     assert result.content_source == "landing_html"
     assert result.content_type == "full_text"
-    assert result.full_text and len(result.full_text) > 200
+    assert result.full_text == body_text.strip()
+    assert list((tmp_path / "html").glob("*.html"))
 
 
 @pytest.mark.asyncio
@@ -123,12 +118,40 @@ async def test_landing_capture_not_used_when_disabled(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_landing_capture_thin_result_falls_through_to_abstract(tmp_path):
+@pytest.mark.parametrize("status", [200, 403])
+async def test_blocked_candidate_is_not_retried_as_landing_html(tmp_path, monkeypatch, status):
+    disc = _disc()
+    disc.oa_url = "https://publisher.example/article"
+    disc.oa_candidates = [disc.oa_url]
+    monkeypatch.setattr(unified, "discover_paper_sources", AsyncMock(return_value=disc))
+    monkeypatch.setattr(unified, "get_fulltext_from_pmc", AsyncMock(return_value=(None, None)))
+    monkeypatch.setattr(unified, "get_content_from_europepmc", AsyncMock(return_value=None))
+    client = AsyncMock()
+    client.get.return_value = httpx.Response(
+        status, text='<html><div id="cf-chl-widget">Just a moment...</div></html>',
+        headers={"content-type": "text/html"}, request=httpx.Request("GET", disc.oa_url),
+    )
+
+    result = await unified.retrieve_paper_content(
+        disc.doi, http_client=client, pdf_parser=object(), pdf_cache_dir=str(tmp_path),
+        enable_landing_capture=True,
+    )
+
+    assert result.content_type == "abstract"
+    assert client.get.await_count == 1
+    assert not list(tmp_path.rglob("*.html"))
+    assert result.attempts[0]["status"] == "blocked"
+    assert result.attempts[0]["marker"] == "cloudflare_challenge"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", ["bibliographic_stub", "extended_abstract", "full_text"])
+async def test_landing_capture_thin_result_falls_through_to_abstract(tmp_path, tier):
     """A stub/abstract-tier capture is no better than the abstract path, so it
     must not be accepted as full_text."""
     thin = HtmlCapture(
         path=Path(tmp_path) / "x.html",
-        tier="bibliographic_stub",
+        tier=tier,
         char_count=80,
         extracted_text="A Paywalled Nature Paper A short abstract.",
     )

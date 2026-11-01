@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 
 import httpx
 
@@ -209,6 +209,49 @@ def _all(meta: dict[str, list[str]], *keys: str) -> list[str]:
     for k in keys:
         out.extend(meta.get(k.lower()) or [])
     return out
+
+
+class _RepositoryLinkCollector(_MetaTagCollector):
+    """Collect citation metadata and repository download links from HTML."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        super().handle_starttag(tag, attrs)
+        if tag.lower() == "a":
+            self.links.extend(value for key, value in attrs if key == "href" and value)
+
+
+def extract_repository_pdf_url(html: str, landing_url: str) -> str | None:
+    """Find one HTTP PDF link in already-fetched repository HTML.
+
+    Citation metadata takes precedence over DSpace bitstream and HAL document
+    links. Relative links resolve against the final landing URL. No fetching
+    occurs here; the caller limits retrieval to one additional hop.
+    """
+    parser = _RepositoryLinkCollector()
+    parser.feed(html)
+    candidates = list(parser.meta.get("citation_pdf_url", []))
+    candidates.extend(link for link in parser.links if _is_repository_download(link))
+    for candidate in candidates:
+        resolved = urldefrag(urljoin(landing_url, candidate.strip()))[0]
+        if urlparse(resolved).scheme not in {"http", "https"}:
+            continue
+        if resolved != urldefrag(landing_url)[0]:
+            return resolved
+    return None
+
+
+def _is_repository_download(url: str) -> bool:
+    """Recognise DSpace bitstream and HAL document paths."""
+    path = urlparse(url).path.rstrip("/")
+    return (
+        "/bitstream/" in path
+        or bool(re.search(r"/bitstreams/[^/]+/download$", path))
+        or path.endswith("/document")
+    )
 
 
 async def extract_generic_html(url: str, *, http_client: httpx.AsyncClient) -> dict[str, Any]:

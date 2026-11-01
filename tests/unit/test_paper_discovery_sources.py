@@ -222,8 +222,68 @@ class TestUnpaywallCandidateRanking:
         assert discovery._collect_unpaywall_oa_candidates(data) == []
 
 
+class TestPublisherUrlExtraction:
+    """Publisher routing uses explicit host evidence, never a generic OA URL."""
+
+    def test_openalex_requires_a_trusted_primary_location(self):
+        work = {
+            "primary_location": {
+                "pdf_url": "https://publisher.example.org/article.pdf",
+                "landing_page_url": "https://doi.org/10.1234/article",
+                "source": {"type": "journal"},
+            },
+            "open_access": {"oa_url": "https://repository.example.org/article"},
+        }
+        assert (
+            discovery._extract_publisher_url_from_openalex(work)
+            == "https://publisher.example.org/article.pdf"
+        )
+        assert discovery._extract_publisher_url_from_openalex(
+            {
+                "primary_location": {
+                    "landing_page_url": "https://repository.example.org/article",
+                    "source": {"type": "repository"},
+                    "version": "publishedVersion",
+                },
+                "open_access": {"oa_url": "https://publisher.example.org/article"},
+            }
+        ) is None
+
+    def test_unpaywall_uses_only_publisher_locations(self):
+        data = {
+            "best_oa_location": {
+                "host_type": "repository",
+                "url_for_pdf": "https://repository.example.org/article.pdf",
+            },
+            "oa_locations": [
+                {
+                    "host_type": "publisher",
+                    "url": "https://doi.org/10.1234/article",
+                },
+                {
+                    "host_type": "publisher",
+                    "url_for_landing_page": "https://journal.example.org/article",
+                },
+            ],
+        }
+        assert (
+            discovery._extract_publisher_url_from_unpaywall(data)
+            == "https://journal.example.org/article"
+        )
+        assert discovery._extract_publisher_url_from_unpaywall(
+            {
+                "oa_locations": [
+                    {
+                        "host_type": "publisher",
+                        "url": "https://doi.org/10.1234/article",
+                    }
+                ]
+            }
+        ) == "https://doi.org/10.1234/article"
+
+
 class TestDiscoveryCacheRoundTrip:
-    """oa_candidates must survive the disk cache, old files must still load."""
+    """Current cache records round-trip; unversioned records are misses."""
 
     def test_candidates_survive_the_cache(self, tmp_path, monkeypatch):
         """Without this, every cache hit collapses the ranked list."""
@@ -240,8 +300,8 @@ class TestDiscoveryCacheRoundTrip:
         assert loaded.oa_candidates == disc.oa_candidates
         assert loaded.oa_url == disc.oa_url
 
-    def test_old_cache_file_without_new_key_loads(self, tmp_path, monkeypatch):
-        """Files written before oa_candidates existed must still be readable."""
+    def test_unversioned_cache_file_is_a_miss(self, tmp_path, monkeypatch):
+        """Legacy records cannot suppress a live candidate refresh."""
         monkeypatch.setattr(discovery, "_CACHE_DIR", tmp_path)
         legacy = {
             "doi": "10.1234/journal.abc",
@@ -257,7 +317,4 @@ class TestDiscoveryCacheRoundTrip:
         path = tmp_path / "10.1234_journal.abc_discovery.json"
         path.write_text(json.dumps(legacy), encoding="utf-8")
         loaded = discovery._read_discovery_cache("10.1234/journal.abc")
-        assert loaded is not None
-        assert loaded.oa_candidates == []
-        assert loaded.pmcid == "PMC6940144"
-        assert loaded.oa_url == "https://a.example.org/landing"
+        assert loaded is None

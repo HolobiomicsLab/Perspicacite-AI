@@ -46,6 +46,32 @@ async def test_capture_full_text_page(respx_mock, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 403])
+async def test_challenge_is_reported_without_saving_a_snapshot(respx_mock, tmp_path, status):
+    body = (
+        '<html><title>Just a moment...</title>'
+        '<script src="/cdn-cgi/challenge-platform/x"></script></html>'
+    )
+    url = "https://publisher.example/article"
+    respx_mock.get(url).mock(return_value=httpx.Response(
+        status, text=body, headers={"content-type": "text/html"},
+    ))
+    attempts = []
+    async with httpx.AsyncClient() as http:
+        cap = await capture_landing_html(
+            doi="10.x/challenge", landing_url=url, title="Article title",
+            abstract="An abstract available from discovery.",
+            http_client=http, cache_dir=tmp_path, attempts=attempts,
+        )
+    assert cap is None
+    assert not list(tmp_path.rglob("*.html"))
+    assert attempts == [{
+        "source": "landing_html", "status": "blocked", "url": url,
+        "final_url": url, "marker": "cloudflare_challenge",
+    }]
+
+
+@pytest.mark.asyncio
 async def test_capture_stub_with_abstract_splice(respx_mock, tmp_path):
     """A short paywall stub gets the OpenAlex abstract spliced in."""
     body = "<html><head><title>Paywalled</title></head><body><p>access required</p></body></html>"

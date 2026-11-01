@@ -453,11 +453,11 @@ def _get_pdf_fallback_kwargs(pdf_config) -> dict:
         pdf_config: The ``pdf_download`` config section, or None.
 
     Returns:
-        Keyword args to splat into ``retrieve_paper_content``; empty when
-        ``pdf_config`` is None.
+        Keyword args to splat into ``retrieve_paper_content``. Public HTML
+        capture is enabled even when ``pdf_config`` is None.
     """
     if not pdf_config:
-        return {}
+        return {"enable_landing_capture": True}
     kwargs = {
         "alternative_endpoint": pdf_config.alternative_endpoint,
         "unpaywall_email": pdf_config.unpaywall_email,
@@ -468,9 +468,8 @@ def _get_pdf_fallback_kwargs(pdf_config) -> dict:
         "springer_api_key": pdf_config.springer_api_key,
         "cookies_path": pdf_config.cookies_path,
         "cookie_domains": list(pdf_config.cookie_domains or []),
-        # Landing capture replays the user's own browser session, so it is
-        # only meaningful once a cookie jar is configured.
-        "enable_landing_capture": bool(pdf_config.cookies_path),
+        # Open HTML full text does not require cookies.
+        "enable_landing_capture": True,
     }
     if pdf_config.cache_pdfs:
         kwargs["pdf_cache_dir"] = pdf_config.cache_dir
