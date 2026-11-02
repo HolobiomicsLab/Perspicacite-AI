@@ -16,11 +16,11 @@ logger = get_logger("perspicacite.pipeline.download.interstitial")
 # settles the question before any heuristic runs.
 PDF_MAGIC = b"%PDF"
 
-# Bytes of the body examined for challenge markers. Interstitials measured in
-# the 2026-08 publisher probe were 1-2 KB in total, so their marker is well
-# inside this window; the bound keeps a multi-MB real PDF cheap to check and
-# stops article text far from the head from ever matching.
-SCAN_PREFIX_BYTES = 4096
+# Bytes of the body examined for challenge markers. Observed interstitials are
+# up to about 6 KB, so their marker is inside this window; the bound keeps a
+# multi-MB real PDF cheap to check and stops article text far from the head from
+# ever matching.
+SCAN_PREFIX_BYTES = 8192
 
 # (host suffix, marker name). The FINAL response host is matched, so a wall is
 # caught even when the publisher URL that started the fetch looks legitimate.
@@ -39,6 +39,10 @@ BODY_CHALLENGE_MARKERS: tuple[tuple[bytes, str], ...] = (
     # Radware Bot Manager challenge body references its own validation host.
     # Same 2026-08 IOP probe as the host row above.
     (b"validate.perfdrive.com", "perfdrive_bot_wall"),
+    # Cloudflare challenge pages load their orchestration script from this
+    # internal route and use cf-chl-* identifiers for challenge state.
+    (b"/cdn-cgi/challenge-platform/", "cloudflare_challenge"),
+    (b"cf-chl-", "cloudflare_challenge"),
 )
 
 
@@ -108,6 +112,12 @@ if __name__ == "__main__":
     assert (
         interstitial_marker("https://validate.perfdrive.com/x", "text/html", b"<html>hi")
         == "perfdrive_bot_wall"
+    )
+    assert (
+        interstitial_marker(
+            "https://x.org/a.pdf", "text/html", b"<script src='/cdn-cgi/challenge-platform/x'>"
+        )
+        == "cloudflare_challenge"
     )
     assert interstitial_marker("https://x.org/a.html", "text/html", b"<a>Download PDF</a>") is None
     print("interstitial.py smoke checks passed")

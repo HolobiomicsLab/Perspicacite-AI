@@ -12,6 +12,7 @@ Priority flow:
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -36,7 +37,6 @@ from .base import (
     MIN_PLAUSIBLE_PDF_BYTES,
     PaperContent,
     PaperDiscovery,
-    PDFDownloader,
     is_abstract_only,
 )
 from .biorxiv import get_content_from_biorxiv, is_biorxiv_doi
@@ -44,12 +44,13 @@ from .cookies import looks_like_paywall_html
 from .discovery import discover_paper_sources
 from .elsevier import get_content_from_elsevier
 from .europepmc import get_content_from_europepmc
-from .html_capture import capture_landing_html
+from .html_capture import FULL_TEXT_HTML_TIER, capture_landing_html
 from .interstitial import PDF_MAGIC, interstitial_marker
 from .pmc import get_fulltext_from_pmc
-from .rate_limit import RateLimited
+from .rate_limit import RateLimited, host_key_for_url, polite_get
 from .rsc import download_from_rsc, is_rsc_doi
 from .springer import download_from_springer, is_springer_doi
+from .url_extractors import extract_repository_pdf_url
 from .wiley import download_from_wiley_direct, download_from_wiley_tdm
 
 logger = get_logger("perspicacite.pipeline.download.unified")
@@ -59,6 +60,7 @@ logger = get_logger("perspicacite.pipeline.download.unified")
 OWNED_CLIENT_TIMEOUT_S = 60.0
 # Below this an abstract is a stub ("n/a", a copyright line), not content.
 MIN_PLAUSIBLE_ABSTRACT_CHARS = 20
+HTML_SNIFF_BYTES = 512
 # _parse_pdf_bytes inspects bytes with no request context, so the
 # interstitial host check is skipped and only the body is matched.
 NO_RESPONSE_URL = ""
@@ -71,6 +73,7 @@ STATUS_MISS = "miss"
 STATUS_SKIP = "skip"
 STATUS_ERROR = "error"
 STATUS_RATE_LIMITED = "rate_limited"
+STATUS_BLOCKED = "blocked"
 
 
 def _none_result(doi: str) -> PaperContent:
@@ -265,6 +268,8 @@ async def retrieve_paper_content(
         aaas_api_key: AAAS API key.
         rsc_api_key: RSC API key.
         springer_api_key: Springer API key.
+        enable_landing_capture: Try public HTML full text after PDF sources.
+            Configured cookies remain available on the supplied client.
 
     Returns:
         PaperContent with the best available content. ``success`` reports
@@ -541,27 +546,28 @@ async def retrieve_paper_content(
                         throttled_hosts,
                     )
 
-        # ── STEP 3c: COOKIE-AUTHENTICATED LANDING CAPTURE ───────────────
-        # Last-resort full text from the publisher landing page, fetched
-        # through the (cookie-authenticated) client. Brings the DOI path to
-        # parity with ingest_url for paywalled papers the user has cookie
-        # access to. Opt-in (enabled when cookies are configured) and only
-        # accepted at the full_text tier — thinner captures fall through to
-        # the abstract path below.
-        if enable_landing_capture:
+        # Public HTML can provide full text without cookies.
+        landing_url = disc.oa_url or f"https://doi.org/{clean}"
+        blocked_urls = {
+            attempt[key]
+            for attempt in attempts if attempt.get("status") == STATUS_BLOCKED
+            for key in ("url", "final_url") if attempt.get(key)
+        }
+        if enable_landing_capture and landing_url not in blocked_urls:
             try:
                 cap = await capture_landing_html(
                     doi=clean,
-                    landing_url=disc.oa_url,
+                    landing_url=landing_url,
                     abstract=disc.abstract or "",
                     title=disc.title or "",
                     http_client=client,
                     cache_dir=pdf_cache_dir,
+                    attempts=attempts,
                 )
             except Exception as e:
                 logger.info("landing_capture_failed", doi=clean, error=str(e))
                 cap = None
-            if cap is not None and cap.tier == "full_text" and cap.extracted_text:
+            if cap is not None and cap.tier == FULL_TEXT_HTML_TIER and cap.extracted_text:
                 pc = PaperContent(
                     success=True,
                     doi=clean,
@@ -615,6 +621,26 @@ async def retrieve_paper_content(
             await client.aclose()
 
 
+def _publisher_host(url: str) -> str | None:
+    """Return a known publisher host, leaving DOI resolvers unresolved."""
+    host = host_key_for_url(url)
+    return host if urlsplit(url).hostname and host != "doi.org" else None
+
+
+def _is_publisher_doi_url(url: str, doi: str) -> bool:
+    """Whether a candidate resolves the paper's DOI rather than a repository DOI."""
+    parsed = urlsplit(url)
+    return host_key_for_url(url) == "doi.org" and parsed.path.lstrip("/").lower() == doi.lower()
+
+
+def _is_html_response(response: httpx.Response) -> bool:
+    """Recognise declared HTML and HTML sent with a generic content type."""
+    if "html" in response.headers.get("content-type", "").lower():
+        return True
+    prefix = response.content[:HTML_SNIFF_BYTES].lstrip().lower()
+    return prefix.startswith((b"<!doctype html", b"<html", b"<head", b"<body"))
+
+
 async def _try_pdf_sources(
     doi: str,
     url: str | None,
@@ -643,25 +669,67 @@ async def _try_pdf_sources(
         rec.update(extra)
         attempts.append(rec)
 
-    async def _fetch(src: str, pdf_url: str) -> bytes | None:
-        """Download `pdf_url` for tier `src`; record a miss or throttling."""
-        try:
-            data = await PDFDownloader().download(pdf_url, http_client=client)
-        except RateLimited as exc:
-            _record(src, STATUS_RATE_LIMITED, url=pdf_url, host=exc.host)
+    visited: set[str] = set()
+    publisher_url = disc.publisher_url or f"https://doi.org/{doi}"
+    publisher_host = _publisher_host(publisher_url)
+
+    async def _response(src: str, candidate_url: str) -> httpx.Response | None:
+        """Fetch once, preserving challenge and throttling diagnostics."""
+        nonlocal publisher_host
+        if candidate_url in visited:
             return None
-        if data and len(data) >= MIN_PLAUSIBLE_PDF_BYTES:
-            return data
-        _record(src, STATUS_MISS, url=pdf_url)
+        visited.add(candidate_url)
+        try:
+            response = await polite_get(client, candidate_url, follow_redirects=True)
+        except RateLimited as exc:
+            _record(src, STATUS_RATE_LIMITED, url=candidate_url, host=exc.host)
+            return None
+        except httpx.HTTPError as exc:
+            _record(src, STATUS_ERROR, url=candidate_url, error=str(exc))
+            return None
+        visited.add(str(response.url))
+        if candidate_url == publisher_url or _is_publisher_doi_url(candidate_url, doi):
+            publisher_host = _publisher_host(str(response.url)) or publisher_host
+        marker = interstitial_marker(
+            str(response.url), response.headers.get("content-type", ""), response.content,
+        )
+        if marker:
+            _record(src, STATUS_BLOCKED, url=candidate_url,
+                    final_url=str(response.url), marker=marker)
+            return None
+        if response.status_code >= 400:
+            _record(src, STATUS_MISS, url=candidate_url, http_status=response.status_code)
+            return None
+        return response
+
+    async def _fetch(
+        src: str, candidate_url: str, *, resolve_landing: bool = False,
+    ) -> tuple[bytes, str] | None:
+        """Accept PDF bytes or follow one non-publisher landing-page link."""
+        response = await _response(src, candidate_url)
+        if response is None:
+            return None
+        final_url = str(response.url)
+        if (response.content.startswith(PDF_MAGIC)
+                and len(response.content) >= MIN_PLAUSIBLE_PDF_BYTES):
+            return response.content, src
+        _record(src, STATUS_MISS, url=candidate_url)
+        if not resolve_landing or host_key_for_url(final_url) == publisher_host:
+            return None
+        if not _is_html_response(response):
+            return None
+        linked_pdf = extract_repository_pdf_url(response.text, final_url)
+        if linked_pdf:
+            return await _fetch("repository_pdf", linked_pdf)
         return None
 
     # 3a. Publisher OA PDFs from discovery, best candidate first. The
     # single oa_url is the fallback for a discovery that predates the
     # ranked list, so no route regresses.
     for oa_url in disc.oa_candidates or ([disc.oa_url] if disc.oa_url else []):
-        data = await _fetch("publisher_oa_pdf", oa_url)
-        if data:
-            return data, "publisher_oa_pdf"
+        result = await _fetch("publisher_oa_pdf", oa_url, resolve_landing=True)
+        if result:
+            return result
 
     # 3b. arXiv PDF
     if disc.arxiv_id or is_arxiv_doi(doi) or (url and is_arxiv_url(url)):
@@ -672,9 +740,9 @@ async def _try_pdf_sources(
 
     # 3c. Unpaywall PDF URL
     if disc.unpaywall_pdf_url:
-        data = await _fetch("unpaywall_pdf", disc.unpaywall_pdf_url)
-        if data:
-            return data, "unpaywall_pdf"
+        result = await _fetch("unpaywall_pdf", disc.unpaywall_pdf_url, resolve_landing=True)
+        if result:
+            return result
 
     # 3d. Publisher-specific APIs. The former OpenAlex OA tier is gone:
     # discovery already ranks OpenAlex's OA urls into oa_candidates, so

@@ -233,13 +233,14 @@ def test_pdf_kwargs_omit_new_keys_without_pdf_config():
 
 
 def test_pdf_kwargs_stay_clean_when_config_sets_neither():
-    """Config present but empty must not enable landing capture."""
+    """Config present but empty keeps keys unset; public landing capture
+    stays on, since full-text HTML needs no cookie jar."""
     from perspicacite.pipeline.search_to_kb import _build_pdf_download_kwargs
 
     kwargs = _build_pdf_download_kwargs(_pdf_config())
 
     assert kwargs["elsevier_api_key"] is None
-    assert kwargs["enable_landing_capture"] is False
+    assert kwargs["enable_landing_capture"] is True
 
 
 @pytest.mark.asyncio

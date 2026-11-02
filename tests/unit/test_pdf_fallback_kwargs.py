@@ -50,6 +50,12 @@ def test_elsevier_key_is_forwarded():
     assert _get_pdf_fallback_kwargs(_config())["elsevier_api_key"] == "e"
 
 
+def test_public_html_capture_is_enabled_without_cookies():
+    kwargs = _get_pdf_fallback_kwargs(_config(cookies_path=None))
+    assert kwargs["cookies_path"] is None
+    assert kwargs["enable_landing_capture"] is True
+
+
 def test_pdf_cache_dir_follows_the_cache_pdfs_flag():
     """A cached PDF is what Zotero push and export-kb later attach."""
     on = _get_pdf_fallback_kwargs(_config(cache_pdfs=True, cache_dir="data/papers"))
@@ -58,8 +64,8 @@ def test_pdf_cache_dir_follows_the_cache_pdfs_flag():
     assert "pdf_cache_dir" not in off
 
 
-def test_absent_config_yields_no_kwargs():
-    assert _get_pdf_fallback_kwargs(None) == {}
+def test_absent_config_keeps_public_html_capture():
+    assert _get_pdf_fallback_kwargs(None) == {"enable_landing_capture": True}
 
 
 if __name__ == "__main__":
@@ -67,5 +73,5 @@ if __name__ == "__main__":
     test_cookie_jar_and_domains_are_forwarded()
     test_elsevier_key_is_forwarded()
     test_pdf_cache_dir_follows_the_cache_pdfs_flag()
-    test_absent_config_yields_no_kwargs()
+    test_absent_config_keeps_public_html_capture()
     print("ok")

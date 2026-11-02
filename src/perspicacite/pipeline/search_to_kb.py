@@ -501,9 +501,9 @@ def _build_pdf_download_kwargs(pdf_config: Any) -> dict[str, Any]:
         "aaas_api_key": pdf_config.aaas_api_key,
         "rsc_api_key": pdf_config.rsc_api_key,
         "springer_api_key": pdf_config.springer_api_key,
-        # Landing capture replays the user's own browser session, so it is
-        # only meaningful once a cookie jar is configured.
-        "enable_landing_capture": bool(pdf_config.cookies_path),
+        # Public full-text HTML (PMC, BMC, MDPI, repositories) needs no
+        # cookies; a configured jar still rides on the client.
+        "enable_landing_capture": True,
     }
     if pdf_config.cache_pdfs:
         kwargs["pdf_cache_dir"] = pdf_config.cache_dir

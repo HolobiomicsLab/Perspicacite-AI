@@ -86,6 +86,7 @@ class PaperDiscovery:
     unpaywall_pdf_url: str | None = None
     journal: str | None = None
     license: str | None = None  # OA license id, e.g. "cc-by"
+    publisher_url: str | None = None
 
 
 @dataclass
@@ -100,8 +101,9 @@ class PaperContent:
 
     attempts: ordered list of pipeline-step diagnostics, one per source
         actually tried. Each entry has at minimum a ``source`` label and
-        a ``status`` ("miss" | "error" | "skip" | "hit"). Errors carry an
-        ``error`` field. The caller can surface this in failure messages
+        a ``status`` ("miss" | "error" | "skip" | "hit" | "blocked" |
+        "rate_limited"). Errors carry an ``error`` field; blocked pages
+        carry a ``marker``. The caller can surface this in failure messages
         so an operator can tell whether the failure was config (API key
         missing) or content (genuinely not available).
 

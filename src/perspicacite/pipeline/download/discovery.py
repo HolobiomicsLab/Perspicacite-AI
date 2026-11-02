@@ -9,18 +9,26 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-import httpx
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from perspicacite.logging import get_logger
 
 from .base import PaperDiscovery
 from .openalex_oa import _collect_pdf_candidate_urls
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import httpx
+
 logger = get_logger("perspicacite.pipeline.download.discovery")
 
 _CACHE_DIR = Path("./data/papers")
+DISCOVERY_CACHE_SCHEMA_VERSION = 1
+DISCOVERY_CACHE_MAX_AGE = timedelta(days=30)
 
 
 _ARXIV_ATOM_NS = {
@@ -57,8 +65,8 @@ async def _enrich_from_arxiv_atom(
     arxiv_id: str,
     disc: PaperDiscovery,
     http_client: httpx.AsyncClient,
-) -> None:
-    """Fill missing title/authors/year on ``disc`` from the arXiv Atom API.
+) -> bool:
+    """Fill missing metadata from arXiv and report whether an entry was found.
 
     Mutates ``disc`` in place. Only fills fields that are currently empty —
     OpenAlex data takes precedence over arXiv data.
@@ -75,11 +83,11 @@ async def _enrich_from_arxiv_atom(
     logger.info("discovery_arxiv_atom_lookup", arxiv_id=bare)
     r = await http_client.get(url)
     if r.status_code != 200:
-        return
+        return False
     root = ET.fromstring(r.text)
     entry = root.find("atom:entry", _ARXIV_ATOM_NS)
     if entry is None:
-        return
+        return False
 
     title_el = entry.find("atom:title", _ARXIV_ATOM_NS)
     if title_el is not None and title_el.text and not disc.title:
@@ -100,6 +108,7 @@ async def _enrich_from_arxiv_atom(
             m = re.match(r"^(\d{4})", published_el.text)
             if m:
                 disc.year = int(m.group(1))
+    return True
 
 
 def _title_word_jaccard(a: str | None, b: str | None) -> float:
@@ -178,27 +187,91 @@ def _discovery_cache_path(doi: str) -> Path:
     return _CACHE_DIR / f"{safe}_discovery.json"
 
 
-def _read_discovery_cache(doi: str) -> PaperDiscovery | None:
+def _read_discovery_cache_record(doi: str) -> dict[str, Any] | None:
     path = _discovery_cache_path(doi)
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return PaperDiscovery(**data)
     except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    """Parse an ISO 8601 UTC timestamp, rejecting naive or non-UTC values."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        return None
+    return parsed
+
+
+def _is_discovery_cache_fresh(
+    record: dict[str, Any],
+    max_age: timedelta,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether a cache record has the current schema and age."""
+    schema_version = record.get("schema_version")
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        return False
+    if schema_version != DISCOVERY_CACHE_SCHEMA_VERSION:
+        return False
+    fetched_at = _parse_utc_timestamp(record.get("fetched_at"))
+    if fetched_at is None or max_age < timedelta(0):
+        return False
+    return (now or datetime.now(UTC)) - fetched_at <= max_age
+
+
+def _paper_discovery_from_cache_record(
+    record: dict[str, Any] | None,
+    max_age: timedelta,
+) -> PaperDiscovery | None:
+    if record is None or not _is_discovery_cache_fresh(record, max_age):
+        return None
+    payload = {
+        key: value
+        for key, value in record.items()
+        if key not in {"schema_version", "fetched_at"}
+    }
+    try:
+        return PaperDiscovery(**payload)
+    except (TypeError, ValueError):
         return None
 
 
-def _write_discovery_cache(disc: PaperDiscovery) -> None:
+def _read_discovery_cache(
+    doi: str,
+    max_age: timedelta = DISCOVERY_CACHE_MAX_AGE,
+) -> PaperDiscovery | None:
+    record = _read_discovery_cache_record(doi)
+    return _paper_discovery_from_cache_record(record, max_age)
+
+
+def _write_discovery_cache(
+    disc: PaperDiscovery,
+    *,
+    fetched_at: datetime | None = None,
+) -> None:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = _discovery_cache_path(disc.doi)
+    timestamp = (fetched_at or datetime.now(UTC)).astimezone(UTC).isoformat()
     path.write_text(
         json.dumps(
             {
+                "schema_version": DISCOVERY_CACHE_SCHEMA_VERSION,
+                "fetched_at": timestamp,
                 "doi": disc.doi,
                 "pmcid": disc.pmcid,
                 "arxiv_id": disc.arxiv_id,
                 "oa_url": disc.oa_url,
+                "publisher_url": disc.publisher_url,
                 "oa_candidates": disc.oa_candidates,
                 "abstract": disc.abstract,
                 "title": disc.title,
@@ -245,6 +318,45 @@ def _dedupe_urls(urls: list[str]) -> list[str]:
         seen.add(url)
         ranked.append(url)
     return ranked
+
+
+def _is_doi_resolver_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    return host == "doi.org" or host.endswith(".doi.org")
+
+
+def _preferred_publisher_url(urls: Sequence[str | None]) -> str | None:
+    """Prefer a direct publisher URL, retaining a DOI resolver as fallback."""
+    candidates = _dedupe_urls([url for url in urls if url])
+    direct = next((url for url in candidates if not _is_doi_resolver_url(url)), None)
+    return direct or (candidates[0] if candidates else None)
+
+
+def _extract_publisher_url_from_openalex(work: dict[str, Any]) -> str | None:
+    """Return a URL from OpenAlex's trustworthy publisher location."""
+    primary = work.get("primary_location")
+    if not isinstance(primary, dict):
+        return None
+    source = primary.get("source") or {}
+    source_type = source.get("type") if isinstance(source, dict) else None
+    is_journal = isinstance(source_type, str) and source_type.lower() == "journal"
+    if not is_journal:
+        return None
+    return _preferred_publisher_url(_location_urls(primary, OPENALEX_URL_KEYS))
+
+
+def _extract_publisher_url_from_unpaywall(data: dict[str, Any]) -> str | None:
+    """Return the best URL explicitly labelled as publisher-hosted."""
+    locations = [data.get("best_oa_location"), *(data.get("oa_locations") or [])]
+    urls: list[str] = []
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        host_type = location.get("host_type")
+        if not isinstance(host_type, str) or host_type.lower() != "publisher":
+            continue
+        urls.extend(_location_urls(location, UNPAYWALL_ALL_URL_KEYS))
+    return _preferred_publisher_url(urls)
 
 
 def _openalex_locations(work: dict) -> list[dict]:
@@ -353,6 +465,8 @@ async def discover_paper_sources(
     doi: str,
     http_client: httpx.AsyncClient,
     unpaywall_email: str | None = None,
+    *,
+    cache_max_age: timedelta = DISCOVERY_CACHE_MAX_AGE,
 ) -> PaperDiscovery:
     """Discover available sources and metadata for a DOI.
 
@@ -369,8 +483,12 @@ async def discover_paper_sources(
     # paper (a known weakness of older cache entries — OpenAlex didn't have
     # them populated yet at write time), opportunistically enrich from the
     # arXiv Atom API and re-save.
-    cached = _read_discovery_cache(clean)
+    cache_record = _read_discovery_cache_record(clean)
+    cached = _paper_discovery_from_cache_record(cache_record, cache_max_age)
     if cached is not None:
+        assert cache_record is not None
+        cache_fetched_at = _parse_utc_timestamp(cache_record.get("fetched_at"))
+        assert cache_fetched_at is not None
         from .arxiv import get_arxiv_id_from_doi, is_arxiv_doi
         needs_enrich = is_arxiv_doi(clean) and (
             not cached.authors or cached.year is None or not cached.title
@@ -386,7 +504,7 @@ async def discover_paper_sources(
                 )
                 if not cached.arxiv_id:
                     cached.arxiv_id = arxiv_id_for_cache
-                _write_discovery_cache(cached)
+                _write_discovery_cache(cached, fetched_at=cache_fetched_at)
                 logger.info("discovery_cache_enriched_arxiv", doi=clean)
             except Exception as e:
                 logger.info(
@@ -404,7 +522,7 @@ async def discover_paper_sources(
                     arxiv_id_for_cache, cached, http_client,
                 )
                 if cached.title != before:
-                    _write_discovery_cache(cached)
+                    _write_discovery_cache(cached, fetched_at=cache_fetched_at)
             except Exception as e:
                 logger.info(
                     "discovery_cache_xcheck_failed",
@@ -416,6 +534,8 @@ async def discover_paper_sources(
 
     # 2. OpenAlex
     oa_ok = False
+    arxiv_ok = False
+    unpaywall_ok = False
     try:
         mailto = os.getenv("OPENALEX_MAILTO") or os.getenv("UNPAYWALL_EMAIL") or ""
         params = {"mailto": mailto} if mailto else None
@@ -424,7 +544,6 @@ async def discover_paper_sources(
         r = await http_client.get(api_url, params=params)
         if r.status_code == 200:
             work = r.json()
-            oa_ok = True
             disc.title = work.get("title")
             disc.is_oa = (work.get("open_access") or {}).get("is_oa", False)
             disc.work_type = work.get("type")
@@ -451,6 +570,7 @@ async def discover_paper_sources(
             # OA URL
             oa_info = work.get("open_access") or {}
             disc.oa_url = oa_info.get("oa_url")
+            disc.publisher_url = _extract_publisher_url_from_openalex(work)
             disc.oa_candidates = _collect_openalex_oa_candidates(work)
             disc.license = oa_info.get("license")
 
@@ -458,6 +578,7 @@ async def discover_paper_sources(
             raw_abstract = work.get("abstract_inverted_index")
             if raw_abstract and isinstance(raw_abstract, dict):
                 disc.abstract = _invert_abstract(raw_abstract)
+            oa_ok = True
     except Exception as e:
         logger.info("discovery_openalex_failed", doi=clean, error=str(e))
 
@@ -471,7 +592,9 @@ async def discover_paper_sources(
             arxiv_id_for_fallback = get_arxiv_id_from_doi(clean)
     if arxiv_id_for_fallback and (not disc.authors or disc.year is None or not disc.title):
         try:
-            await _enrich_from_arxiv_atom(arxiv_id_for_fallback, disc, http_client)
+            arxiv_ok = await _enrich_from_arxiv_atom(
+                arxiv_id_for_fallback, disc, http_client
+            )
             if not disc.arxiv_id:
                 disc.arxiv_id = arxiv_id_for_fallback
         except Exception as e:
@@ -516,13 +639,37 @@ async def discover_paper_sources(
                 disc.oa_candidates = _dedupe_urls(
                     disc.oa_candidates + _collect_unpaywall_oa_candidates(data)
                 )
+                disc.publisher_url = _preferred_publisher_url(
+                    [
+                        disc.publisher_url,
+                        _extract_publisher_url_from_unpaywall(data),
+                    ]
+                )
                 if not disc.license:
                     disc.license = best.get("license")
+                unpaywall_ok = True
         except Exception as e:
             logger.info("discovery_unpaywall_failed", doi=clean, error=str(e))
 
-    # 4. Cache if we learned anything useful
-    if oa_ok or disc.pmcid or disc.arxiv_id or disc.abstract:
+    live_lookup_succeeded = oa_ok or arxiv_ok or unpaywall_ok
+    if not live_lookup_succeeded and cache_record is not None:
+        old_title = cache_record.get("title")
+        old_abstract = cache_record.get("abstract")
+        if not disc.title and isinstance(old_title, str):
+            disc.title = old_title
+        if not disc.abstract and isinstance(old_abstract, str):
+            disc.abstract = old_abstract
+
+    # 4. Cache only live results; stale metadata never receives a fresh age.
+    learned_useful = (
+        oa_ok
+        or disc.pmcid
+        or disc.arxiv_id
+        or disc.abstract
+        or disc.oa_candidates
+        or disc.publisher_url
+    )
+    if live_lookup_succeeded and learned_useful:
         _write_discovery_cache(disc)
 
     return disc

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+import httpx
 import pytest
 
 from perspicacite.pipeline.download import unified
@@ -44,18 +45,20 @@ class _StubParser:
 
 
 class _FakeDownloader:
-    """PDFDownloader stub driven by a {url: bytes | Exception} table."""
+    """HTTP response stub driven by a {url: bytes | Exception} table."""
 
     table: ClassVar[dict[str, Any]] = {}
     calls: ClassVar[list[str]] = []
 
-    async def download(self, url: str, http_client: Any = None) -> bytes | None:
+    async def get(self, _client: Any, url: str, **_kwargs: Any) -> httpx.Response:
         """Return the table's entry for `url`, raising it when it is an error."""
         self.calls.append(url)
         outcome = self.table.get(url)
         if isinstance(outcome, Exception):
             raise outcome
-        return outcome
+        return httpx.Response(
+            200, content=outcome or b"", request=httpx.Request("GET", url),
+        )
 
 
 @pytest.fixture
@@ -63,7 +66,7 @@ def fake_downloader(monkeypatch):
     """Install the stub downloader and reset its table between tests."""
     _FakeDownloader.table = {}
     _FakeDownloader.calls = []
-    monkeypatch.setattr(unified, "PDFDownloader", _FakeDownloader)
+    monkeypatch.setattr(unified, "polite_get", _FakeDownloader().get)
     return _FakeDownloader
 
 
